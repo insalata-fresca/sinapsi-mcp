@@ -6,19 +6,19 @@ using Zitadel.Mcp.Api;
 namespace Zitadel.Mcp.Tools;
 
 /// <summary>
-/// ZITADEL machine (service) user lifecycle tools — the M2M identity-minting surface the
-/// homelab secret-delivery canon depends on: create/update/delete a machine user, issue a
-/// Personal Access Token, and issue a JSON private key written host-side (never returned to
-/// the caller). The host injects the <see cref="ZitadelClient"/> and <see cref="ZitadelConfig"/>.
+/// ZITADEL machine (service) user lifecycle tools — the machine-to-machine (M2M)
+/// identity-minting surface: create/update/delete a machine user, issue a Personal Access
+/// Token, and issue a JSON private key written host-side (never returned to the caller).
+/// The host injects the <see cref="ZitadelClient"/> and <see cref="ZitadelConfig"/>.
 /// </summary>
 [McpServerToolType]
 public sealed class MachineUserTools
 {
     [McpServerTool(Name = "create_machine_user", Destructive = false)]
     [Description("Create a machine (service) user. Returns {userId, details}. MUTATES. " +
-        "access_token_type defaults to ACCESS_TOKEN_TYPE_JWT — agents that authenticate to the " +
-        "agentgateway PEP MUST be JWT (a BEARER token is opaque and the gateway's JWKS validator " +
-        "rejects it). Use ACCESS_TOKEN_TYPE_BEARER only for an introspection-based client.")]
+        "access_token_type defaults to ACCESS_TOKEN_TYPE_JWT — a JWT access token is self-validatable " +
+        "by a gateway's JWKS validator, whereas a BEARER token is opaque and must be introspected. " +
+        "Use ACCESS_TOKEN_TYPE_BEARER only for an introspection-based client.")]
     public static Task<object> CreateMachineUser(
         ZitadelClient zitadel,
         [Description("Username (loginName).")] string username,
@@ -39,8 +39,8 @@ public sealed class MachineUserTools
 
     [McpServerTool(Name = "update_machine_user", Destructive = true)]
     [Description("Update a machine (service) user — name, description, and/or access-token type. " +
-        "Set access_token_type=ACCESS_TOKEN_TYPE_JWT to make an agent's tokens validatable by the " +
-        "agentgateway PEP. MUTATES.")]
+        "Set access_token_type=ACCESS_TOKEN_TYPE_JWT to make the user's tokens self-validatable by a " +
+        "gateway's JWKS validator (a BEARER token is opaque and must be introspected). MUTATES.")]
     public static Task<object> UpdateMachineUser(
         ZitadelClient zitadel,
         [Description("Machine user id.")] string userId,
@@ -82,7 +82,7 @@ public sealed class MachineUserTools
     [Description("Issue a JSON private key for a machine user and write it HOST-SIDE to " +
         "AGENT_KEY_DIR/<agent_file>.json (mode 0640) on the MCP host. Returns ONLY " +
         "{ok, userId, keyId, path, bytes} — the private key is NEVER returned or logged, so it never " +
-        "enters any agent transcript. Use to provision an agent identity's JWK by-the-books. MUTATES + writes a secret to disk.")]
+        "enters any agent transcript. Use to provision a service identity's JWK. MUTATES + writes a secret to disk.")]
     public static async Task<object> CreateMachineKey(
         ZitadelClient zitadel,
         ZitadelConfig config,

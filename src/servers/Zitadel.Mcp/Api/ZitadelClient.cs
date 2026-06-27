@@ -12,7 +12,8 @@ namespace Zitadel.Mcp.Api;
 /// Both read and mutating endpoints are implemented. The read surface (users, projects,
 /// OIDC apps) is free; the mutating surface (project/app CRUD, OIDC-secret rotation, and
 /// the machine-identity lifecycle: create/update/delete machine user, PAT + JSON key
-/// issuance) backs the M2M secret-delivery canon and is marked Destructive on its tools.
+/// issuance) backs machine-to-machine (M2M) credential provisioning and is marked
+/// Destructive on its tools.
 /// </summary>
 public sealed class ZitadelClient(HttpClient http)
 {

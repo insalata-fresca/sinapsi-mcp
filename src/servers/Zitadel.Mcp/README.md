@@ -53,7 +53,7 @@ Mutations (`Destructive`):
 | `create_machine_key`     | Issue a machine user's JSON key and write it host-side to `AGENT_KEY_DIR` (the key is never returned — only `{ok, userId, keyId, path, bytes}`). |
 
 The machine-identity tools (`create_machine_user` / `create_machine_key` / `create_pat`)
-back the homelab M2M secret-delivery flow — mint an agent identity + its credential by-the-books.
+back machine-to-machine (M2M) credential provisioning — mint a service identity + its credential.
 
 A non-2xx upstream response is surfaced as `{ ok: false, status, error }` rather than being
 swallowed into the SDK's generic invoke error.
