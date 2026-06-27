@@ -41,7 +41,26 @@ public static class GeminiCli
         p.OutputDataReceived += (_, e) => { if (e.Data is not null) lock (stdout) stdout.AppendLine(e.Data); };
         p.ErrorDataReceived += (_, e) => { if (e.Data is not null) lock (stderr) stderr.AppendLine(e.Data); };
 
-        p.Start();
+        try
+        {
+            p.Start();
+        }
+        catch (System.ComponentModel.Win32Exception ex)
+        {
+            // The launcher binary (cfg.GeminiBin's runtime, e.g. node) could not be
+            // started: it is absent, not executable, or not on PATH. Surface this the
+            // same way a CLI that started and failed is surfaced — no stdout, non-zero
+            // exit, the OS error on stderr — so every caller's existing "exit != 0 / no
+            // output" handling runs (the image tools hit their structured no-output
+            // branch; ask/describe throw their "gemini exited" error). This also keeps
+            // the error paths hermetic: they no longer depend on a launcher binary being
+            // present in the environment (e.g. the CI SDK image has no node).
+            return new GeminiResult(
+                Stdout: string.Empty,
+                Stderr: $"failed to start gemini launcher: {ex.Message}",
+                ExitCode: ex.NativeErrorCode != 0 ? ex.NativeErrorCode : -1,
+                TimedOut: false);
+        }
         p.BeginOutputReadLine();
         p.BeginErrorReadLine();
 
