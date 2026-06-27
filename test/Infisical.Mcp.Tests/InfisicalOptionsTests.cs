@@ -4,8 +4,9 @@ namespace Infisical.Mcp.Tests;
 
 /// <summary>
 /// The MCP reads its Infisical connection entirely from the environment. These tests pin
-/// that mapping: the host URL default is a neutral example (no real instance baked in),
-/// a trailing slash is trimmed, and every override is honoured.
+/// that mapping: NO host is baked into the binary — an unset INFISICAL_HOST_URL fails fast
+/// rather than defaulting to any instance, a trailing slash is trimmed, and every override
+/// is honoured.
 /// </summary>
 public sealed class InfisicalOptionsTests
 {
@@ -30,14 +31,26 @@ public sealed class InfisicalOptionsTests
     }
 
     [Fact]
-    public void Host_url_defaults_to_a_neutral_example_when_unset()
+    public void Host_url_fails_fast_when_unset_no_host_is_baked_in()
     {
-        var opt = WithEnv(new Dictionary<string, string?>(), InfisicalOptions.FromEnvironment);
+        // No host is baked into the binary. An unset INFISICAL_HOST_URL must throw, not
+        // silently default to any instance (least of all a real one).
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            WithEnv(new Dictionary<string, string?>(), InfisicalOptions.FromEnvironment));
 
-        // The default must be a neutral placeholder, never a real instance.
-        Assert.Equal("https://infisical.example.com", opt.HostUrl);
-        Assert.DoesNotContain("insalata", opt.HostUrl);
-        Assert.Equal("dev", opt.EnvName);
+        Assert.Contains("INFISICAL_HOST_URL", ex.Message);
+        Assert.DoesNotContain("insalata", ex.Message);
+    }
+
+    [Fact]
+    public void Host_url_fails_fast_when_blank()
+    {
+        // A present-but-empty value is just as unsafe as missing.
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            WithEnv(new Dictionary<string, string?> { ["INFISICAL_HOST_URL"] = "   " },
+                InfisicalOptions.FromEnvironment));
+
+        Assert.Contains("INFISICAL_HOST_URL", ex.Message);
     }
 
     [Fact]
