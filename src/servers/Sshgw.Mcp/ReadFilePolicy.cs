@@ -27,11 +27,12 @@ public sealed class ReadFilePolicy
     private static readonly string[] GlobalDeny =
     {
         "**/config.env", "**/*.env",
-        "**/*.seed", "**/*.nk", "**/*.creds",
+        "**/nats-client/**", "**/*.seed", "**/*.nk", "**/*.creds",
         "**/*.key", "**/*.pem", "**/*.pfx", "**/*.p12",
         "**/id_*", "**/.ssh/**", "/root/.ssh/**",
         "**/*.sqlite", "**/*.sqlite3", "**/*.db",
         "**/secrets/**",
+        "**/vaultwarden/**", "**/bitwarden/**", "**/infisical/**",
         "**/*.jwk", "**/*.jwks", "**/jwt/**",
     };
 

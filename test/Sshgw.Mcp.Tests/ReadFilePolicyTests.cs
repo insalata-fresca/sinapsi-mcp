@@ -50,6 +50,21 @@ public sealed class ReadFilePolicyTests
         Assert.Contains("denylist", r);
     }
 
+    [Theory]
+    [InlineData("/data/vaultwarden/db.sqlite3")]
+    [InlineData("/data/bitwarden/bwdata/config.json")]
+    [InlineData("/etc/infisical/infisical.env")]
+    [InlineData("/etc/nats-client/agent.creds")]
+    [InlineData("/srv/nats-client/seed.nk")]
+    public void Global_secret_denylist_blocks_secret_manager_dirs(string path)
+    {
+        // Secret-manager + NATS client directories must be denied as directory-name
+        // globs, independent of the file's extension.
+        var r = Denylist().Evaluate(path, out _);
+        Assert.NotNull(r);
+        Assert.Contains("denylist", r);
+    }
+
     [Fact]
     public void Ordinary_path_is_allowed_in_denylist_mode()
     {
