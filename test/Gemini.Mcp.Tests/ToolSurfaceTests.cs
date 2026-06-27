@@ -5,10 +5,14 @@ using Xunit;
 namespace Gemini.Mcp.Tests;
 
 /// <summary>
-/// Exercises the deterministic, filesystem-backed part of the tool surface — the behaviour
-/// that does not depend on the external <c>gemini</c> CLI subprocess: session lifecycle,
-/// the async-task handle that <c>research</c> hands back, and the not-found error paths of
-/// <c>get_status</c> / <c>session_resume</c>. Each test runs against its own temp dirs.
+/// Exercises the deterministic part of the tool surface — the behaviour reachable
+/// without a successful external <c>gemini</c> CLI run: session lifecycle, the
+/// async-task handle that <c>research</c> hands back, the not-found error paths of
+/// <c>get_status</c> / <c>session_resume</c>, and the input-shaping / error-handling
+/// of the CLI-fronted image tools (the missing-file guard, the structured no-output
+/// error + temp-dir cleanup, and prompt-quote escaping). The CLI is driven against a
+/// nonexistent bundle so the no-output/error branches run deterministically. Each test
+/// runs against its own temp dirs.
 /// </summary>
 public sealed class ToolSurfaceTests : IDisposable
 {
@@ -135,5 +139,50 @@ public sealed class ToolSurfaceTests : IDisposable
         var st = doc.GetProperty("status").GetString();
         Assert.Contains(st, new[] { "running", "done", "failed" });
         Assert.Equal("research", doc.GetProperty("tool").GetString());
+    }
+
+    // ── CLI-fronted tools: deterministic input-shaping / error paths ─
+
+    [Fact]
+    public async Task ImageDescribe_rejects_a_missing_image_before_invoking_the_cli()
+    {
+        // The on-disk existence guard fires before any subprocess is spawned, so this
+        // path is fully deterministic and does not need a live gemini CLI.
+        var missing = Path.Combine(_root, "no-such-image.png");
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => ImageDescribeTool.ImageDescribe(_cfg, missing));
+        Assert.Contains("image not found", ex.Message);
+        Assert.Contains(missing, ex.Message);
+    }
+
+    [Fact]
+    public async Task ImageGenerate_returns_a_structured_error_and_cleans_up_when_no_image_is_produced()
+    {
+        // With GeminiBin pointing at a nonexistent bundle the CLI cannot produce an
+        // image, so the tool must hit its no-output branch: emit the structured
+        // NANOBANANA_API_KEY hint AND best-effort delete the empty per-call temp dir.
+        var before = Directory.GetDirectories(_cfg.OutputDir).Length;
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => ImageGenerateTool.ImageGenerate(_cfg, "a red cube", aspect_ratio: "1:1"));
+
+        var err = JsonDocument.Parse(ex.Message).RootElement;
+        Assert.Contains("NANOBANANA_API_KEY", err.GetProperty("error").GetString());
+        Assert.False(string.IsNullOrEmpty(err.GetProperty("hint").GetString()));
+        // The empty call dir is cleaned up, so the output dir is back to its prior count.
+        Assert.Equal(before, Directory.GetDirectories(_cfg.OutputDir).Length);
+    }
+
+    [Fact]
+    public async Task ImageGenerate_escapes_quotes_in_the_prompt_so_it_cannot_break_out_of_the_directive()
+    {
+        // A prompt containing a double-quote must not throw a serialization/format
+        // error — the safePrompt escaping handles it and the call still reaches the
+        // (failing) CLI and returns the structured no-output error, proving the
+        // escaped prompt was shaped into a well-formed directive.
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => ImageGenerateTool.ImageGenerate(_cfg, "evil \" ; rm -rf / prompt"));
+        var err = JsonDocument.Parse(ex.Message).RootElement;
+        Assert.Contains("NANOBANANA_API_KEY", err.GetProperty("error").GetString());
     }
 }
