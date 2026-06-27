@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RootNamespace>Sinapsi.Nats</RootNamespace>
+
+    <!-- Packed and consumed as a NuGet package via PackageReference, not
+         ProjectReference, so each experiment depends only on the published
+         version it asks for. -->
+    <IsPackable>true</IsPackable>
+    <PackageId>Sinapsi.Nats</PackageId>
+    <Version>0.4.2</Version>
+    <Authors>ste</Authors>
+    <Description>Sinapsi.Nats — NATS JetStream worker bases and a CloudEvents v1.0
+      publisher: NKey+TLS connection from environment, a self-healing durable-consumer
+      fetch loop, a KV-watch base, and a health flag. Fully env-driven (NATS_URL,
+      NATS_NKEY, NATS_NKEY_SEED_PATH, NATS_TLS_CA_FILE, NATS_TLS_DISABLE,
+      CLOUDEVENTS_TYPE_PREFIX). The opt-in NATS_TLS_DISABLE knob connects to a
+      plaintext (no-TLS) bus while retaining nkey auth. A personal research-lab
+      library; offered as-is.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NATS.Net" Version="2.8.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
+  </ItemGroup>
+
+</Project>
