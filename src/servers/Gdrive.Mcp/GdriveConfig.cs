@@ -30,7 +30,7 @@ public sealed record GdriveConfig
 
     public static GdriveConfig FromEnvironment()
     {
-        var home = Environment.GetEnvironmentVariable("HOME") ?? "/home/mcp-admin";
+        var home = Environment.GetEnvironmentVariable("HOME") ?? "/home/app";
         var credDir = Environment.GetEnvironmentVariable("GDRIVE_MCP_CRED_DIR")
             ?? Path.Combine(home, ".gdrive-mcp");
         var port = Environment.GetEnvironmentVariable("GDRIVE_MCP_PORT") ?? "9217";

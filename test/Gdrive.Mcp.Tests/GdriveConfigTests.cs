@@ -33,7 +33,7 @@ public sealed class GdriveConfigTests
             // No private IP or hostname baked in — neutral loopback default.
             Assert.StartsWith("http://127.0.0.1:", cfg.DownloadBaseUrl);
             Assert.EndsWith(":9217", cfg.DownloadBaseUrl);
-            Assert.DoesNotContain("10.42.0.121", cfg.DownloadBaseUrl);
+            Assert.DoesNotContain("192.0.2.121", cfg.DownloadBaseUrl);
             Assert.Equal("gdrive-mcp", cfg.ApplicationName);
             Assert.Equal(600, cfg.DownloadTtlSeconds);
         }
