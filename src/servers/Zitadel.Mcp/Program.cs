@@ -24,7 +24,8 @@ builder
     .WithHttpTransport(o => o.Stateless = true)
     .WithTools<UserTools>()
     .WithTools<ProjectTools>()
-    .WithTools<OidcAppTools>();
+    .WithTools<OidcAppTools>()
+    .WithTools<MachineUserTools>();
 
 var app = builder.Build();
 app.MapSinapsiMcp(envPrefix: "ZITADEL_MCP", defaultPort: cfg.Port).Run();

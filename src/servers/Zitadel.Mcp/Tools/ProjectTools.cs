@@ -4,7 +4,7 @@ using Zitadel.Mcp.Api;
 
 namespace Zitadel.Mcp.Tools;
 
-/// <summary>Read-only ZITADEL project tools. The host injects the <see cref="ZitadelClient"/>.</summary>
+/// <summary>ZITADEL project tools (read + create). The host injects the <see cref="ZitadelClient"/>.</summary>
 [McpServerToolType]
 public sealed class ProjectTools
 {
@@ -15,4 +15,12 @@ public sealed class ProjectTools
         [Description("Max results (default 100).")] int limit = 100,
         CancellationToken ct = default)
         => ZitadelToolGuard.RunAsync(async () => await zitadel.ListProjectsAsync(limit, ct));
+
+    [McpServerTool(Name = "create_project", Destructive = false)]
+    [Description("Create a new project. Returns {id, details}. MUTATES.")]
+    public static Task<object> CreateProject(
+        ZitadelClient zitadel,
+        [Description("Project name.")] string name,
+        CancellationToken ct = default)
+        => ZitadelToolGuard.RunAsync(async () => await zitadel.CreateProjectAsync(name, ct));
 }

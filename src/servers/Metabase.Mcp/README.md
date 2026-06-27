@@ -2,8 +2,11 @@
 
 A personal-lab MCP **server** for a [Metabase](https://www.metabase.com) analytics instance.
 It is a thin host over the Metabase REST API: it wires a `MetabaseClient` over a typed
-`HttpClient` and exposes a small **read-only** catalog surface (databases, collections,
-saved questions) over streamable HTTP at `/mcp`.
+`HttpClient` and exposes the full analytics surface — catalog reads, the query capability
+(run native SQL / run a saved card), a generic `request` escape hatch over ANY endpoint, and
+database / table / field / card / dashboard / collection / user CRUD — over streamable HTTP
+at `/mcp`. Reads are free; mutating tools are flagged `Destructive` so a fronting policy
+plane can gate them.
 
 The instance is selected entirely by environment variables — point the same binary at any
 Metabase deployment by setting `METABASE_BASE_URL` and an API key. Nothing about a specific
@@ -25,14 +28,20 @@ METABASE_API_KEY=<metabase api key>
 
 ## Tools
 
-All read-only:
+Reads (free): `list_databases`, `get_database`, `get_database_metadata`, `list_tables`,
+`get_table_metadata`, `get_field`, `list_cards`, `get_card`, `run_native_query`,
+`run_card_query`, `list_collections`, `get_collection_items`, `list_dashboards`,
+`get_dashboard`, `current_user`, `list_users`, `search`.
 
-| Tool                | Purpose |
-|---------------------|---------|
-| `list_databases`    | List the configured databases. |
-| `list_collections`  | List the collections. |
-| `list_cards`        | List the saved questions (cards). |
-| `get_card`          | Get a single saved question (card) by id. |
+Mutations (`Destructive`): `create_database`, `update_database`, `delete_database`,
+`sync_database_schema`, `rescan_database_values`, `update_field`, `create_native_card`,
+`create_card`, `update_card`, `delete_card`, `create_collection`, `update_collection`,
+`create_dashboard`, `update_dashboard`, `delete_dashboard`, `add_card_to_dashboard`,
+`request` (any-method escape hatch).
+
+`run_native_query` / `run_card_query` are the primary value of the MCP (read the data
+directly); `request` reaches anything the typed tools don't cover (alerts, pulses,
+permissions, settings…).
 
 A non-2xx upstream response is surfaced as `{ ok: false, status, error }` rather than being
 swallowed into the SDK's generic invoke error.

@@ -29,6 +29,7 @@
     <Compile Include="../../src/servers/Zitadel.Mcp/Tools/UserTools.cs" />
     <Compile Include="../../src/servers/Zitadel.Mcp/Tools/ProjectTools.cs" />
     <Compile Include="../../src/servers/Zitadel.Mcp/Tools/OidcAppTools.cs" />
+    <Compile Include="../../src/servers/Zitadel.Mcp/Tools/MachineUserTools.cs" />
   </ItemGroup>
 
 </Project>

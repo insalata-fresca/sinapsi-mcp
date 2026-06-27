@@ -9,14 +9,19 @@ namespace Metabase.Mcp.Tests;
 /// <summary>
 /// Pins the server's real registered tool surface: every tool the host advertises
 /// (the ones <c>Program.cs</c> registers via <c>WithTools&lt;T&gt;()</c>) is present with
-/// the expected MCP name and is marked read-only — the host exposes only reads. One
-/// assertion per exposed tool's contract.
+/// the expected MCP name and its read/mutate classification. The surface is the full
+/// 34-tool Metabase surface — the catalog reads plus the query capability
+/// (run_native_query / run_card_query), the generic <c>request</c> escape hatch, <c>search</c>,
+/// and the database / table / field / card / dashboard / collection / user CRUD.
 /// </summary>
 public sealed class MetabaseToolSurfaceTests
 {
-    // The three tool classes Program.cs registers via WithTools<T>().
+    // The seven tool classes Program.cs registers via WithTools<T>().
     private static readonly Type[] RegisteredToolTypes =
-        { typeof(DatabaseTools), typeof(CollectionTools), typeof(CardTools) };
+    {
+        typeof(DatabaseTools), typeof(TableTools), typeof(CollectionTools), typeof(CardTools),
+        typeof(DashboardTools), typeof(UserTools), typeof(ApiTools),
+    };
 
     private static (string Name, bool ReadOnly) Tool(Type type, string method)
     {
@@ -33,19 +38,31 @@ public sealed class MetabaseToolSurfaceTests
     }
 
     [Theory]
-    [InlineData(typeof(DatabaseTools), nameof(DatabaseTools.ListDatabases), "list_databases")]
-    [InlineData(typeof(CollectionTools), nameof(CollectionTools.ListCollections), "list_collections")]
-    [InlineData(typeof(CardTools), nameof(CardTools.ListCards), "list_cards")]
-    [InlineData(typeof(CardTools), nameof(CardTools.GetCard), "get_card")]
-    public void Exposed_tool_has_expected_name_and_is_read_only(Type type, string method, string expectedName)
+    // reads
+    [InlineData(typeof(DatabaseTools), nameof(DatabaseTools.ListDatabases), "list_databases", true)]
+    [InlineData(typeof(CollectionTools), nameof(CollectionTools.ListCollections), "list_collections", true)]
+    [InlineData(typeof(CardTools), nameof(CardTools.ListCards), "list_cards", true)]
+    [InlineData(typeof(CardTools), nameof(CardTools.GetCard), "get_card", true)]
+    [InlineData(typeof(CardTools), nameof(CardTools.RunNativeQuery), "run_native_query", true)]
+    [InlineData(typeof(CardTools), nameof(CardTools.RunCardQuery), "run_card_query", true)]
+    [InlineData(typeof(TableTools), nameof(TableTools.ListTables), "list_tables", true)]
+    [InlineData(typeof(ApiTools), nameof(ApiTools.Search), "search", true)]
+    [InlineData(typeof(UserTools), nameof(UserTools.CurrentUser), "current_user", true)]
+    // mutations
+    [InlineData(typeof(CardTools), nameof(CardTools.CreateNativeCard), "create_native_card", false)]
+    [InlineData(typeof(CardTools), nameof(CardTools.DeleteCard), "delete_card", false)]
+    [InlineData(typeof(DatabaseTools), nameof(DatabaseTools.CreateDatabase), "create_database", false)]
+    [InlineData(typeof(DashboardTools), nameof(DashboardTools.CreateDashboard), "create_dashboard", false)]
+    [InlineData(typeof(ApiTools), nameof(ApiTools.Request), "request", false)]
+    public void Exposed_tool_has_expected_name_and_classification(Type type, string method, string expectedName, bool readOnly)
     {
-        var (name, readOnly) = Tool(type, method);
+        var (name, isReadOnly) = Tool(type, method);
         Assert.Equal(expectedName, name);
-        Assert.True(readOnly);
+        Assert.Equal(readOnly, isReadOnly);
     }
 
     [Fact]
-    public void Registered_surface_is_exactly_the_four_expected_read_tools()
+    public void Registered_surface_is_exactly_the_thirty_four_expected_tools()
     {
         var names = RegisteredToolTypes
             .SelectMany(t => t.GetMethods(BindingFlags.Public | BindingFlags.Static))
@@ -56,8 +73,36 @@ public sealed class MetabaseToolSurfaceTests
             .ToArray();
 
         Assert.Equal(
-            new[] { "get_card", "list_cards", "list_collections", "list_databases" },
+            new[]
+            {
+                "add_card_to_dashboard", "create_card", "create_collection", "create_dashboard",
+                "create_database", "create_native_card", "current_user", "delete_card",
+                "delete_dashboard", "delete_database", "get_card", "get_collection_items",
+                "get_dashboard", "get_database", "get_database_metadata", "get_field",
+                "get_table_metadata", "list_cards", "list_collections", "list_dashboards",
+                "list_databases", "list_tables", "list_users", "request",
+                "rescan_database_values", "run_card_query", "run_native_query", "search",
+                "sync_database_schema", "update_card", "update_collection", "update_dashboard",
+                "update_database", "update_field",
+            },
             names);
+    }
+
+    [Fact]
+    public void The_query_capability_and_escape_hatch_are_present()
+    {
+        // run_native_query / run_card_query / search / request are the primary value of a
+        // Metabase MCP — they must never be silently dropped from the surface.
+        var names = RegisteredToolTypes
+            .SelectMany(t => t.GetMethods(BindingFlags.Public | BindingFlags.Static))
+            .Select(m => m.GetCustomAttribute<McpServerToolAttribute>()?.Name)
+            .Where(n => n is not null)
+            .ToHashSet();
+
+        Assert.Contains("run_native_query", names);
+        Assert.Contains("run_card_query", names);
+        Assert.Contains("search", names);
+        Assert.Contains("request", names);
     }
 
     [Fact]

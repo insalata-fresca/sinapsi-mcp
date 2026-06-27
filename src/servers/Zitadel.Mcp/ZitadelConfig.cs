@@ -9,10 +9,14 @@ namespace Zitadel.Mcp;
 ///   ZITADEL_TOKEN     a service-account / PAT bearer token, held server-side, injected at
 ///                     deploy — never baked in
 ///   ZITADEL_MCP_PORT  listen port (also overridable via the Sinapsi MapSinapsiMcp default)
+///   AGENT_KEY_DIR     host-side directory the create_machine_key tool writes a machine
+///                     user's JSON private key into (mode 0640); the key is NEVER returned
+///                     to the caller. Defaults to /agent-keys.
 /// </summary>
-public sealed record ZitadelConfig(string BaseUrl, string Token, int Port)
+public sealed record ZitadelConfig(string BaseUrl, string Token, int Port, string AgentKeyDir)
 {
     public const int DefaultPort = 9220;
+    public const string DefaultAgentKeyDir = "/agent-keys";
 
     public static ZitadelConfig FromEnv()
     {
@@ -22,7 +26,8 @@ public sealed record ZitadelConfig(string BaseUrl, string Token, int Port)
         var token = Env("ZITADEL_TOKEN") ?? throw new InvalidOperationException(
             "ZITADEL_TOKEN not set — the ZITADEL service-account/PAT bearer token must be injected at deploy, not baked in.");
         var port = int.TryParse(Env("ZITADEL_MCP_PORT"), out var p) ? p : DefaultPort;
-        return new ZitadelConfig(baseUrl, token, port);
+        var agentKeyDir = Env("AGENT_KEY_DIR") ?? DefaultAgentKeyDir;
+        return new ZitadelConfig(baseUrl, token, port, agentKeyDir);
     }
 
     private static string? Env(string k)

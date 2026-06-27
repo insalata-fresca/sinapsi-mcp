@@ -22,8 +22,12 @@ builder
     // Stateless transport strips a forwarded Mcp-Session-Id so a fronting proxy can't 400 it.
     .WithHttpTransport(o => o.Stateless = true)
     .WithTools<DatabaseTools>()
+    .WithTools<TableTools>()
     .WithTools<CollectionTools>()
-    .WithTools<CardTools>();
+    .WithTools<CardTools>()
+    .WithTools<DashboardTools>()
+    .WithTools<UserTools>()
+    .WithTools<ApiTools>();
 
 var app = builder.Build();
 app.MapSinapsiMcp(envPrefix: "METABASE_MCP", defaultPort: cfg.Port).Run();

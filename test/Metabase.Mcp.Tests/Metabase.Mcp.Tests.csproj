@@ -26,9 +26,14 @@
     <Compile Include="../../src/servers/Metabase.Mcp/Api/MetabaseApiException.cs" />
     <Compile Include="../../src/servers/Metabase.Mcp/Api/MetabaseClient.cs" />
     <Compile Include="../../src/servers/Metabase.Mcp/Tools/MetabaseToolGuard.cs" />
+    <Compile Include="../../src/servers/Metabase.Mcp/Tools/MetabaseJson.cs" />
     <Compile Include="../../src/servers/Metabase.Mcp/Tools/DatabaseTools.cs" />
+    <Compile Include="../../src/servers/Metabase.Mcp/Tools/TableTools.cs" />
     <Compile Include="../../src/servers/Metabase.Mcp/Tools/CollectionTools.cs" />
     <Compile Include="../../src/servers/Metabase.Mcp/Tools/CardTools.cs" />
+    <Compile Include="../../src/servers/Metabase.Mcp/Tools/DashboardTools.cs" />
+    <Compile Include="../../src/servers/Metabase.Mcp/Tools/UserTools.cs" />
+    <Compile Include="../../src/servers/Metabase.Mcp/Tools/ApiTools.cs" />
   </ItemGroup>
 
 </Project>
