@@ -39,7 +39,7 @@ public sealed class NatsEventPublisher : IAsyncDisposable
     /// is the CloudEvents producer URI, e.g. <c>my-service://node-1/</c>. The CloudEvents
     /// <c>type</c> prefix is taken from the <c>CLOUDEVENTS_TYPE_PREFIX</c> env var
     /// (default <see cref="DefaultTypePrefix"/>).</summary>
-    public static async Task<NatsEventPublisher> ConnectAsync(NatsHomelabOptions opts, string source, CancellationToken ct = default)
+    public static async Task<NatsEventPublisher> ConnectAsync(NatsConnectionOptions opts, string source, CancellationToken ct = default)
     {
         var nc = new NatsConnection(opts.BuildNatsOpts());
         await nc.ConnectAsync();

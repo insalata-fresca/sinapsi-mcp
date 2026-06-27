@@ -10,9 +10,9 @@ so producers and consumers agree on the envelope shape.
 
 ## What's inside
 
-- **`NatsHomelabOptions`** — connection settings (NKey-seed auth + optional
+- **`NatsConnectionOptions`** — connection settings (NKey-seed auth + optional
   pinned-CA TLS) read entirely from the environment via
-  `NatsHomelabOptions.FromEnvironment()`, turned into a `NatsOpts` by
+  `NatsConnectionOptions.FromEnvironment()`, turned into a `NatsOpts` by
   `BuildNatsOpts()`. An opt-in `NATS_TLS_DISABLE` knob connects to a plaintext
   (no-TLS) bus while keeping nkey auth — handy for an ephemeral local/test bus.
 - **`JetStreamWorker`** — a `BackgroundService` base that connects, creates (or
@@ -49,7 +49,7 @@ using Sinapsi.Nats;
 // A durable consumer of a subject filter.
 public sealed class MyWorker : JetStreamWorker
 {
-    public MyWorker(NatsHomelabOptions opts, ILogger<MyWorker> log) : base(opts, log) { }
+    public MyWorker(NatsConnectionOptions opts, ILogger<MyWorker> log) : base(opts, log) { }
 
     protected override string StreamName    => "MY_STREAM";
     protected override string DurableName   => "my-worker";
@@ -63,7 +63,7 @@ public sealed class MyWorker : JetStreamWorker
 }
 
 // register
-builder.Services.AddSingleton(NatsHomelabOptions.FromEnvironment() with { ClientName = "my-service" });
+builder.Services.AddSingleton(NatsConnectionOptions.FromEnvironment() with { ClientName = "my-service" });
 builder.Services.AddHostedService<MyWorker>();
 ```
 

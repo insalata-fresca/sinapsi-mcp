@@ -19,7 +19,7 @@ public sealed class WorkerContractTests
         public bool StartCalled;
         public string? LastSubject;
 
-        public SampleJsWorker(NatsHomelabOptions opts)
+        public SampleJsWorker(NatsConnectionOptions opts)
             : base(opts, NullLogger<SampleJsWorker>.Instance) { }
 
         protected override string StreamName => "STREAM";
@@ -49,7 +49,7 @@ public sealed class WorkerContractTests
         public byte[]? LastValue;
         public bool AbsentSeen;
 
-        public SampleKvWorker(NatsHomelabOptions opts)
+        public SampleKvWorker(NatsConnectionOptions opts)
             : base(opts, NullLogger<SampleKvWorker>.Instance) { }
 
         protected override string Bucket => "bucket";
@@ -72,21 +72,21 @@ public sealed class WorkerContractTests
     public void JetStreamWorker_DefaultDeliverPolicy_IsAll()
     {
         // Default on the base is DeliverAll; a subclass can override (see SampleJsWorker).
-        var baseLike = new DefaultPolicyWorker(new NatsHomelabOptions());
+        var baseLike = new DefaultPolicyWorker(new NatsConnectionOptions());
         Assert.Equal(ConsumerConfigDeliverPolicy.All, baseLike.ExposedDeliverPolicy);
     }
 
     [Fact]
     public void JetStreamWorker_OverriddenDeliverPolicy_IsHonoured()
     {
-        var w = new SampleJsWorker(new NatsHomelabOptions());
+        var w = new SampleJsWorker(new NatsConnectionOptions());
         Assert.Equal(ConsumerConfigDeliverPolicy.LastPerSubject, w.ExposedDeliverPolicy);
     }
 
     [Fact]
     public void JetStreamWorker_ExposesReadyAndCounter_StartingUnready()
     {
-        var w = new SampleJsWorker(new NatsHomelabOptions());
+        var w = new SampleJsWorker(new NatsConnectionOptions());
         Assert.False(w.Ready);
         Assert.Equal(0, w.EventsProcessed);
     }
@@ -94,20 +94,20 @@ public sealed class WorkerContractTests
     [Fact]
     public void JetStreamWorker_IsAHostedBackgroundService()
     {
-        Assert.IsAssignableFrom<Microsoft.Extensions.Hosting.IHostedService>(new SampleJsWorker(new NatsHomelabOptions()));
+        Assert.IsAssignableFrom<Microsoft.Extensions.Hosting.IHostedService>(new SampleJsWorker(new NatsConnectionOptions()));
     }
 
     [Fact]
     public void KvWatchWorker_ExposesReady_StartingUnready()
     {
-        var w = new SampleKvWorker(new NatsHomelabOptions());
+        var w = new SampleKvWorker(new NatsConnectionOptions());
         Assert.False(w.Ready);
         Assert.IsAssignableFrom<Microsoft.Extensions.Hosting.IHostedService>(w);
     }
 
     private sealed class DefaultPolicyWorker : JetStreamWorker
     {
-        public DefaultPolicyWorker(NatsHomelabOptions opts)
+        public DefaultPolicyWorker(NatsConnectionOptions opts)
             : base(opts, NullLogger<DefaultPolicyWorker>.Instance) { }
         protected override string StreamName => "S";
         protected override string DurableName => "d";

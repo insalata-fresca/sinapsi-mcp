@@ -14,14 +14,14 @@ namespace Sinapsi.Nats;
 /// </summary>
 public abstract class JetStreamWorker : BackgroundService
 {
-    private readonly NatsHomelabOptions _opts;
+    private readonly NatsConnectionOptions _opts;
     protected readonly ILogger Log;
 
     /// <summary>True once connected and the durable consumer is bound.</summary>
     public bool Ready { get; private set; }
     public long EventsProcessed { get; private set; }
 
-    protected JetStreamWorker(NatsHomelabOptions opts, ILogger log)
+    protected JetStreamWorker(NatsConnectionOptions opts, ILogger log)
     {
         _opts = opts;
         Log = log;

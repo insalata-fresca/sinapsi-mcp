@@ -9,7 +9,7 @@ namespace Sinapsi.Nats;
 /// <c>NATS_TLS_DISABLE</c> knob lets a service connect to a plaintext (no-TLS)
 /// bus while keeping NKey auth — useful for ephemeral local/test buses.
 /// </summary>
-public sealed record NatsHomelabOptions
+public sealed record NatsConnectionOptions
 {
     /// <summary>NATS server URL. Override via <c>NATS_URL</c>.</summary>
     public string Url { get; init; } = "nats://127.0.0.1:4222";
@@ -36,7 +36,7 @@ public sealed record NatsHomelabOptions
 
     /// <summary>Build options from the process environment. Every property has a default,
     /// so the call succeeds even with no env vars set (against a local plaintext bus).</summary>
-    public static NatsHomelabOptions FromEnvironment() => new()
+    public static NatsConnectionOptions FromEnvironment() => new()
     {
         Url = Environment.GetEnvironmentVariable("NATS_URL") ?? "nats://127.0.0.1:4222",
         NKeySeedPath = Environment.GetEnvironmentVariable("NATS_NKEY_SEED_PATH") ?? "nats.seed",

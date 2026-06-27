@@ -14,12 +14,12 @@ namespace Sinapsi.Nats;
 /// </summary>
 public abstract class KvWatchWorker : BackgroundService
 {
-    private readonly NatsHomelabOptions _opts;
+    private readonly NatsConnectionOptions _opts;
     protected readonly ILogger Log;
 
     public bool Ready { get; private set; }
 
-    protected KvWatchWorker(NatsHomelabOptions opts, ILogger log)
+    protected KvWatchWorker(NatsConnectionOptions opts, ILogger log)
     {
         _opts = opts;
         Log = log;

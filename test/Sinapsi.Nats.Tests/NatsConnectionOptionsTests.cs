@@ -5,12 +5,12 @@ using Xunit;
 namespace Sinapsi.Nats.Tests;
 
 /// <summary>
-/// Tests for <see cref="NatsHomelabOptions"/>: the env-var contract and the three
-/// TLS branches of <see cref="NatsHomelabOptions.BuildNatsOpts"/>. These mutate
+/// Tests for <see cref="NatsConnectionOptions"/>: the env-var contract and the three
+/// TLS branches of <see cref="NatsConnectionOptions.BuildNatsOpts"/>. These mutate
 /// process env vars, so the whole class runs in a single (non-parallel) collection.
 /// </summary>
 [Collection("env")]
-public sealed class NatsHomelabOptionsTests : IDisposable
+public sealed class NatsConnectionOptionsTests : IDisposable
 {
     private static readonly string[] Vars =
     {
@@ -18,7 +18,7 @@ public sealed class NatsHomelabOptionsTests : IDisposable
         "NATS_TLS_CA_FILE", "NATS_TLS_DISABLE", "NATS_CLIENT_NAME",
     };
 
-    public NatsHomelabOptionsTests() => ClearAll();
+    public NatsConnectionOptionsTests() => ClearAll();
     public void Dispose() => ClearAll();
 
     private static void ClearAll()
@@ -29,7 +29,7 @@ public sealed class NatsHomelabOptionsTests : IDisposable
     [Fact]
     public void Defaults_AreNeutral_NotEnvironmentSpecific()
     {
-        var o = new NatsHomelabOptions();
+        var o = new NatsConnectionOptions();
 
         Assert.Equal("nats://127.0.0.1:4222", o.Url);
         Assert.Equal("nats.seed", o.NKeySeedPath);
@@ -42,7 +42,7 @@ public sealed class NatsHomelabOptionsTests : IDisposable
     [Fact]
     public void FromEnvironment_WithNothingSet_ReturnsDefaults()
     {
-        var o = NatsHomelabOptions.FromEnvironment();
+        var o = NatsConnectionOptions.FromEnvironment();
 
         Assert.Equal("nats://127.0.0.1:4222", o.Url);
         Assert.Equal("nats.seed", o.NKeySeedPath);
@@ -62,7 +62,7 @@ public sealed class NatsHomelabOptionsTests : IDisposable
         Environment.SetEnvironmentVariable("NATS_TLS_DISABLE", "1");
         Environment.SetEnvironmentVariable("NATS_CLIENT_NAME", "my-svc");
 
-        var o = NatsHomelabOptions.FromEnvironment();
+        var o = NatsConnectionOptions.FromEnvironment();
 
         Assert.Equal("nats://10.0.0.5:4333", o.Url);
         Assert.Equal("/secrets/x.seed", o.NKeySeedPath);
@@ -76,7 +76,7 @@ public sealed class NatsHomelabOptionsTests : IDisposable
     public void FromEnvironment_EmptyCaFile_FallsBackToNull()
     {
         Environment.SetEnvironmentVariable("NATS_TLS_CA_FILE", "");
-        var o = NatsHomelabOptions.FromEnvironment();
+        var o = NatsConnectionOptions.FromEnvironment();
         Assert.Null(o.TlsCaFile);
     }
 
@@ -92,13 +92,13 @@ public sealed class NatsHomelabOptionsTests : IDisposable
     public void FromEnvironment_TlsDisable_TruthyParsing(string value, bool expected)
     {
         Environment.SetEnvironmentVariable("NATS_TLS_DISABLE", value);
-        Assert.Equal(expected, NatsHomelabOptions.FromEnvironment().TlsDisable);
+        Assert.Equal(expected, NatsConnectionOptions.FromEnvironment().TlsDisable);
     }
 
     [Fact]
     public void BuildNatsOpts_CarriesUrlAndClientName()
     {
-        var o = new NatsHomelabOptions { Url = "nats://host:9999", ClientName = "abc" };
+        var o = new NatsConnectionOptions { Url = "nats://host:9999", ClientName = "abc" };
         var opts = o.BuildNatsOpts();
         Assert.Equal("nats://host:9999", opts.Url);
         Assert.Equal("abc", opts.Name);
@@ -107,7 +107,7 @@ public sealed class NatsHomelabOptionsTests : IDisposable
     [Fact]
     public void BuildNatsOpts_Default_NoCa_UsesAutoTlsWithoutPinnedCa()
     {
-        var o = new NatsHomelabOptions(); // TlsCaFile null, TlsDisable false
+        var o = new NatsConnectionOptions(); // TlsCaFile null, TlsDisable false
         var opts = o.BuildNatsOpts();
 
         Assert.NotNull(opts.TlsOpts);
@@ -118,7 +118,7 @@ public sealed class NatsHomelabOptionsTests : IDisposable
     [Fact]
     public void BuildNatsOpts_WithCaFile_PinsCaAndUsesAuto()
     {
-        var o = new NatsHomelabOptions { TlsCaFile = "/secrets/ca.crt" };
+        var o = new NatsConnectionOptions { TlsCaFile = "/secrets/ca.crt" };
         var opts = o.BuildNatsOpts();
 
         Assert.NotNull(opts.TlsOpts);
@@ -130,7 +130,7 @@ public sealed class NatsHomelabOptionsTests : IDisposable
     public void BuildNatsOpts_TlsDisable_DisablesTlsAndDropsCa()
     {
         // Even with a CA configured, TlsDisable must win and drop the CA entirely.
-        var o = new NatsHomelabOptions { TlsCaFile = "/secrets/ca.crt", TlsDisable = true };
+        var o = new NatsConnectionOptions { TlsCaFile = "/secrets/ca.crt", TlsDisable = true };
         var opts = o.BuildNatsOpts();
 
         Assert.NotNull(opts.TlsOpts);
@@ -141,7 +141,7 @@ public sealed class NatsHomelabOptionsTests : IDisposable
     [Fact]
     public void BuildNatsOpts_NKeyPublic_FlowsIntoAuthOpts()
     {
-        var o = new NatsHomelabOptions { NKeyPublic = "UPUBLICKEY" };
+        var o = new NatsConnectionOptions { NKeyPublic = "UPUBLICKEY" };
         var opts = o.BuildNatsOpts();
 
         Assert.NotNull(opts.AuthOpts);
@@ -153,7 +153,7 @@ public sealed class NatsHomelabOptionsTests : IDisposable
     {
         // Neutral default points at a relative "nats.seed" that does not exist in the
         // test working dir: BuildNatsOpts must tolerate that rather than throwing.
-        var o = new NatsHomelabOptions { NKeySeedPath = "definitely-absent.seed" };
+        var o = new NatsConnectionOptions { NKeySeedPath = "definitely-absent.seed" };
         var opts = o.BuildNatsOpts();
 
         Assert.NotNull(opts.AuthOpts);
@@ -167,7 +167,7 @@ public sealed class NatsHomelabOptionsTests : IDisposable
         File.WriteAllText(path, "  SSEEDVALUE  \n");
         try
         {
-            var o = new NatsHomelabOptions { NKeySeedPath = path };
+            var o = new NatsConnectionOptions { NKeySeedPath = path };
             var opts = o.BuildNatsOpts();
             // File content was surrounded by whitespace/newline; BuildNatsOpts trims it.
             Assert.Equal("SSEEDVALUE", opts.AuthOpts!.Seed);
@@ -178,7 +178,7 @@ public sealed class NatsHomelabOptionsTests : IDisposable
     [Fact]
     public void Record_WithExpression_OverridesSingleField()
     {
-        var o = NatsHomelabOptions.FromEnvironment() with { ClientName = "renamed" };
+        var o = NatsConnectionOptions.FromEnvironment() with { ClientName = "renamed" };
         Assert.Equal("renamed", o.ClientName);
     }
 }

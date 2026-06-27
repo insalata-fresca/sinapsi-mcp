@@ -1,6 +1,6 @@
 # Sinapsi.Nats — connection contract (v0.4.2)
 
-> Authored from the library source (`NatsHomelabOptions.cs`).
+> Authored from the library source (`NatsConnectionOptions.cs`).
 
 ## Package identity
 
@@ -12,9 +12,9 @@
 
 - `PackageReference NATS.Net 2.8.0` — provides `NatsConnection`, `NatsOpts`, `NatsAuthOpts`, `NatsTlsOpts`, `TlsMode`, and the JetStream / KV contexts.
 
-## Connection options — `NatsHomelabOptions`
+## Connection options — `NatsConnectionOptions`
 
-`NatsHomelabOptions.FromEnvironment()` reads the env contract below and
+`NatsConnectionOptions.FromEnvironment()` reads the env contract below and
 `BuildNatsOpts()` turns it into a `NatsOpts`. All workers
 (`JetStreamWorker`, `KvWatchWorker`, `NatsEventPublisher`) connect through
 `BuildNatsOpts()`, so the knobs apply uniformly.
