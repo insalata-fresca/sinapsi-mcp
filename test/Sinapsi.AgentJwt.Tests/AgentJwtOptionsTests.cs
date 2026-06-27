@@ -27,8 +27,8 @@ public sealed class AgentJwtOptionsTests
         var o = AgentJwtOptions.FromEnvironment();
 
         Assert.Equal("/etc/agent-jwt/keys", o.KeyDir);
-        Assert.Equal("https://oidc.example", o.ZitadelIssuer);
-        Assert.Equal("", o.AgentgatewayProjectId);
+        Assert.Equal("https://oidc.example", o.Issuer);
+        Assert.Equal("", o.AudienceProjectId);
         Assert.Equal(15, o.TtlMinutes);
     }
 
@@ -42,10 +42,10 @@ public sealed class AgentJwtOptionsTests
         // The project-id assertion uses an obviously-synthetic sentinel — the
         // point is "default is not some non-empty project id", served by any
         // fake value; a real infrastructure id must never appear here.
-        Assert.DoesNotContain("insalata-fresca", o.ZitadelIssuer);
-        Assert.DoesNotContain("auth.", o.ZitadelIssuer);
+        Assert.DoesNotContain("insalata-fresca", o.Issuer);
+        Assert.DoesNotContain("auth.", o.Issuer);
         Assert.DoesNotContain("mcp-gateway", o.KeyDir);
-        Assert.NotEqual("000000000000000000", o.AgentgatewayProjectId);
+        Assert.NotEqual("000000000000000000", o.AudienceProjectId);
     }
 
     [Fact]
@@ -60,8 +60,8 @@ public sealed class AgentJwtOptionsTests
         {
             var o = AgentJwtOptions.FromEnvironment();
             Assert.Equal("/keys", o.KeyDir);
-            Assert.Equal("https://id.test", o.ZitadelIssuer);
-            Assert.Equal("999", o.AgentgatewayProjectId);
+            Assert.Equal("https://id.test", o.Issuer);
+            Assert.Equal("999", o.AudienceProjectId);
             Assert.Equal(30, o.TtlMinutes);
         }
         finally { ClearAll(); }
@@ -88,8 +88,8 @@ public sealed class AgentJwtOptionsTests
     {
         var o = new AgentJwtOptions();
         Assert.Equal("/etc/agent-jwt/keys", o.KeyDir);
-        Assert.Equal("https://oidc.example", o.ZitadelIssuer);
-        Assert.Equal("", o.AgentgatewayProjectId);
+        Assert.Equal("https://oidc.example", o.Issuer);
+        Assert.Equal("", o.AudienceProjectId);
         Assert.Equal(15, o.TtlMinutes);
     }
 }

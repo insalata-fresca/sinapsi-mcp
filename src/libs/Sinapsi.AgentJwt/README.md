@@ -45,9 +45,10 @@ string token = await minter.MintAsync("my-agent", ct);
 | `OIDC_AUDIENCE_PROJECT_ID` | _(empty)_ | Project id woven into the audience scope URN. |
 | `JWT_TTL_MIN` | `15` | Assertion + cache TTL in minutes (positive only; else 15). |
 
-The audience scope uses the public Zitadel project-audience URN form
-(`urn:zitadel:iam:org:project:id:<id>:aud`), an OSS protocol value. Point
-`OIDC_ISSUER` / `OIDC_AUDIENCE_PROJECT_ID` at your own provider/project.
+The audience scope uses the public project-audience URN form
+(`urn:zitadel:iam:org:project:id:<id>:aud`, e.g. Zitadel), an OSS protocol
+value. Point `OIDC_ISSUER` / `OIDC_AUDIENCE_PROJECT_ID` at your own
+provider/project.
 
 ## Building
 

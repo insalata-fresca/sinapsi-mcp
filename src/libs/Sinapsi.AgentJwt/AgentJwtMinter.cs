@@ -16,14 +16,15 @@ public sealed class AgentJwtOptions
     public string KeyDir { get; init; } = "/etc/agent-jwt/keys";
 
     /// <summary>OIDC issuer URL (no trailing slash). Set <c>OIDC_ISSUER</c> for your provider.</summary>
-    public string ZitadelIssuer { get; init; } = "https://oidc.example";
+    public string Issuer { get; init; } = "https://oidc.example";
 
     /// <summary>
     /// The audience project ID; the minted access token is scoped to this project.
-    /// The scope template uses the public Zitadel project-audience URN
-    /// (<c>urn:zitadel:iam:org:project:id:&lt;id&gt;:aud</c>), an OSS protocol value.
+    /// The scope template uses the public project-audience URN
+    /// (<c>urn:zitadel:iam:org:project:id:&lt;id&gt;:aud</c>, e.g. Zitadel),
+    /// an OSS protocol value.
     /// </summary>
-    public string AgentgatewayProjectId { get; init; } = "";
+    public string AudienceProjectId { get; init; } = "";
 
     /// <summary>Assertion + cached-token TTL in minutes (cache TTL is this minus 1).</summary>
     public int TtlMinutes { get; init; } = 15;
@@ -31,8 +32,8 @@ public sealed class AgentJwtOptions
     public static AgentJwtOptions FromEnvironment() => new()
     {
         KeyDir = Environment.GetEnvironmentVariable("AGENT_KEY_DIR") ?? "/etc/agent-jwt/keys",
-        ZitadelIssuer = Environment.GetEnvironmentVariable("OIDC_ISSUER") ?? "https://oidc.example",
-        AgentgatewayProjectId = Environment.GetEnvironmentVariable("OIDC_AUDIENCE_PROJECT_ID") ?? "",
+        Issuer = Environment.GetEnvironmentVariable("OIDC_ISSUER") ?? "https://oidc.example",
+        AudienceProjectId = Environment.GetEnvironmentVariable("OIDC_AUDIENCE_PROJECT_ID") ?? "",
         // Honour JWT_TTL_MIN so callers can override the assertion + cache TTL.
         // Leaving it unset keeps the 15-min default. Only positive values are
         // accepted — a zero/negative value falls back to the default rather than
@@ -95,11 +96,11 @@ public sealed class AgentJwtMinter(HttpClient http, AgentJwtOptions opt)
         {
             ["grant_type"] = "urn:ietf:params:oauth:grant-type:jwt-bearer",
             ["assertion"] = assertion,
-            ["scope"] = $"openid urn:zitadel:iam:org:project:id:{opt.AgentgatewayProjectId}:aud",
+            ["scope"] = $"openid urn:zitadel:iam:org:project:id:{opt.AudienceProjectId}:aud",
         };
 
         using var res = await http.PostAsync(
-            new Uri($"{opt.ZitadelIssuer}/oauth/v2/token"),
+            new Uri($"{opt.Issuer}/oauth/v2/token"),
             new FormUrlEncodedContent(form), ct).ConfigureAwait(false);
         var body = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         if (!res.IsSuccessStatusCode)
@@ -118,7 +119,7 @@ public sealed class AgentJwtMinter(HttpClient http, AgentJwtOptions opt)
         {
             iss = jwk.UserId,
             sub = jwk.UserId,
-            aud = opt.ZitadelIssuer,
+            aud = opt.Issuer,
             exp = now + opt.TtlMinutes * 60,
             iat = now,
         };

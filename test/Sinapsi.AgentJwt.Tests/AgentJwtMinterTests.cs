@@ -42,8 +42,8 @@ public sealed class AgentJwtMinterTests : IDisposable
     private AgentJwtOptions Options(string projectId = "555", int ttl = 15) => new()
     {
         KeyDir = _dir,
-        ZitadelIssuer = "https://id.test",
-        AgentgatewayProjectId = projectId,
+        Issuer = "https://id.test",
+        AudienceProjectId = projectId,
         TtlMinutes = ttl,
     };
 
