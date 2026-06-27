@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RootNamespace>Sinapsi.AgentJwt</RootNamespace>
+
+    <!-- Packable so it can be published to a NuGet feed for external consumers
+         (PackageReference, never ProjectReference). Private for now. -->
+    <IsPackable>true</IsPackable>
+    <PackageId>Sinapsi.AgentJwt</PackageId>
+    <Version>0.1.1</Version>
+    <Authors>ste</Authors>
+    <Description>Sinapsi.AgentJwt — OIDC machine-identity JWT-bearer flow
+      (RFC 7523) with a per-agent token cache. Loads an agent JWK, signs an
+      RS256 assertion, and exchanges it for a project-audience access token at
+      the provider's token endpoint. Fully environment-driven; no external JWT
+      library, no shell-out. Part of a personal research lab; offered as-is.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
+  </ItemGroup>
+
+</Project>
