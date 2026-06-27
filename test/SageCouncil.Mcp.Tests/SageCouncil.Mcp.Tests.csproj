@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>SageCouncil.Mcp.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Reference the server project directly so its orchestration + tool + job
+         types (and the ASP.NET Core hosting types they use) resolve without
+         re-declaring the Web SDK's implicit usings here. The server in turn
+         ProjectReferences the in-repo Sinapsi.Mcp + Sinapsi.AgentJwt libs, so the
+         de-positioned AgentJwtMinter / GatewayMcpClient resolve from the same place
+         — no vendored copy, no NuGet feed beyond nuget.org. -->
+    <ProjectReference Include="../../src/servers/SageCouncil.Mcp/SageCouncil.Mcp.csproj" />
+  </ItemGroup>
+
+</Project>
