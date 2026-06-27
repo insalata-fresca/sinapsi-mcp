@@ -1,0 +1,63 @@
+# CI for the sinapsi-mcp research lab.
+#
+# Mirrors the home-lab convention (see build-zitadel-mcp.yml + publish-libs.yml
+# in the home-server repo): a self-hosted runner shells the .NET SDK through
+# podman, and packages are pushed to the lab's OWN Forgejo NuGet feed using the
+# standing REGISTRY_TOKEN Actions secret (passed in as FORGEJO_NUGET_TOKEN).
+#
+# - pull_request : restore + build + test  (the gate)
+# - tag push v*  : pack + push the libs to the Forgejo NuGet feed
+#
+# NOTE: publishing to any PUBLIC feed (nuget.org / GHCR) is intentionally NOT
+# included here. That is a later, operator-gated step (see TODO.md) and must not
+# happen automatically from this workflow.
+name: ci
+on:
+  pull_request: {}
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: restore + build + test
+        run: |
+          podman run --rm --network=host -v "$PWD":/w -w /w \
+            -e FORGEJO_NUGET_TOKEN="${{ secrets.REGISTRY_TOKEN }}" \
+            mcr.microsoft.com/dotnet/sdk:8.0 bash -ceu '
+              dotnet restore Sinapsi.Mcp.sln
+              dotnet build  Sinapsi.Mcp.sln --configuration Release --no-restore
+              dotnet test   Sinapsi.Mcp.sln --configuration Release --no-build \
+                --logger "console;verbosity=normal"
+            '
+
+  publish:
+    # Only on a version tag (v*). Packs every library under src/libs/ and pushes
+    # to the Forgejo NuGet feed. --skip-duplicate makes an unchanged version a
+    # no-op; bump the csproj <Version> to publish a new one.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: self-hosted
+    needs: build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: pack + push libs to the Forgejo NuGet feed
+        run: |
+          podman run --rm --network=host -v "$PWD":/w -w /w \
+            -e FORGEJO_NUGET_TOKEN="${{ secrets.REGISTRY_TOKEN }}" \
+            -e FEED="https://forgejo.insalata-fresca.ch/api/packages/ste/nuget/index.json" \
+            mcr.microsoft.com/dotnet/sdk:8.0 bash -ceu '
+              shopt -s nullglob
+              mkdir -p /tmp/nupkgs
+              for proj in src/libs/*/*.csproj; do
+                echo "::group::pack $proj"; dotnet pack "$proj" -c Release -o /tmp/nupkgs; echo "::endgroup::"
+              done
+              for pkg in /tmp/nupkgs/*.nupkg; do
+                echo "push $pkg"; dotnet nuget push "$pkg" -s "$FEED" -k "$FORGEJO_NUGET_TOKEN" --skip-duplicate
+              done
+            '
