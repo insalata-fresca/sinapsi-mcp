@@ -1,9 +1,9 @@
 # CI for the sinapsi-mcp research lab.
 #
-# Mirrors the home-lab convention (see build-zitadel-mcp.yml + publish-libs.yml
-# in the home-server repo): a self-hosted runner shells the .NET SDK through
-# podman, and packages are pushed to the lab's OWN Forgejo NuGet feed using the
-# standing REGISTRY_TOKEN Actions secret (passed in as FORGEJO_NUGET_TOKEN).
+# Mirrors the lab's self-hosted-runner + Forgejo-feed publish convention: a
+# self-hosted runner shells the .NET SDK through podman, and packages are pushed
+# to the lab's OWN Forgejo NuGet feed using the standing REGISTRY_TOKEN Actions
+# secret (passed in as FORGEJO_NUGET_TOKEN).
 #
 # - pull_request : restore + build + test  (the gate)
 # - tag push v*  : pack + push the libs to the Forgejo NuGet feed
