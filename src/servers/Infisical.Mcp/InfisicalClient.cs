@@ -23,8 +23,12 @@ public sealed class InfisicalClient(HttpClient http, InfisicalOptions opt, ILogg
             new { clientId = opt.ClientId, clientSecret = opt.ClientSecret }, _json, ct).ConfigureAwait(false);
         res.EnsureSuccessStatusCode();
         var doc = await res.Content.ReadFromJsonAsync<JsonElement>(_json, ct).ConfigureAwait(false);
-        _token = doc.GetProperty("accessToken").GetString()
-                 ?? throw new InvalidOperationException("infisical login: no accessToken");
+        // Guard the whole shape: a login response that omits accessToken (or carries it
+        // as JSON null / a non-string) must surface a clear error, not a generic
+        // KeyNotFoundException from GetProperty on an absent key.
+        _token = doc.TryGetProperty("accessToken", out var at) && at.ValueKind == JsonValueKind.String
+                 ? at.GetString()!
+                 : throw new InvalidOperationException("infisical login: no accessToken");
         _exp = DateTimeOffset.UtcNow.AddMinutes(50);
         log.LogInformation("infisical universal-auth login ok");
         return _token;
