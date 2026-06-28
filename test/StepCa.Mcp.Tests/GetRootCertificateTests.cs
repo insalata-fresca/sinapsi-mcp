@@ -31,6 +31,21 @@ public sealed class GetRootCertificateTests
     }
 
     [Fact]
+    public void PresentButMalformedFile_ReturnsErrorWithoutThrowing()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"bad-root-{Guid.NewGuid():N}.crt");
+        File.WriteAllText(path, "this is not a certificate");
+        try
+        {
+            var r = StepCaTools.GetRootCertificate(OptsWithRoot(path));
+
+            Assert.Null(r["ok"]); // asymmetric error path, no ok key
+            Assert.Contains("could not read root cert", r["error"]!.GetValue<string>());
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
     public void PresentFile_ReturnsPemAndMetadata()
     {
         using var cert = CertFixtures.MakeCert(subjectCn: "Root CA Example");

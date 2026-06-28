@@ -54,4 +54,30 @@ public sealed class SerialAndCliTests
         Assert.Equal(-1, r.ExitCode);
         Assert.Contains("killed after", r.Stderr);
     }
+
+    [Fact]
+    public async Task StepCli_Success_CapturesStdoutAndExitZero()
+    {
+        // Exercise the happy subprocess path (exit 0, drained stdout) with a
+        // ubiquitous binary so no real `step` CLI is required.
+        var echo = File.Exists("/bin/echo") ? "/bin/echo"
+            : File.Exists("/usr/bin/echo") ? "/usr/bin/echo"
+            : throw new InvalidOperationException("no echo binary on this host");
+
+        var opts = new StepCaOptions(
+            CaUrl: "https://ca.example.com:9000",
+            CaRootCertPath: "/etc/step-ca-mcp/root_ca.crt",
+            CaFingerprint: "",
+            StepBin: echo,
+            IssuerProvisioner: "mcp-issuer",
+            IssuerPasswordFile: "/etc/step-ca-mcp/mcp-issuer-password.txt",
+            SubprocessTimeoutMs: 30_000);
+        var cli = new StepCli(opts);
+
+        var r = await cli.RunAsync(new[] { "hello-stepca" });
+
+        Assert.False(r.TimedOut);
+        Assert.Equal(0, r.ExitCode);
+        Assert.Contains("hello-stepca", r.Stdout);
+    }
 }
