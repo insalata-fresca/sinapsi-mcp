@@ -22,15 +22,23 @@ public sealed class StepCaTools
         var h = await step.RunAsync(["ca", "health", "--ca-url", opts.CaUrl, "--root", opts.CaRootCertPath], ct);
         var v = await step.RunAsync(["version"], ct);
         var rootPresent = File.Exists(opts.CaRootCertPath);
+        // Health-check status is decided on the RAW trimmed stdout, BEFORE
+        // sanitization, so a redaction can never flip the verdict.
+        var healthOk = h.ExitCode == 0 && h.Stdout.Trim().Equals("ok", StringComparison.OrdinalIgnoreCase);
         return new JsonObject
         {
             // Exact-match on trimmed stdout. `step ca health` outputs literally
             // "ok\n" on success; a substring Contains() can false-positive on any
             // stdout-leaked error text containing the letters "ok".
-            ["ok"] = h.ExitCode == 0 && h.Stdout.Trim().Equals("ok", StringComparison.OrdinalIgnoreCase),
+            ["ok"] = healthOk,
             ["ca_url"] = opts.CaUrl,
-            ["step_health_output"] = h.Stdout.Trim(),
-            ["step_health_error"] = string.IsNullOrWhiteSpace(h.Stderr) ? null : h.Stderr.Trim(),
+            // Surfaced step stdout/stderr are routed through Sanitize for the same
+            // fail-safe redaction the other tools get: a credential/key that leaked
+            // into step's output is scrubbed before it leaves the process. (Note:
+            // Sanitize returns a placeholder for empty input, so we only surface
+            // the error leg when there is actual stderr text.)
+            ["step_health_output"] = StepCaErrors.Sanitize(h.Stdout),
+            ["step_health_error"] = string.IsNullOrWhiteSpace(h.Stderr) ? null : StepCaErrors.Sanitize(h.Stderr),
             ["step_cli_version"] = v.ExitCode == 0 ? v.Stdout.Trim().Split('\n').FirstOrDefault() : null,
             ["root_certificate_path"] = opts.CaRootCertPath,
             ["root_certificate_present"] = rootPresent,
@@ -45,11 +53,32 @@ public sealed class StepCaTools
         if (!File.Exists(opts.CaRootCertPath))
         {
             // Error path intentionally omits the "ok" key (kept asymmetric).
-            return new JsonObject { ["error"] = $"root cert not found at {opts.CaRootCertPath}" };
+            // Routed through Sanitize for uniform fail-safe behaviour (the path is
+            // operator config so it carries no secret, but every surfaced string
+            // takes the same scrub/length-cap path).
+            return new JsonObject { ["error"] = StepCaErrors.Sanitize($"root cert not found at {opts.CaRootCertPath}") };
         }
-        var pem = File.ReadAllText(opts.CaRootCertPath);
-        // Dispose the X509Certificate2 (unmanaged crypto handle).
-        using var cert = X509Certificate2.CreateFromPem(pem);
+
+        string pem;
+        X509Certificate2 cert;
+        try
+        {
+            pem = File.ReadAllText(opts.CaRootCertPath);
+            // Dispose the X509Certificate2 (unmanaged crypto handle).
+            cert = X509Certificate2.CreateFromPem(pem);
+        }
+        catch (Exception e)
+        {
+            // A present-but-unreadable / malformed root cert must surface as a
+            // structured error, not bubble as an unhandled exception. The path is
+            // operator-controlled config, so echoing it is safe; the BCL message
+            // never contains key material for a public cert. Routed through
+            // Sanitize for uniform fail-safe redaction + length-capping of the
+            // surfaced string.
+            return new JsonObject { ["error"] = StepCaErrors.Sanitize($"could not read root cert at {opts.CaRootCertPath}: {e.Message}") };
+        }
+
+        using (cert)
         return new JsonObject
         {
             ["format"] = "pem",
@@ -70,7 +99,7 @@ public sealed class StepCaTools
     {
         var r = await step.RunAsync(["ca", "provisioner", "list", "--ca-url", opts.CaUrl, "--root", opts.CaRootCertPath], ct);
         if (r.ExitCode != 0)
-            return new JsonObject { ["ok"] = false, ["error"] = !string.IsNullOrWhiteSpace(r.Stderr) ? r.Stderr : r.Stdout };
+            return new JsonObject { ["ok"] = false, ["error"] = StepCaErrors.FromStepResult(r) };
 
         JsonNode? parsed;
         try { parsed = JsonNode.Parse(r.Stdout); }
@@ -106,6 +135,13 @@ public sealed class StepCaTools
         [Description("Optional Subject Alternative Names")] string[]? sans = null,
         CancellationToken ct = default)
     {
+        // Fail-fast input validation BEFORE any subprocess is spawned. Returns a
+        // structured error; never throws, never leaks.
+        if (StepCaValidation.ValidateCommonName(common_name) is { } cnError)
+            return new JsonObject { ["ok"] = false, ["error"] = cnError };
+        if (StepCaValidation.ValidateSans(sans) is { } sanError)
+            return new JsonObject { ["ok"] = false, ["error"] = sanError };
+
         var sansList = sans ?? Array.Empty<string>();
         var td = Directory.CreateTempSubdirectory("stepca-mcp-").FullName;
         try
@@ -124,7 +160,7 @@ public sealed class StepCaTools
 
             var r = await step.RunAsync(args.ToArray(), ct);
             if (r.ExitCode != 0)
-                return new JsonObject { ["ok"] = false, ["error"] = (!string.IsNullOrWhiteSpace(r.Stderr) ? r.Stderr : r.Stdout).Trim() };
+                return new JsonObject { ["ok"] = false, ["error"] = StepCaErrors.FromStepResult(r) };
 
             var certPem = await File.ReadAllTextAsync(certPath, ct);
             var keyPem = await File.ReadAllTextAsync(keyPath, ct);
@@ -164,8 +200,16 @@ public sealed class StepCaTools
         [Description("CRL reason code (RFC 5280)")] int reason_code = 0,
         CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(serial_number))
-            return new JsonObject { ["ok"] = false, ["error"] = "serial_number is required" };
+        // Fail-fast input validation BEFORE any subprocess is spawned. Empty /
+        // whitespace still yields the exact "serial_number is required" message
+        // (behaviour parity); malformed serials and out-of-range reason codes are
+        // now rejected too instead of being handed to `step`.
+        if (StepCaValidation.ValidateSerialNumber(serial_number) is { } serialError)
+            return new JsonObject { ["ok"] = false, ["error"] = serialError };
+        if (StepCaValidation.ValidateReason(reason) is { } reasonTextError)
+            return new JsonObject { ["ok"] = false, ["error"] = reasonTextError };
+        if (StepCaValidation.ValidateReasonCode(reason_code) is { } reasonError)
+            return new JsonObject { ["ok"] = false, ["error"] = reasonError };
 
         var args = new[]
         {
@@ -179,7 +223,7 @@ public sealed class StepCaTools
         };
         var r = await step.RunAsync(args, ct);
         if (r.ExitCode != 0)
-            return new JsonObject { ["ok"] = false, ["error"] = (!string.IsNullOrWhiteSpace(r.Stderr) ? r.Stderr : r.Stdout).Trim() };
+            return new JsonObject { ["ok"] = false, ["error"] = StepCaErrors.FromStepResult(r) };
 
         return new JsonObject
         {

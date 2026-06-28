@@ -21,6 +21,8 @@
     <Compile Include="../../src/servers/StepCa.Mcp/StepCaTools.cs" />
     <Compile Include="../../src/servers/StepCa.Mcp/StepCaOptions.cs" />
     <Compile Include="../../src/servers/StepCa.Mcp/StepCli.cs" />
+    <Compile Include="../../src/servers/StepCa.Mcp/StepCaValidation.cs" />
+    <Compile Include="../../src/servers/StepCa.Mcp/StepCaErrors.cs" />
     <PackageReference Include="ModelContextProtocol.AspNetCore" Version="1.3.0" />
   </ItemGroup>
 

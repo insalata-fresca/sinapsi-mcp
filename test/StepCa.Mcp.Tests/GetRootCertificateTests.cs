@@ -13,7 +13,6 @@ public sealed class GetRootCertificateTests
     private static StepCaOptions OptsWithRoot(string path) => new(
         CaUrl: "https://ca.example.com:9000",
         CaRootCertPath: path,
-        CaFingerprint: "",
         StepBin: "/usr/local/bin/step",
         IssuerProvisioner: "mcp-issuer",
         IssuerPasswordFile: "/etc/step-ca-mcp/mcp-issuer-password.txt",
@@ -28,6 +27,21 @@ public sealed class GetRootCertificateTests
 
         Assert.Null(r["ok"]); // asymmetric: no ok key on this error path
         Assert.Contains("root cert not found", r["error"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void PresentButMalformedFile_ReturnsErrorWithoutThrowing()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"bad-root-{Guid.NewGuid():N}.crt");
+        File.WriteAllText(path, "this is not a certificate");
+        try
+        {
+            var r = StepCaTools.GetRootCertificate(OptsWithRoot(path));
+
+            Assert.Null(r["ok"]); // asymmetric error path, no ok key
+            Assert.Contains("could not read root cert", r["error"]!.GetValue<string>());
+        }
+        finally { File.Delete(path); }
     }
 
     [Fact]

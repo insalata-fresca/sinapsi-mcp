@@ -14,7 +14,6 @@ public sealed class RevokeCertificateGuardTests
         var opts = new StepCaOptions(
             CaUrl: "https://ca.example.com:9000",
             CaRootCertPath: "/etc/step-ca-mcp/root_ca.crt",
-            CaFingerprint: "",
             StepBin: "/nonexistent/step", // never invoked on the guard path
             IssuerProvisioner: "mcp-issuer",
             IssuerPasswordFile: "/etc/step-ca-mcp/mcp-issuer-password.txt",
@@ -33,5 +32,35 @@ public sealed class RevokeCertificateGuardTests
 
         Assert.False(r["ok"]!.GetValue<bool>());
         Assert.Equal("serial_number is required", r["error"]!.GetValue<string>());
+    }
+
+    // The free-text `reason` is validated alongside serial_number / reason_code,
+    // and the guard short-circuits before any subprocess is spawned. A control
+    // character or leading dash in the reason yields a structured error, not an
+    // exception and not a `step` invocation.
+    [Theory]
+    [InlineData("bad\nreason")]   // embedded newline / control char
+    [InlineData("-flagish")]      // leading dash (could be mistaken for a CLI flag)
+    public async Task InvalidReason_ReturnsStructuredError(string reason)
+    {
+        var (cli, opts) = Harness();
+
+        // A valid serial so the serial guard passes and the reason guard is reached.
+        var r = await StepCaTools.RevokeCertificate(cli, opts, serial_number: "12345", reason: reason);
+
+        Assert.False(r["ok"]!.GetValue<bool>());
+        Assert.False(string.IsNullOrWhiteSpace(r["error"]!.GetValue<string>()));
+    }
+
+    [Fact]
+    public async Task TooLongReason_ReturnsStructuredError()
+    {
+        var (cli, opts) = Harness();
+        var longReason = new string('x', StepCaValidation.MaxReasonLength + 1);
+
+        var r = await StepCaTools.RevokeCertificate(cli, opts, serial_number: "12345", reason: longReason);
+
+        Assert.False(r["ok"]!.GetValue<bool>());
+        Assert.Contains("too long", r["error"]!.GetValue<string>());
     }
 }
