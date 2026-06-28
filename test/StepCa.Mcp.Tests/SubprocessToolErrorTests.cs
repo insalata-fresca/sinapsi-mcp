@@ -45,7 +45,6 @@ public sealed class SubprocessToolErrorTests
         var opts = new StepCaOptions(
             CaUrl: "https://ca.example.com:9000",
             CaRootCertPath: "/etc/step-ca-mcp/root_ca.crt",
-            CaFingerprint: "",
             StepBin: stepBin,
             IssuerProvisioner: "mcp-issuer",
             IssuerPasswordFile: "/etc/step-ca-mcp/mcp-issuer-password.txt",
@@ -184,7 +183,6 @@ public sealed class SubprocessToolErrorTests
             var scriptOpts = new StepCaOptions(
                 CaUrl: "https://ca.example.com:9000",
                 CaRootCertPath: "/etc/step-ca-mcp/root_ca.crt",
-                CaFingerprint: "",
                 StepBin: script,
                 IssuerProvisioner: "mcp-issuer",
                 IssuerPasswordFile: "/etc/step-ca-mcp/mcp-issuer-password.txt",
@@ -260,7 +258,6 @@ public sealed class SubprocessToolErrorTests
             var opts = new StepCaOptions(
                 CaUrl: "https://ca.example.com:9000",
                 CaRootCertPath: "/etc/step-ca-mcp/root_ca.crt",
-                CaFingerprint: "",
                 StepBin: script,
                 IssuerProvisioner: "mcp-issuer",
                 IssuerPasswordFile: "/etc/step-ca-mcp/mcp-issuer-password.txt",

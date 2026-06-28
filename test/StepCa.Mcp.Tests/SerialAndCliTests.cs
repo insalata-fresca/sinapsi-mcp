@@ -41,7 +41,6 @@ public sealed class SerialAndCliTests
         var opts = new StepCaOptions(
             CaUrl: "https://ca.example.com:9000",
             CaRootCertPath: "/etc/step-ca-mcp/root_ca.crt",
-            CaFingerprint: "",
             StepBin: sleep,
             IssuerProvisioner: "mcp-issuer",
             IssuerPasswordFile: "/etc/step-ca-mcp/mcp-issuer-password.txt",
@@ -67,7 +66,6 @@ public sealed class SerialAndCliTests
         var opts = new StepCaOptions(
             CaUrl: "https://ca.example.com:9000",
             CaRootCertPath: "/etc/step-ca-mcp/root_ca.crt",
-            CaFingerprint: "",
             StepBin: echo,
             IssuerProvisioner: "mcp-issuer",
             IssuerPasswordFile: "/etc/step-ca-mcp/mcp-issuer-password.txt",

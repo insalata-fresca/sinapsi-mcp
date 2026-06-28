@@ -80,7 +80,7 @@ Architecturally it is three small seams:
 ### `revoke_certificate` (mutates)
 - **Params:**
   - `serial_number` (string, **required**) — decimal or `0x`-hex non-negative integer. Empty/whitespace yields exactly `serial_number is required`; malformed/oversized serials are rejected.
-  - `reason` (string, default `unspecified`) — free-text reason.
+  - `reason` (string, default `unspecified`) — free-text reason. Capped at 255 chars; control characters and a leading `-` are rejected.
   - `reason_code` (int, default `0`) — RFC 5280 CRL reason code; must be `0–10`.
 - **Returns:** `{ ok: true, serial_number, reason, reason_code, ca_response }`.
 - **Errors:** validation failures and `step` failures both return `{ ok: false, error }` (scrubbed); no subprocess is spawned on a validation failure.
@@ -96,12 +96,11 @@ Architecturally it is three small seams:
 |---------|:--------:|---------|---------|
 | `STEP_CA_URL` | yes | — | CA URL, e.g. `https://ca.example.com:9000`. Passed via `--ca-url`. Server **fails to start** if unset. |
 | `STEP_CA_ROOT_CERT` | no | `/etc/step-ca-mcp/root_ca.crt` | Root cert path. Passed via `--root` and read directly by `get_root_certificate`. |
-| `STEP_CA_FINGERPRINT` | no | empty | Informational only; not used in calls. |
 | `STEP_BIN` | no | `/usr/local/bin/step` | Path to the host `step` CLI binary. |
 | `MCP_ISSUER_PROVISIONER` | no | `mcp-issuer` | JWK provisioner used by `issue_certificate` / `revoke_certificate`. |
 | `MCP_ISSUER_PASSWORD_FILE` | no | `/etc/step-ca-mcp/mcp-issuer-password.txt` | Password file for the issuer provisioner. Inject at deploy; never bake it in. |
-| `STEP_SUBPROCESS_TIMEOUT_MS` | no | `30000` | Hard ceiling on the entire `step` subprocess invocation. |
-| `STEP_CA_HTTP_TIMEOUT_MS` | no | — | **Deprecated alias** for `STEP_SUBPROCESS_TIMEOUT_MS` (read only when the canonical var is unset). |
+| `STEP_SUBPROCESS_TIMEOUT_MS` | no | `30000` | Hard ceiling on the entire `step` subprocess invocation. Must be an integer in `1..600000` ms; a non-numeric, `<= 0`, or out-of-range value **fails startup** (rather than silently making every call time out or throwing deep in the cancellation path). |
+| `STEP_CA_HTTP_TIMEOUT_MS` | no | — | **Deprecated alias** for `STEP_SUBPROCESS_TIMEOUT_MS` (read only when the canonical var is unset); same `1..600000` ms validation. |
 | `STEP_CA_MCP_HOST` | no | `0.0.0.0` | Listen address. |
 | `STEP_CA_MCP_PORT` | no | `9109` | Listen port. |
 
@@ -128,11 +127,15 @@ fail safe:
 - **No secrets in source.** The issuer password lives in a file
   (`MCP_ISSUER_PASSWORD_FILE`) injected at deploy. It is never read into a tool
   response and never logged.
-- **No secret leakage in errors.** Every upstream `step` error is passed through
-  `StepCaErrors.Sanitize` before it leaves the process: PEM **private-key**
-  blocks and `password=/token=/secret=/Authorization:` style assignments are
-  redacted, and the message is length-capped. A pasted key or password that
-  somehow reached `step`'s stderr cannot reach a caller.
+- **No secret leakage in errors.** Every surfaced upstream string is passed
+  through `StepCaErrors.Sanitize` before it leaves the process — uniformly across
+  all six tools, including `get_ca_health`'s echoed `step` stdout/stderr and
+  `get_root_certificate`'s error strings, not just the mutating tools. PEM
+  **private-key** blocks and `password=/token=/secret=/Authorization:` style
+  assignments are redacted, and the message is length-capped. A pasted key or
+  password that somehow reached `step`'s output cannot reach a caller. (The
+  health verdict is computed on the raw stdout *before* sanitization, so a
+  redaction can never flip `ok`.)
 - **No shell.** Subprocess arguments are passed via
   `ProcessStartInfo.ArgumentList` (no shell, no string interpolation), so a
   hostile CN/SAN/serial cannot inject a shell command. As defence in depth,
@@ -140,8 +143,9 @@ fail safe:
   flag.
 - **Input validation before side effects.** `issue_certificate` and
   `revoke_certificate` validate every parameter (CN/SAN format + length + count,
-  serial format + length, reason-code range) **before** any subprocess is
-  spawned. Invalid input returns a structured error, never an exception.
+  serial format + length, reason text format + length, reason-code range)
+  **before** any subprocess is spawned. Invalid input returns a structured error,
+  never an exception.
 - **Bounded subprocess.** Every `step` call runs under a hard timeout
   (`STEP_SUBPROCESS_TIMEOUT_MS`, default 30 s) with the process tree killed and
   awaited on timeout, so a hung `step` cannot wedge the server.

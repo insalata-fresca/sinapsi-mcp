@@ -17,7 +17,6 @@ public sealed class MutatingToolGuardTests
     private static readonly StepCaOptions Opts = new(
         CaUrl: "https://ca.example.com:9000",
         CaRootCertPath: "/etc/step-ca-mcp/root_ca.crt",
-        CaFingerprint: "",
         StepBin: "/nonexistent/step", // never invoked on a guard path
         IssuerProvisioner: "mcp-issuer",
         IssuerPasswordFile: "/etc/step-ca-mcp/mcp-issuer-password.txt",

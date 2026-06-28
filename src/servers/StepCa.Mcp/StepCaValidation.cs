@@ -33,6 +33,11 @@ internal static class StepCaValidation
     /// safe, generous cap that still refuses an obviously-bogus blob.</summary>
     internal const int MaxSerialLength = 128;
 
+    /// <summary>Upper bound on the free-text revocation <c>reason</c>. The reason
+    /// is recorded as CRL metadata, not parsed; 255 is a generous human-readable
+    /// cap that still refuses an unbounded blob.</summary>
+    internal const int MaxReasonLength = 255;
+
     /// <summary>
     /// Validate the common name for <c>issue_certificate</c>. Returns
     /// <c>null</c> when valid, otherwise a human-readable reason.
@@ -101,6 +106,29 @@ internal static class StepCaValidation
         if (!BigInteger.TryParse(s, NumberStyles.None, CultureInfo.InvariantCulture, out var value)
             || value.Sign < 0)
             return "serial_number must be a non-negative integer (decimal or 0x-hex)";
+        return null;
+    }
+
+    /// <summary>
+    /// Validate the free-text <c>reason</c> for <c>revoke_certificate</c>. The
+    /// value flows into <c>step ca revoke --reason</c>; it is free-form text, so
+    /// we only guard against abuse: an over-long blob, embedded control
+    /// characters / newlines, and a leading <c>-</c> that could be mistaken for a
+    /// <c>step</c> CLI flag. Returns <c>null</c> when valid, otherwise a
+    /// human-readable reason.
+    /// </summary>
+    internal static string? ValidateReason(string? reason)
+    {
+        // A null/empty reason is allowed: the tool supplies a default, and step
+        // accepts an empty reason. We only reject *malformed* non-empty input.
+        if (string.IsNullOrEmpty(reason))
+            return null;
+        if (reason.Length > MaxReasonLength)
+            return $"reason too long ({reason.Length} chars; max {MaxReasonLength})";
+        if (ContainsControlOrNewline(reason))
+            return "reason contains control characters";
+        if (reason[0] == '-')
+            return "reason must not start with '-'";
         return null;
     }
 

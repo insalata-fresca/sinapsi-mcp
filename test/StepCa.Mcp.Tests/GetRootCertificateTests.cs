@@ -13,7 +13,6 @@ public sealed class GetRootCertificateTests
     private static StepCaOptions OptsWithRoot(string path) => new(
         CaUrl: "https://ca.example.com:9000",
         CaRootCertPath: path,
-        CaFingerprint: "",
         StepBin: "/usr/local/bin/step",
         IssuerProvisioner: "mcp-issuer",
         IssuerPasswordFile: "/etc/step-ca-mcp/mcp-issuer-password.txt",

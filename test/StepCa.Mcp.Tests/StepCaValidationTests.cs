@@ -106,6 +106,33 @@ public sealed class StepCaValidationTests
         Assert.Contains("too long", StepCaValidation.ValidateSerialNumber(serial));
     }
 
+    // ── reason (free text) ───────────────────────────────────────────────────
+    [Theory]
+    [InlineData(null)]                       // null is allowed (tool supplies a default)
+    [InlineData("")]                         // empty is allowed
+    [InlineData("unspecified")]
+    [InlineData("key compromised on host x")]   // spaces are fine; free-form text
+    public void ValidateReason_AcceptsValid(string? reason) =>
+        Assert.Null(StepCaValidation.ValidateReason(reason));
+
+    [Fact]
+    public void ValidateReason_RejectsTooLong()
+    {
+        var reason = new string('x', StepCaValidation.MaxReasonLength + 1);
+        Assert.Contains("too long", StepCaValidation.ValidateReason(reason)!);
+    }
+
+    [Theory]
+    [InlineData("bad\nreason")]
+    [InlineData("bad\treason")]
+    [InlineData("bad\rreason")]
+    public void ValidateReason_RejectsControlChars(string reason) =>
+        Assert.Contains("control characters", StepCaValidation.ValidateReason(reason)!);
+
+    [Fact]
+    public void ValidateReason_RejectsLeadingDash() =>
+        Assert.Contains("must not start with '-'", StepCaValidation.ValidateReason("-flagish")!);
+
     // ── reason_code ─────────────────────────────────────────────────────────
     [Theory]
     [InlineData(0)]

@@ -12,7 +12,7 @@ public sealed class StepCaOptionsTests : IDisposable
 {
     private static readonly string[] Vars =
     {
-        "STEP_CA_URL", "STEP_CA_ROOT_CERT", "STEP_CA_FINGERPRINT", "STEP_BIN",
+        "STEP_CA_URL", "STEP_CA_ROOT_CERT", "STEP_BIN",
         "MCP_ISSUER_PROVISIONER", "MCP_ISSUER_PASSWORD_FILE",
         "STEP_SUBPROCESS_TIMEOUT_MS", "STEP_CA_HTTP_TIMEOUT_MS",
     };
@@ -37,7 +37,6 @@ public sealed class StepCaOptionsTests : IDisposable
 
         Assert.Equal("https://ca.example.com:9000", o.CaUrl);
         Assert.Equal("/etc/step-ca-mcp/root_ca.crt", o.CaRootCertPath);
-        Assert.Equal("", o.CaFingerprint);
         Assert.Equal("/usr/local/bin/step", o.StepBin);
         Assert.Equal("mcp-issuer", o.IssuerProvisioner);
         Assert.Equal("/etc/step-ca-mcp/mcp-issuer-password.txt", o.IssuerPasswordFile);
@@ -49,7 +48,6 @@ public sealed class StepCaOptionsTests : IDisposable
     {
         Environment.SetEnvironmentVariable("STEP_CA_URL", "https://other.example.org:9100");
         Environment.SetEnvironmentVariable("STEP_CA_ROOT_CERT", "/secrets/root.pem");
-        Environment.SetEnvironmentVariable("STEP_CA_FINGERPRINT", "abc123");
         Environment.SetEnvironmentVariable("STEP_BIN", "/opt/step/step");
         Environment.SetEnvironmentVariable("MCP_ISSUER_PROVISIONER", "issuer-x");
         Environment.SetEnvironmentVariable("MCP_ISSUER_PASSWORD_FILE", "/secrets/pw.txt");
@@ -59,7 +57,6 @@ public sealed class StepCaOptionsTests : IDisposable
 
         Assert.Equal("https://other.example.org:9100", o.CaUrl);
         Assert.Equal("/secrets/root.pem", o.CaRootCertPath);
-        Assert.Equal("abc123", o.CaFingerprint);
         Assert.Equal("/opt/step/step", o.StepBin);
         Assert.Equal("issuer-x", o.IssuerProvisioner);
         Assert.Equal("/secrets/pw.txt", o.IssuerPasswordFile);
@@ -83,5 +80,44 @@ public sealed class StepCaOptionsTests : IDisposable
         Environment.SetEnvironmentVariable("STEP_CA_HTTP_TIMEOUT_MS", "9999");
 
         Assert.Equal(5000, StepCaOptions.FromEnvironment().SubprocessTimeoutMs);
+    }
+
+    // ── timeout clamp (fail-closed on bad config) ────────────────────────────
+    // 0 would make every subprocess time out instantly; a negative value throws
+    // inside the CancellationTokenSource ctor. Both are rejected as invalid
+    // config with a clear error naming the offending env var, rather than being
+    // silently honoured.
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("-30000")]
+    public void NonPositiveTimeout_IsRejected_NamingTheVar(string bad)
+    {
+        Environment.SetEnvironmentVariable("STEP_CA_URL", "https://ca.example.com:9000");
+        Environment.SetEnvironmentVariable("STEP_SUBPROCESS_TIMEOUT_MS", bad);
+
+        var ex = Assert.Throws<InvalidOperationException>(() => StepCaOptions.FromEnvironment());
+        Assert.Contains("STEP_SUBPROCESS_TIMEOUT_MS", ex.Message);
+    }
+
+    [Fact]
+    public void AbsurdlyLargeTimeout_IsRejected()
+    {
+        Environment.SetEnvironmentVariable("STEP_CA_URL", "https://ca.example.com:9000");
+        Environment.SetEnvironmentVariable(
+            "STEP_SUBPROCESS_TIMEOUT_MS",
+            (StepCaOptions.MaxSubprocessTimeoutMs + 1).ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+        Assert.Throws<InvalidOperationException>(() => StepCaOptions.FromEnvironment());
+    }
+
+    [Fact]
+    public void NonPositiveTimeout_OnAlias_IsAlsoRejected_NamingTheAlias()
+    {
+        Environment.SetEnvironmentVariable("STEP_CA_URL", "https://ca.example.com:9000");
+        Environment.SetEnvironmentVariable("STEP_CA_HTTP_TIMEOUT_MS", "0");
+
+        var ex = Assert.Throws<InvalidOperationException>(() => StepCaOptions.FromEnvironment());
+        Assert.Contains("STEP_CA_HTTP_TIMEOUT_MS", ex.Message);
     }
 }
