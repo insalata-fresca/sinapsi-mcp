@@ -182,3 +182,13 @@ timeout/kill path, BCL cert parsing (`get_root_certificate` / `inspect_certifica
 and the **hardening paths**: input validation for both mutating tools (rejected
 before any subprocess spawns) and the error-scrubbing contract (no key/credential
 material, length-capped).
+
+The **upstream/CLI-failure → structured-error** path is exercised end-to-end at
+the tool level (`SubprocessToolErrorTests`): `list_provisioners`,
+`issue_certificate` and `revoke_certificate` are driven through a stock binary
+(`/bin/false`, `/bin/echo`, or a tiny purpose-built script) to force a non-zero
+exit / malformed (non-JSON) stdout WITHOUT a live CA, asserting each returns the
+`{ ok: false, error: <sanitized> }` envelope — including that a secret emitted on
+the failing binary's stderr is redacted by `StepCaErrors.FromStepResult`.
+`get_ca_health` is covered on both legs (a binary that prints `ok` → healthy, and
+a non-`ok` stdout → not-healthy, proving the exact-match guard).
