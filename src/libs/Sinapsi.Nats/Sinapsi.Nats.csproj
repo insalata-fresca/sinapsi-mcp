@@ -29,6 +29,13 @@
     <None Include="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
+  <!-- Expose internal helpers (validation / error-sanitization) + internal bound
+       constants to this lib's own test project only, so the hardening paths can be
+       unit-tested without widening the public API. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Sinapsi.Nats.Tests" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="NATS.Net" Version="2.8.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="8.0.0" />
