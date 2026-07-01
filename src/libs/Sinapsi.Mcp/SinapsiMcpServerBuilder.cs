@@ -49,6 +49,12 @@ public static class SinapsiMcpServerBuilder
         string serverName,
         string serverVersion)
     {
+        // Validate the caller-supplied server identity at the seam so a blank or
+        // control-char-laced name/version is rejected up front rather than baked
+        // into the advertised ServerInfo.
+        serverName = McpValidation.RequireText(serverName, nameof(serverName));
+        serverVersion = McpValidation.RequireText(serverVersion, nameof(serverVersion));
+
         builder.Logging.AddSimpleConsole(o => o.SingleLine = true);
 
         // HttpClient's default 100s timeout silently caps long-running calls
@@ -78,6 +84,12 @@ public static class SinapsiMcpServerBuilder
         string envPrefix,
         int defaultPort)
     {
+        // Validate the binding inputs at the seam: a well-formed env-var prefix
+        // (so "<prefix>_HOST"/"<prefix>_PORT" compose safely) and an in-range
+        // default port.
+        envPrefix = McpValidation.RequireEnvPrefix(envPrefix);
+        defaultPort = McpValidation.RequireDefaultPort(defaultPort);
+
         // ModelContextProtocol.AspNetCore in stateless mode rejects any request
         // that carries an Mcp-Session-Id header (400 "The Mcp-Session-Id header is
         // not supported in stateless mode"). An intermediary HTTP proxy in front of
@@ -98,8 +110,13 @@ public static class SinapsiMcpServerBuilder
 
         app.MapMcp("/mcp");
 
-        var host = Environment.GetEnvironmentVariable($"{envPrefix}_HOST") ?? "0.0.0.0";
-        var port = Environment.GetEnvironmentVariable($"{envPrefix}_PORT") ?? defaultPort.ToString();
+        // Bind the listen address fail-closed: a configured <prefix>_PORT that is
+        // non-numeric or out of the 1..65535 TCP range THROWS naming the env var
+        // (rather than silently composing an unbindable listen URL from garbage),
+        // and a <prefix>_HOST carrying whitespace/control chars is likewise
+        // rejected. When either var is unset the neutral default is used.
+        var host = McpValidation.ReadHost($"{envPrefix}_HOST", "0.0.0.0");
+        var port = McpValidation.ReadPort($"{envPrefix}_PORT", defaultPort);
         app.Urls.Add($"http://{host}:{port}");
 
         return app;

@@ -25,6 +25,15 @@ public sealed class GatewayMcpClient(HttpClient http)
         object toolArgs,
         CancellationToken ct)
     {
+        // Validate the caller-supplied inputs at the seam: an absolute http(s)
+        // gateway, a present control-char-free bearer identity, and a present
+        // control-char-free tool name. Malformed values are rejected here with a
+        // named ArgumentException instead of failing opaquely inside HttpClient or
+        // corrupting an outbound header.
+        gateway = McpValidation.RequireGateway(gateway);
+        bearerJwt = McpValidation.RequireBearer(bearerJwt);
+        toolName = McpValidation.RequireToolName(toolName);
+
         // Step 1 — initialize, capture Mcp-Session-Id.
         using var initReq = _post(gateway, bearerJwt, sessionId: null, new
         {
@@ -42,7 +51,8 @@ public sealed class GatewayMcpClient(HttpClient http)
         if (!initRes.IsSuccessStatusCode)
         {
             var body = await initRes.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            throw new InvalidOperationException($"initialize: {(int)initRes.StatusCode} {body}");
+            throw new InvalidOperationException(
+                $"initialize: {(int)initRes.StatusCode} {McpSanitizer.Sanitize(body)}");
         }
 
         var sessionId = initRes.Headers.TryGetValues("mcp-session-id", out var vals)
@@ -71,7 +81,8 @@ public sealed class GatewayMcpClient(HttpClient http)
         using var callRes = await http.SendAsync(callReq, ct).ConfigureAwait(false);
         var text = await callRes.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         if (!callRes.IsSuccessStatusCode)
-            throw new InvalidOperationException($"tools/call: {(int)callRes.StatusCode} {text}");
+            throw new InvalidOperationException(
+                $"tools/call: {(int)callRes.StatusCode} {McpSanitizer.Sanitize(text)}");
 
         return _extractContent(text);
     }
@@ -115,12 +126,13 @@ public sealed class GatewayMcpClient(HttpClient http)
             catch (JsonException)
             {
                 throw new InvalidOperationException(
-                    $"unparseable response: {bodyText[..Math.Min(200, bodyText.Length)]}");
+                    "unparseable response: " +
+                    McpSanitizer.Sanitize(bodyText[..Math.Min(200, bodyText.Length)]));
             }
         }
 
         if (payload.TryGetProperty("error", out var err))
-            throw new InvalidOperationException($"tool error: {err.GetRawText()}");
+            throw new InvalidOperationException($"tool error: {McpSanitizer.Sanitize(err.GetRawText())}");
 
         if (payload.TryGetProperty("result", out var result) &&
             result.TryGetProperty("content", out var content) &&
