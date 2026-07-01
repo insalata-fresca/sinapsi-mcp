@@ -27,21 +27,49 @@ public sealed class AgentJwtOptions
     public string AudienceProjectId { get; init; } = "";
 
     /// <summary>Assertion + cached-token TTL in minutes (cache TTL is this minus 1).</summary>
-    public int TtlMinutes { get; init; } = 15;
+    public int TtlMinutes { get; init; } = DefaultTtlMinutes;
+
+    /// <summary>Default assertion + cache TTL (minutes) when none is configured.</summary>
+    public const int DefaultTtlMinutes = 15;
+
+    /// <summary>Lower bound on a configurable TTL. The cache margin is TTL-1, so a
+    /// TTL below 2 would produce a non-positive cache window; 2 is the floor.</summary>
+    public const int MinTtlMinutes = 2;
+
+    /// <summary>Upper bound on a configurable TTL. A machine assertion is
+    /// short-lived by design; 1440 minutes (24 h) is a generous ceiling. A larger
+    /// value is treated as a config error, not silently honoured.</summary>
+    public const int MaxTtlMinutes = 1_440;
 
     public static AgentJwtOptions FromEnvironment() => new()
     {
         KeyDir = Environment.GetEnvironmentVariable("AGENT_KEY_DIR") ?? "/etc/agent-jwt/keys",
         Issuer = Environment.GetEnvironmentVariable("OIDC_ISSUER") ?? "https://oidc.example",
         AudienceProjectId = Environment.GetEnvironmentVariable("OIDC_AUDIENCE_PROJECT_ID") ?? "",
-        // Honour JWT_TTL_MIN so callers can override the assertion + cache TTL.
-        // Leaving it unset keeps the 15-min default. Only positive values are
-        // accepted — a zero/negative value falls back to the default rather than
-        // minting an instantly-expired token.
-        TtlMinutes = int.TryParse(Environment.GetEnvironmentVariable("JWT_TTL_MIN"), out var t) && t > 0
-            ? t
-            : 15,
+        TtlMinutes = ReadTtlMinutes(),
     };
+
+    /// <summary>
+    /// Read + fail-closed-validate <c>JWT_TTL_MIN</c>. Unset -> the 15-minute
+    /// default. A non-numeric or out-of-range value (below
+    /// <see cref="MinTtlMinutes"/> or above <see cref="MaxTtlMinutes"/>) THROWS an
+    /// <see cref="InvalidOperationException"/> naming the offending env var, rather
+    /// than silently swallowing a footgun into an instantly-expired (or absurdly
+    /// long-lived) token. A bare <c>0</c>/<c>-5</c> now surfaces the misconfig.
+    /// </summary>
+    private static int ReadTtlMinutes()
+    {
+        var raw = Environment.GetEnvironmentVariable("JWT_TTL_MIN");
+        if (string.IsNullOrEmpty(raw))
+            return DefaultTtlMinutes;
+
+        if (!int.TryParse(raw, out var t) || t < MinTtlMinutes || t > MaxTtlMinutes)
+            throw new InvalidOperationException(
+                $"JWT_TTL_MIN='{raw}' is invalid: expected an integer in " +
+                $"{MinTtlMinutes}..{MaxTtlMinutes} minutes (default {DefaultTtlMinutes}).");
+
+        return t;
+    }
 }
 
 /// <summary>
@@ -70,9 +98,21 @@ public sealed class AgentJwtMinter(HttpClient http, AgentJwtOptions opt)
 
     /// <summary>Mint an OIDC access token for <paramref name="agent"/>,
     /// returning a cached one if still fresh. Cache TTL = <c>TtlMinutes - 1</c>
-    /// minutes (a 1-minute safety margin against clock skew).</summary>
+    /// minutes (a 1-minute safety margin against clock skew).
+    /// <para>
+    /// The <paramref name="agent"/> name becomes a filesystem path component
+    /// (<c>&lt;KeyDir&gt;/&lt;agent&gt;.json</c>), so it is validated first: a
+    /// missing/over-long name, a path separator, traversal (<c>.</c>/<c>..</c>),
+    /// NUL, or a control character is rejected with an <see cref="ArgumentException"/>
+    /// BEFORE any cache lookup or filesystem access — a hostile name can never
+    /// escape <see cref="AgentJwtOptions.KeyDir"/>.
+    /// </para></summary>
+    /// <exception cref="ArgumentException">The agent name is malformed.</exception>
     public async Task<string> MintAsync(string agent, CancellationToken ct)
     {
+        if (AgentJwtValidation.ValidateAgent(agent) is { } reason)
+            throw new ArgumentException(AgentJwtErrors.Sanitize(reason), nameof(agent));
+
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -87,11 +127,18 @@ public sealed class AgentJwtMinter(HttpClient http, AgentJwtOptions opt)
 
     private async Task<string> MintFreshAsync(string agent, CancellationToken ct)
     {
+        // Fail-closed on unusable config at the seam where it is first used, so a
+        // missing issuer/audience or a non-URL issuer throws an ArgumentException
+        // naming the offending option instead of building a request against a
+        // footgun default. (Validating here, not in the ctor, keeps DI-time
+        // construction cheap — the exemplar validates config at bind time too.)
+        AgentJwtValidation.ValidateOptions(opt);
+
         var path = Path.Combine(opt.KeyDir, $"{agent}.json");
         var jwk = JsonSerializer.Deserialize<Jwk>(await File.ReadAllTextAsync(path, ct).ConfigureAwait(false))
                   ?? throw new InvalidOperationException($"JWK parse failed for {agent}");
 
-        var assertion = BuildAssertion(jwk);
+        var assertion = BuildAssertion(agent, jwk);
         var form = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["grant_type"] = "urn:ietf:params:oauth:grant-type:jwt-bearer",
@@ -104,14 +151,18 @@ public sealed class AgentJwtMinter(HttpClient http, AgentJwtOptions opt)
             new FormUrlEncodedContent(form), ct).ConfigureAwait(false);
         var body = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         if (!res.IsSuccessStatusCode)
-            throw new InvalidOperationException($"OIDC token HTTP {(int)res.StatusCode}: {body[..Math.Min(300, body.Length)]}");
+            // Sanitize the provider body before surfacing it: a token endpoint
+            // could echo the assertion / a bearer token / a key on an error, and
+            // that must never travel out in an exception message.
+            throw new InvalidOperationException(
+                $"OIDC token HTTP {(int)res.StatusCode}: {AgentJwtErrors.Sanitize(body[..Math.Min(300, body.Length)])}");
 
         using var doc = JsonDocument.Parse(body);
         return doc.RootElement.GetProperty("access_token").GetString()
                ?? throw new InvalidOperationException("no access_token in OIDC response");
     }
 
-    private string BuildAssertion(Jwk jwk)
+    private string BuildAssertion(string agent, Jwk jwk)
     {
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var header = new { alg = "RS256", kid = jwk.KeyId, typ = "JWT" };
@@ -125,7 +176,19 @@ public sealed class AgentJwtMinter(HttpClient http, AgentJwtOptions opt)
         };
         var signingInput = $"{B64Url(JsonSerializer.SerializeToUtf8Bytes(header))}.{B64Url(JsonSerializer.SerializeToUtf8Bytes(payload))}";
         using var rsa = RSA.Create();
-        rsa.ImportFromPem(jwk.Key);
+        try
+        {
+            rsa.ImportFromPem(jwk.Key);
+        }
+        catch (Exception e)
+        {
+            // A malformed private key can make ImportFromPem throw a message that
+            // may quote the offending PEM. Never let the signing key travel out in
+            // the surfaced error: replace it with a neutral, agent-scoped message
+            // and route it through Sanitize as defence in depth.
+            throw new InvalidOperationException(
+                AgentJwtErrors.Sanitize($"invalid signing key for agent '{agent}': {e.GetType().Name}"));
+        }
         var sig = rsa.SignData(Encoding.ASCII.GetBytes(signingInput), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
         return $"{signingInput}.{B64Url(sig)}";
     }

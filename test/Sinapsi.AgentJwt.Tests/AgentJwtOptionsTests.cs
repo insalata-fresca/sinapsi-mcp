@@ -5,9 +5,10 @@ namespace Sinapsi.AgentJwt.Tests;
 
 /// <summary>
 /// Covers the env-binding contract of <see cref="AgentJwtOptions.FromEnvironment"/>:
-/// neutral defaults on unset, override on set, and the JWT_TTL_MIN
-/// positive-only fallback. Env access is serialised via a shared lock since the
-/// process env is global mutable state.
+/// neutral defaults on unset, override on set, and the JWT_TTL_MIN fail-closed
+/// bound (a non-numeric / out-of-range value throws naming the var; in-range
+/// binds; empty == unset). Env access is serialised via the "env" collection
+/// since the process env is global mutable state.
 /// </summary>
 [Collection("env")]
 public sealed class AgentJwtOptionsTests
@@ -67,18 +68,55 @@ public sealed class AgentJwtOptionsTests
         finally { ClearAll(); }
     }
 
+    // FAIL-CLOSED: a non-numeric or out-of-range JWT_TTL_MIN now THROWS naming
+    // the env var, rather than silently swallowing a footgun to the 15-min
+    // default. (Previously "0"/"-5"/"not-a-number" fell back silently — a
+    // misconfigured deploy that meant to set a real TTL would never learn it was
+    // ignored.) The exception message names JWT_TTL_MIN so the operator can fix it.
     [Theory]
     [InlineData("0")]
     [InlineData("-5")]
+    [InlineData("1")]                 // below the min-2 floor (cache margin is TTL-1)
+    [InlineData("1441")]              // above the 24 h ceiling
     [InlineData("not-a-number")]
-    [InlineData("")]
-    public void FromEnvironment_NonPositiveOrInvalidTtl_FallsBackTo15(string raw)
+    [InlineData("15.5")]              // not an integer
+    public void FromEnvironment_NonNumericOrOutOfRangeTtl_ThrowsNamingTheVar(string raw)
     {
         ClearAll();
         Environment.SetEnvironmentVariable("JWT_TTL_MIN", raw);
         try
         {
+            var ex = Assert.Throws<InvalidOperationException>(() => AgentJwtOptions.FromEnvironment());
+            Assert.Contains("JWT_TTL_MIN", ex.Message);
+        }
+        finally { ClearAll(); }
+    }
+
+    // An empty JWT_TTL_MIN is indistinguishable from unset on .NET (setting a var
+    // to "" removes it), so it correctly falls back to the neutral default.
+    [Fact]
+    public void FromEnvironment_EmptyTtl_FallsBackToDefault()
+    {
+        ClearAll();
+        Environment.SetEnvironmentVariable("JWT_TTL_MIN", "");
+        try
+        {
             Assert.Equal(15, AgentJwtOptions.FromEnvironment().TtlMinutes);
+        }
+        finally { ClearAll(); }
+    }
+
+    // The accepted-range boundaries bind cleanly.
+    [Theory]
+    [InlineData("2", 2)]
+    [InlineData("1440", 1440)]
+    public void FromEnvironment_InRangeTtl_Binds(string raw, int expected)
+    {
+        ClearAll();
+        Environment.SetEnvironmentVariable("JWT_TTL_MIN", raw);
+        try
+        {
+            Assert.Equal(expected, AgentJwtOptions.FromEnvironment().TtlMinutes);
         }
         finally { ClearAll(); }
     }
