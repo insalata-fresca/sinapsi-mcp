@@ -13,7 +13,7 @@
          version it asks for. -->
     <IsPackable>true</IsPackable>
     <PackageId>Sinapsi.Nats</PackageId>
-    <Version>0.4.2</Version>
+    <!-- Version inherited from Directory.Build.props (repo-wide 0.1.0 pin). -->
     <Authors>ste</Authors>
     <Description>Sinapsi.Nats — NATS JetStream worker bases and a CloudEvents v1.0
       publisher: NKey+TLS connection from environment, a self-healing durable-consumer

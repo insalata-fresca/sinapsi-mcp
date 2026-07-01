@@ -1,0 +1,11 @@
+<Project>
+  <!--
+    Repo-wide version pin for the v0.1.0 release cut.
+    All packable lib csproj files inherit this; bump here for the next release.
+    Individual servers intentionally carry no <Version> (they are deployed OCI
+    images, not NuGet packages).
+  -->
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+</Project>

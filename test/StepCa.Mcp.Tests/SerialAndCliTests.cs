@@ -9,6 +9,13 @@ namespace StepCa.Mcp.Tests;
 /// The serial-number decimal conversion and the <see cref="StepCli"/> subprocess
 /// timeout/kill path.
 /// </summary>
+/// <remarks>
+/// Runs in the "stepca-env" collection (DisableParallelization = true) so the
+/// real 200 ms kill-timeout assertion is not starved by concurrent test threads
+/// competing for OS scheduler quanta — the root cause of intermittent flakes
+/// when the full solution test suite ran in parallel.
+/// </remarks>
+[Collection("stepca-env")]
 public sealed class SerialAndCliTests
 {
     [Fact]

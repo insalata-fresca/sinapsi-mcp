@@ -16,7 +16,7 @@
          Codeberg). The GitHub adapter lives in the Github.Mcp server (raw REST). -->
     <IsPackable>true</IsPackable>
     <PackageId>Sinapsi.Forge</PackageId>
-    <Version>0.5.0</Version>
+    <!-- Version inherited from Directory.Build.props (repo-wide 0.1.0 pin). -->
     <Authors>ste</Authors>
     <Description>Sinapsi.Forge — provider-neutral git-forge MCP tool surface.
       IForgeClient abstraction + DTOs + the common [McpServerTool] classes shared by

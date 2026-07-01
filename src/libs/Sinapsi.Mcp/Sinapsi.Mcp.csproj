@@ -13,7 +13,7 @@
          version it asks for. -->
     <IsPackable>true</IsPackable>
     <PackageId>Sinapsi.Mcp</PackageId>
-    <Version>0.3.1</Version>
+    <!-- Version inherited from Directory.Build.props (repo-wide 0.1.0 pin). -->
     <Authors>ste</Authors>
     <Description>Small .NET helpers for building and calling Model Context Protocol (MCP) servers over HTTP. Provides GatewayMcpClient, a minimal Streamable-HTTP JSON-RPC client that performs the initialize / notifications-initialized / tools-call round-trip against an upstream MCP endpoint and parses either an SSE data frame or a plain JSON body, plus SinapsiMcpServerBuilder, a pair of extension methods on WebApplicationBuilder and WebApplication that consolidate the bootstrap an MCP server otherwise repeats: single-line console logging, an infinite-timeout HttpClient for the gateway client, an env-driven listen address, and the /mcp route. When the HTTP transport is configured stateless, the mapping helper also strips an inbound Mcp-Session-Id header so a stray session id forwarded by an intermediary proxy does not cause a 400 in stateless mode. Built on ModelContextProtocol.AspNetCore; consumers still see the SDK types directly.</Description>
   </PropertyGroup>

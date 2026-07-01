@@ -12,7 +12,7 @@
          (PackageReference, never ProjectReference). Private for now. -->
     <IsPackable>true</IsPackable>
     <PackageId>Sinapsi.AgentJwt</PackageId>
-    <Version>0.1.1</Version>
+    <!-- Version inherited from Directory.Build.props (repo-wide 0.1.0 pin). -->
     <Authors>ste</Authors>
     <Description>Sinapsi.AgentJwt — OIDC machine-identity JWT-bearer flow
       (RFC 7523) with a per-agent token cache. Loads an agent JWK, signs an

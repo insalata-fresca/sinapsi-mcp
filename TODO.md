@@ -8,6 +8,5 @@ A loose list of things to get to. No promises, no schedule.
   here is public by default, and the CI does not push to any public package
   feed (nuget.org / GHCR) yet.
 
-- Add the first shared library under `src/libs/`.
-
-- Add the first MCP server under `src/servers/`.
+- **Release path.** Publish to the internal Forgejo NuGet feed first; gate any
+  public feed (nuget.org) on a separate, operator-triggered decision.
