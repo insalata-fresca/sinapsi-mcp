@@ -26,6 +26,8 @@
     <Compile Include="../../src/servers/Sshgw.Mcp/ReadFilePolicy.cs" />
     <Compile Include="../../src/servers/Sshgw.Mcp/ServerRegistry.cs" />
     <Compile Include="../../src/servers/Sshgw.Mcp/SshgwOptions.cs" />
+    <Compile Include="../../src/servers/Sshgw.Mcp/SshgwValidation.cs" />
+    <Compile Include="../../src/servers/Sshgw.Mcp/SshgwErrors.cs" />
     <Compile Include="../../src/servers/Sshgw.Mcp/SshClient.cs" />
     <Compile Include="../../src/servers/Sshgw.Mcp/SshgwTools.cs" />
     <PackageReference Include="ModelContextProtocol.AspNetCore" Version="1.3.0" />

@@ -14,8 +14,17 @@ namespace Sshgw.Mcp;
 /// shaping are deliberate follow-ups. The security-critical bounds
 /// (<see cref="CommandWhitelist"/>, <see cref="ReadFilePolicy"/>) are enforced in
 /// <see cref="SshgwTools"/> BEFORE calling in here.
+///
+/// <para>
+/// The two transport methods (<see cref="ExecuteAsync"/>, <see cref="ReadFileAsync"/>)
+/// are <c>virtual</c> and the class is unsealed <b>solely</b> so a test can inject a
+/// fake transport that records whether it was reached (proving the tool guards
+/// short-circuit BEFORE any SSH I/O). There is no production subclass — Program.cs
+/// constructs the concrete class — and the method signatures, DI wiring, and
+/// behaviour are unchanged.
+/// </para>
 /// </summary>
-public sealed class SshClient
+public class SshClient
 {
     private readonly SshgwOptions _opts;
     public SshClient(SshgwOptions opts) => _opts = opts;
@@ -32,7 +41,7 @@ public sealed class SshClient
         };
     }
 
-    public async Task<ExecResult> ExecuteAsync(ServerEntry e, string command, CancellationToken ct)
+    public virtual async Task<ExecResult> ExecuteAsync(ServerEntry e, string command, CancellationToken ct)
     {
         using var client = new Renci.SshNet.SshClient(BuildConnectionInfo(e));
         await Task.Run(() => client.Connect(), ct);
@@ -48,7 +57,7 @@ public sealed class SshClient
 
     /// <summary>Read at most <paramref name="maxBytes"/> from a remote file via
     /// SFTP. Returns the bytes + whether the file was larger (truncated).</summary>
-    public async Task<ReadResult> ReadFileAsync(ServerEntry e, string path, int maxBytes, CancellationToken ct)
+    public virtual async Task<ReadResult> ReadFileAsync(ServerEntry e, string path, int maxBytes, CancellationToken ct)
     {
         using var sftp = new SftpClient(BuildConnectionInfo(e));
         await Task.Run(() => sftp.Connect(), ct);

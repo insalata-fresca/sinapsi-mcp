@@ -3,36 +3,90 @@
 A personal-lab MCP **server** that fronts a small set of SSH hosts. It is a thin
 host over an SSH transport: it reads a JSON registry of servers (host + per-server
 command whitelist + optional read_file path policy) and exposes a config-driven
-tool surface over streamable HTTP at `/mcp`.
+4-tool surface over streamable HTTP at `/mcp`.
 
 It is config-driven by design: the server only reaches the hosts the registry
 names, and on each host only the commands and file paths the registry permits.
 
-## Tool surface
+## Contents
 
-| Tool | Verb | Bound |
-|---|---|---|
-| `list-servers` | read | — |
-| `execute-command` | read | per-server command whitelist (`CommandWhitelist`) |
-| `read_file` | read | per-server `ReadFilePolicy` (secret denylist / optional allowlist) + `max_bytes` |
-| `upload` | write | (scaffold stub) |
+- [Overview](#overview)
+- [Tool surface](#tool-surface-4)
+- [Per-tool reference](#per-tool-reference)
+- [Configuration](#configuration)
+- [Run](#run)
+- [Security notes](#security-notes)
+- [Error contract](#error-contract)
+- [Testing](#testing)
 
-`read_file` returns the file's bytes in the response (UTF-8, or base64 when
-binary), capped by `max_bytes`, and refuses secret paths. Because the read returns
-bytes, the path policy is the in-MCP bound that makes it safe — the same role the
-command whitelist plays for `execute-command`.
+## Overview
+
+The server holds **no host topology in source**. The server registry (hosts +
+per-server command whitelist + per-server read_file policy) lives in a JSON file
+whose path is supplied by an environment variable at deploy time, so the binary
+carries no site- or deployment-specific wiring, and the SSH identity key is
+mounted rather than baked in.
+
+Architecturally it is a handful of small seams:
+
+| Seam | File | Responsibility |
+|------|------|----------------|
+| Config | `SshgwOptions.cs` | Bind + validate env into an immutable record; fail-closed on a bad numeric bound (default + hard ceiling per value). |
+| Registry | `ServerRegistry.cs` | Load + index the JSON server document once at startup. |
+| Command bound | `CommandWhitelist.cs` | Per-server allowlist matcher for `execute-command`. |
+| Path bound | `ReadFilePolicy.cs` | Per-server secret denylist / optional allowlist for `read_file`. |
+| Validation | `SshgwValidation.cs` | Per-parameter fail-fast input checks, run at the top of every tool before the bounds and before any SSH I/O. |
+| Redaction | `SshgwErrors.cs` | Scrub key material / credentials out of surfaced command stderr; length-cap it. |
+| Transport | `SshClient.cs` | Open a short-lived SSH/SFTP connection per call (stateless); run the command / read the file. |
+| Tools | `SshgwTools.cs` | The 4 MCP tools. Validate input, enforce the bounds, scrub surfaced errors. |
+
+## Tool surface (4)
+
+| Tool | Mutates | What it does |
+|------|:-------:|--------------|
+| `list-servers` | no | Enumerate the configured servers and whether each is read-only (has a whitelist). |
+| `execute-command` | no | Run a whitelisted read-only command on a named server; return exit code + stdout + (scrubbed) stderr. |
+| `read_file` | no | Read a remote file's bytes (UTF-8 or base64), path-bounded by the secret denylist / allowlist, capped by `max_bytes`. |
+| `upload` | **yes** | Upload a local file to a remote path. Deliberate not-implemented stub (validates its input, then returns a scaffold error). |
+
+## Per-tool reference
+
+### `list-servers`
+- **Params:** none.
+- **Returns:** `{ servers: [{ name, host, port, username, readonly }], count }`.
+  `readonly` is `true` when the server carries an explicit command whitelist.
+- **Errors:** never throws.
+
+### `execute-command`
+- **Params:**
+  - `connectionName` (string, **required**) — server name from `list-servers`. Rejected if empty/whitespace, longer than 128 chars, or containing control characters.
+  - `cmdString` (string, **required**) — the command. Rejected if empty/whitespace, longer than 8192 chars, or containing control characters / newlines. Then gated by the per-server command whitelist.
+- **Returns:** `{ ok, exitCode, stdout, stderr }`. `ok`/`exitCode` are computed on the **raw** exit code **before** stderr is scrubbed, so a redaction can never flip the verdict. `stderr` is routed through `SshgwErrors.Sanitize` (or `null` when empty).
+- **Errors:** input-validation failures, an unknown server, and a non-whitelisted command all return `{ ok: false, error }` **before any SSH I/O**.
+
+### `read_file`
+- **Params:**
+  - `connectionName` (string, **required**) — validated as above.
+  - `remotePath` (string, **required**) — rejected if empty/whitespace, longer than 4096 chars, containing control characters / newlines, or starting with `-`. Then gated by the per-server `ReadFilePolicy` (absolute-path + secret denylist / allowlist).
+  - `max_bytes` (int, optional) — clamped to `[1, hard ceiling]`; defaults to the configured default cap.
+- **Returns:** `{ ok: true, path, size, returned_bytes, truncated, sha256, encoding, content }`. `content` is the requested file's bytes verbatim (UTF-8, or base64 when binary) — it is **deliberately not scrubbed**; the path policy is the bound that decides whether the file may be disclosed at all.
+- **Errors:** input-validation failures, an unknown server, a policy-blocked path, a not-found path, and a directory path all return `{ ok: false, error }`; only a policy-cleared path reaches SFTP.
+
+### `upload` (mutates)
+- **Params:** `connectionName`, `localPath`, `remotePath` — each validated (the two paths reject a leading `-`).
+- **Returns:** `{ ok: false, error }` — a deliberate not-implemented stub. Validation runs first so the guard contract holds uniformly and is already in place when the SFTP body is ported.
 
 ## Configuration
 
 | Env var | Required | Default | Purpose |
-|---|:--:|---|---|
+|---------|:--------:|---------|---------|
 | `SSHGW_CONFIG_FILE` | no | `/etc/sshgw/servers.json` | Path to the server registry JSON (hosts + per-server whitelist + read_file policy). Mount it read-only. |
-| `SSHGW_CONNECT_TIMEOUT_MS` | no | `10000` | SSH connect timeout. |
-| `SSHGW_COMMAND_TIMEOUT_MS` | no | `30000` | Per-command timeout. |
-| `SSHGW_READFILE_DEFAULT_MAX_BYTES` | no | `262144` | Default `read_file` cap (256 KiB). |
-| `SSHGW_READFILE_HARD_MAX_BYTES` | no | `2097152` | Hard `read_file` ceiling (2 MiB). |
-| `SSHGW_MCP_PORT` | no | `9204` | Listen port. |
+| `SSHGW_CONNECT_TIMEOUT_MS` | no | `10000` | SSH connect timeout. Integer in `1..120000`; non-numeric / `<= 0` / out-of-range **fails startup**. |
+| `SSHGW_COMMAND_TIMEOUT_MS` | no | `30000` | Per-command timeout. Integer in `1..600000`; invalid values **fail startup**. |
+| `SSHGW_READFILE_DEFAULT_MAX_BYTES` | no | `262144` | Default `read_file` cap (256 KiB). Integer in `1..16777216`; must not exceed the hard cap; invalid values **fail startup**. |
+| `SSHGW_READFILE_HARD_MAX_BYTES` | no | `2097152` | Hard `read_file` ceiling (2 MiB). Integer in `1..67108864`; invalid values **fail startup**. |
 | `SSHGW_MCP_HOST` | no | `0.0.0.0` | Listen address. |
+| `SSHGW_MCP_PORT` | no | `9204` | Listen port. |
 
 ### Server registry format
 
@@ -63,9 +117,75 @@ the image.
 ## Run
 
 ```sh
+SSHGW_CONFIG_FILE=/etc/sshgw/servers.json \
 dotnet run -c Release --project src/servers/Sshgw.Mcp
 # → MCP endpoint on http://0.0.0.0:9204/mcp
 ```
 
 The transport is stateless; a fronting proxy's forwarded `Mcp-Session-Id` header is
 stripped so it cannot 400 an otherwise-valid request.
+
+## Security notes
+
+This server can run commands on and read files from real hosts. It is built to
+fail safe:
+
+- **Fail-closed config.** Every numeric option has a neutral default **and** a hard
+  ceiling. A non-integer, `<= 0`, or above-ceiling value — or a default byte cap
+  that exceeds the hard byte cap — throws on startup naming the offending env var,
+  rather than silently swapping in the default (the old behaviour). A config typo
+  stops startup instead of running with a footgun (a zero timeout, an unbounded
+  cap).
+- **Input validation before side effects.** Every tool runs `SshgwValidation` at
+  the **top**, BEFORE the whitelist / denylist bounds and BEFORE any SSH I/O:
+  required/non-empty, length caps, control-char/newline rejection, and a
+  leading-`-` reject on paths. Invalid input returns a structured error, never an
+  exception, and never opens a connection.
+- **Command bound.** `execute-command` is gated by the per-server
+  `CommandWhitelist` (self-anchored regexes); a non-whitelisted command is refused
+  before any SSH I/O.
+- **Path bound.** `read_file` is gated by the per-server `ReadFilePolicy` — a
+  global secret denylist (keys, `.env`, secret-manager and NATS-client dirs, local
+  DBs, …) plus an optional deny-by-default allowlist. A secret path is refused
+  before any SSH I/O.
+- **No secret leakage in surfaced errors.** `execute-command`'s surfaced `stderr`
+  is passed through `SshgwErrors.Sanitize`: PEM **private-key** blocks and
+  `password=/token=/secret=/Authorization:` style assignments are redacted, and the
+  message is length-capped. The ok/exitCode verdict is computed on the **raw** exit
+  code *before* the scrub, so a redaction can never flip it.
+- **Requested content is the read's payload, not an error.** `read_file`'s
+  successful `content` is **not** scrubbed — the path denylist is the bound that
+  decides disclosure; once a path clears the policy, its bytes are the deliberately
+  requested payload and are returned verbatim (scrubbing would corrupt them).
+- **Bounded I/O.** SSH connect + per-command timeouts and `read_file`'s byte cap
+  bound each call. The transport is stateless — a short-lived connection per call.
+
+## Error contract
+
+Every tool returns a JSON object. On error it returns `{ "ok": false, "error": "…" }`.
+`execute-command`'s surfaced `stderr` is scrubbed of key/credential material and
+length-capped before being returned; its `ok`/`exitCode` reflect the raw upstream
+exit code. `read_file`'s successful `content` is intentionally returned verbatim.
+
+## Testing
+
+```sh
+dotnet test test/Sshgw.Mcp.Tests
+```
+
+The suite covers the tool-surface parity guard, registry parsing, the two security
+bounds (`CommandWhitelist`, `ReadFilePolicy`), the fail-closed config matrix
+(default + ceiling + cross-field rejection per numeric var), the per-parameter
+input validation (`SshgwValidationTests` — an `InlineData` matrix using the C#
+escape `\0` for NUL inputs), and the **hardening paths**:
+
+- `SshgwToolGuardTests` injects a fake transport that **throws if reached**, proving
+  every rejection path (validation, whitelist, denylist, unknown server)
+  short-circuits BEFORE any SSH I/O.
+- `SshgwErrorsTests` asserts the no-key/no-credential + length-cap contract for the
+  stderr scrubber.
+- `SshgwToolErrorTests` (load-bearing) drives a canned transport past the guards: a
+  credential emitted on stderr shows `[redacted]` in the envelope; `ok`/`exitCode`
+  stay on the raw exit code (a redaction cannot flip the verdict); a
+  credential-shaped requested file is returned untouched; and a timeout surfaces as
+  a structured error, not an unhandled throw.

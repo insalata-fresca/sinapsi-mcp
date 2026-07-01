@@ -12,6 +12,13 @@ namespace Sshgw.Mcp;
 /// ReadFilePolicy) and enforce them HERE, before any SSH I/O — those bounds are
 /// the boundary that keeps a read from running an unlisted command or returning a
 /// secret. <c>upload</c> is a write tool.
+///
+/// <para>
+/// Every tool that takes user input runs <see cref="SshgwValidation"/> at the TOP,
+/// BEFORE the CommandWhitelist / ReadFilePolicy bounds and BEFORE any SSH I/O, so a
+/// malformed connection name / command / path is rejected with a structured error
+/// (never an exception, never a leak) before a connection is even attempted.
+/// </para>
 /// </summary>
 [McpServerToolType]
 public sealed class SshgwTools
@@ -43,6 +50,12 @@ public sealed class SshgwTools
         [Description("Command to execute (must match the server's read-only whitelist)")] string cmdString,
         CancellationToken ct = default)
     {
+        // Fail-fast input validation BEFORE the whitelist bound and any SSH I/O.
+        if (SshgwValidation.ValidateConnectionName(connectionName) is { } nameErr)
+            return Err(nameErr);
+        if (SshgwValidation.ValidateCommand(cmdString) is { } cmdErr)
+            return Err(cmdErr);
+
         var entry = registry.Get(connectionName);
         if (entry is null) return Err($"unknown server '{connectionName}'");
 
@@ -52,12 +65,15 @@ public sealed class SshgwTools
             return Err("Command not in whitelist, execution forbidden");
 
         var r = await ssh.ExecuteAsync(entry, cmdString, ct);
+        // Compute the success verdict on the RAW exit code FIRST, so that
+        // sanitizing the surfaced stderr can never flip ok/exitCode. Only the
+        // human-facing stderr text is routed through the secret scrubber.
         return new JsonObject
         {
             ["ok"] = r.ExitCode == 0,
             ["exitCode"] = r.ExitCode,
             ["stdout"] = r.Stdout,
-            ["stderr"] = string.IsNullOrEmpty(r.Stderr) ? null : r.Stderr,
+            ["stderr"] = SshgwErrors.Sanitize(r.Stderr),
         };
     }
 
@@ -70,6 +86,12 @@ public sealed class SshgwTools
         [Description("Max bytes to return (capped at the server hard limit)")] int? max_bytes = null,
         CancellationToken ct = default)
     {
+        // Fail-fast input validation BEFORE the path policy bound and any SSH I/O.
+        if (SshgwValidation.ValidateConnectionName(connectionName) is { } nameErr)
+            return Err(nameErr);
+        if (SshgwValidation.ValidatePath(remotePath, "remotePath") is { } pathErr)
+            return Err(pathErr);
+
         var entry = registry.Get(connectionName);
         if (entry is null) return Err($"unknown server '{connectionName}'");
 
@@ -105,6 +127,16 @@ public sealed class SshgwTools
         [Description("Local source path")] string localPath,
         [Description("Remote destination path")] string remotePath)
     {
+        // Fail-fast input validation runs even for the stub, so the guard contract
+        // (validate at the TOP, before any I/O) holds uniformly across all four
+        // tools and is already in place when the SFTP body is ported.
+        if (SshgwValidation.ValidateConnectionName(connectionName) is { } nameErr)
+            return Err(nameErr);
+        if (SshgwValidation.ValidatePath(localPath, "localPath") is { } localErr)
+            return Err(localErr);
+        if (SshgwValidation.ValidatePath(remotePath, "remotePath") is { } remoteErr)
+            return Err(remoteErr);
+
         // TODO: port the SFTP upload (SftpClient.UploadFile). Left as a deliberate
         // stub so it is not silently half-implemented; this is a write tool.
         return Err("upload not yet implemented (scaffold)");
