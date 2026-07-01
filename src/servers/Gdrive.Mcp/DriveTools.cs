@@ -6,6 +6,18 @@ using DriveData = Google.Apis.Drive.v3.Data;
 
 namespace Gdrive.Mcp;
 
+// ---------------------------------------------------------------------------
+// Google Drive CRUD surface (9 tools). Hardening patterns (mirroring the
+// StepCa.Mcp exemplar for an HTTP-backed server):
+//   * Every tool validates its parameters via GdriveValidation BEFORE any HTTP
+//     call is issued, returning a structured {ok:false, error} envelope on bad
+//     input (never a thrown exception through the transport).
+//   * Every surfaced upstream/error string routes through GdriveErrors.Sanitize
+//     so an OAuth/refresh token can never leak in an error message.
+//   * The per-request HttpClient.Timeout is clamped in DriveClientFactory from
+//     the fail-closed GdriveConfig ceiling.
+// ---------------------------------------------------------------------------
+
 /// <summary>
 /// Google Drive CRUD surface. A managed Drive connector typically lacks update + delete
 /// (and can't be extended); this self-hosted MCP exposes the full lifecycle. The
@@ -17,6 +29,10 @@ public sealed class DriveTools
     private const string FileFields =
         "id,name,mimeType,modifiedTime,createdTime,size,parents,owners(displayName,emailAddress),trashed,webViewLink";
 
+    // Uniform structured-error envelope. Callers can rely on ok==false + a
+    // sanitised error string for EVERY failure path (validation and upstream).
+    private static object Err(string reason) => new { ok = false, error = GdriveErrors.Sanitize(reason) };
+
     [McpServerTool(Name = "list_files")]
     [Description("List files in Drive, newest first. Optionally scope to a parent folder id. Returns id/name/mimeType/modifiedTime/size.")]
     public static async Task<object> ListFiles(
@@ -25,17 +41,23 @@ public sealed class DriveTools
         [Description("Max files to return (1-1000). Default 50.")] int pageSize = 50,
         [Description("Include files in the trash. Default false.")] bool includeTrashed = false)
     {
-        var req = drive.Files.List();
-        req.PageSize = Math.Clamp(pageSize, 1, 1000);
-        req.OrderBy = "modifiedTime desc";
-        req.Fields = $"files({FileFields}),nextPageToken";
-        var clauses = new List<string>();
-        if (!string.IsNullOrWhiteSpace(folderId)) clauses.Add($"'{Escape(folderId)}' in parents");
-        if (!includeTrashed) clauses.Add("trashed = false");
-        if (clauses.Count > 0) req.Q = string.Join(" and ", clauses);
+        if (GdriveValidation.ValidateFolderId(folderId) is { } folderErr) return Err(folderErr);
 
-        var res = await req.ExecuteAsync();
-        return new { count = res.Files.Count, files = res.Files.Select(Summarize), nextPageToken = res.NextPageToken };
+        try
+        {
+            var req = drive.Files.List();
+            req.PageSize = Math.Clamp(pageSize, 1, 1000);
+            req.OrderBy = "modifiedTime desc";
+            req.Fields = $"files({FileFields}),nextPageToken";
+            var clauses = new List<string>();
+            if (!string.IsNullOrWhiteSpace(folderId)) clauses.Add($"'{Escape(folderId)}' in parents");
+            if (!includeTrashed) clauses.Add("trashed = false");
+            if (clauses.Count > 0) req.Q = string.Join(" and ", clauses);
+
+            var res = await req.ExecuteAsync();
+            return new { count = res.Files.Count, files = res.Files.Select(Summarize), nextPageToken = res.NextPageToken };
+        }
+        catch (Exception e) { return Err(e.Message); }
     }
 
     [McpServerTool(Name = "search_files")]
@@ -45,12 +67,18 @@ public sealed class DriveTools
         [Description("Drive API query ('q') expression.")] string query,
         [Description("Max files to return (1-1000). Default 50.")] int pageSize = 50)
     {
-        var req = drive.Files.List();
-        req.PageSize = Math.Clamp(pageSize, 1, 1000);
-        req.Fields = $"files({FileFields}),nextPageToken";
-        req.Q = query;
-        var res = await req.ExecuteAsync();
-        return new { count = res.Files.Count, files = res.Files.Select(Summarize), nextPageToken = res.NextPageToken };
+        if (GdriveValidation.ValidateQuery(query) is { } queryErr) return Err(queryErr);
+
+        try
+        {
+            var req = drive.Files.List();
+            req.PageSize = Math.Clamp(pageSize, 1, 1000);
+            req.Fields = $"files({FileFields}),nextPageToken";
+            req.Q = query;
+            var res = await req.ExecuteAsync();
+            return new { count = res.Files.Count, files = res.Files.Select(Summarize), nextPageToken = res.NextPageToken };
+        }
+        catch (Exception e) { return Err(e.Message); }
     }
 
     [McpServerTool(Name = "get_file_metadata")]
@@ -59,9 +87,15 @@ public sealed class DriveTools
         DriveService drive,
         [Description("The Drive file id.")] string fileId)
     {
-        var req = drive.Files.Get(fileId);
-        req.Fields = FileFields;
-        return Summarize(await req.ExecuteAsync());
+        if (GdriveValidation.ValidateFileId(fileId) is { } idErr) return Err(idErr);
+
+        try
+        {
+            var req = drive.Files.Get(fileId);
+            req.Fields = FileFields;
+            return Summarize(await req.ExecuteAsync());
+        }
+        catch (Exception e) { return Err(e.Message); }
     }
 
     // 4 MiB default chunk. Sized to a modest container memory budget: a single call buffers the
@@ -79,12 +113,19 @@ public sealed class DriveTools
         [Description("The Drive file id.")] string fileId,
         [Description("Max bytes to return (guards against huge files). Default 1048576 (1 MiB).")] int maxBytes = 1_048_576)
     {
-        using var ms = new MemoryStream();
-        await drive.Files.Get(fileId).DownloadAsync(ms);
-        var bytes = ms.ToArray();
-        var truncated = bytes.Length > maxBytes;
-        var slice = truncated ? bytes.AsSpan(0, maxBytes).ToArray() : bytes;
-        return new { fileId, bytes = bytes.Length, truncated, encoding = "utf-8", content = Encoding.UTF8.GetString(slice) };
+        if (GdriveValidation.ValidateFileId(fileId) is { } idErr) return Err(idErr);
+        if (maxBytes < 1) maxBytes = 1;
+
+        try
+        {
+            using var ms = new MemoryStream();
+            await drive.Files.Get(fileId).DownloadAsync(ms);
+            var bytes = ms.ToArray();
+            var truncated = bytes.Length > maxBytes;
+            var slice = truncated ? bytes.AsSpan(0, maxBytes).ToArray() : bytes;
+            return new { fileId, bytes = bytes.Length, truncated, encoding = "utf-8", content = Encoding.UTF8.GetString(slice) };
+        }
+        catch (Exception e) { return Err(e.Message); }
     }
 
     [McpServerTool(Name = "download_file_base64")]
@@ -95,34 +136,39 @@ public sealed class DriveTools
         [Description("Byte offset to start this chunk at. Default 0.")] long offset = 0,
         [Description("Max bytes for this chunk (1 .. 4194304). Default 4194304 (4 MiB).")] int maxBytes = DefaultChunkBytes)
     {
+        if (GdriveValidation.ValidateFileId(fileId) is { } idErr) return Err(idErr);
         if (offset < 0) offset = 0;
         var count = Math.Clamp(maxBytes, 1, MaxChunkBytes);
 
-        // Authoritative total size (also lets us short-circuit reads past EOF and clamp the range end).
-        var meta = drive.Files.Get(fileId);
-        meta.Fields = "size";
-        meta.SupportsAllDrives = true;
-        long? totalSize = (await meta.ExecuteAsync()).Size;
-
-        if (totalSize is long known && offset >= known)
-            return new { fileId, offset, returnedBytes = 0, totalSize, encoding = "base64", content = "", eof = true };
-
-        // Don't ask past EOF — keeps the final chunk a clean 206 instead of risking a 416.
-        if (totalSize is long sz) count = (int)Math.Min((long)count, sz - offset);
-
-        var body = await DriveMedia.FetchRangeAsync(drive, fileId, offset, count, CancellationToken.None);
-        var eof = totalSize is long t ? offset + body.LongLength >= t : body.Length < count;
-
-        return new
+        try
         {
-            fileId,
-            offset,
-            returnedBytes = body.Length,
-            totalSize,
-            encoding = "base64",
-            content = Convert.ToBase64String(body),
-            eof,
-        };
+            // Authoritative total size (also lets us short-circuit reads past EOF and clamp the range end).
+            var meta = drive.Files.Get(fileId);
+            meta.Fields = "size";
+            meta.SupportsAllDrives = true;
+            long? totalSize = (await meta.ExecuteAsync()).Size;
+
+            if (totalSize is long known && offset >= known)
+                return new { fileId, offset, returnedBytes = 0, totalSize, encoding = "base64", content = "", eof = true };
+
+            // Don't ask past EOF — keeps the final chunk a clean 206 instead of risking a 416.
+            if (totalSize is long sz) count = (int)Math.Min((long)count, sz - offset);
+
+            var body = await DriveMedia.FetchRangeAsync(drive, fileId, offset, count, CancellationToken.None);
+            var eof = totalSize is long t ? offset + body.LongLength >= t : body.Length < count;
+
+            return new
+            {
+                fileId,
+                offset,
+                returnedBytes = body.Length,
+                totalSize,
+                encoding = "base64",
+                content = Convert.ToBase64String(body),
+                eof,
+            };
+        }
+        catch (Exception e) { return Err(e.Message); }
     }
 
     [McpServerTool(Name = "download_to_url")]
@@ -133,23 +179,29 @@ public sealed class DriveTools
         GdriveConfig cfg,
         [Description("The Drive file id.")] string fileId)
     {
-        var meta = drive.Files.Get(fileId);
-        meta.Fields = "id,name,size";
-        meta.SupportsAllDrives = true;
-        var f = await meta.ExecuteAsync();
+        if (GdriveValidation.ValidateFileId(fileId) is { } idErr) return Err(idErr);
 
-        var ttl = TimeSpan.FromSeconds(cfg.DownloadTtlSeconds);
-        var ticket = tickets.Issue(f.Id, f.Name, f.Size, ttl);
-
-        return new
+        try
         {
-            fileId = f.Id,
-            name = f.Name,
-            size = f.Size,
-            url = $"{cfg.DownloadBaseUrl.TrimEnd('/')}/gdrive-dl/{ticket.Token}",
-            expiresInSeconds = cfg.DownloadTtlSeconds,
-            expiresAt = ticket.ExpiresAt.ToString("o"),
-        };
+            var meta = drive.Files.Get(fileId);
+            meta.Fields = "id,name,size";
+            meta.SupportsAllDrives = true;
+            var f = await meta.ExecuteAsync();
+
+            var ttl = TimeSpan.FromSeconds(cfg.DownloadTtlSeconds);
+            var ticket = tickets.Issue(f.Id, f.Name, f.Size, ttl);
+
+            return new
+            {
+                fileId = f.Id,
+                name = f.Name,
+                size = f.Size,
+                url = $"{cfg.DownloadBaseUrl.TrimEnd('/')}/gdrive-dl/{ticket.Token}",
+                expiresInSeconds = cfg.DownloadTtlSeconds,
+                expiresAt = ticket.ExpiresAt.ToString("o"),
+            };
+        }
+        catch (Exception e) { return Err(e.Message); }
     }
 
     [McpServerTool(Name = "create_file")]
@@ -161,15 +213,24 @@ public sealed class DriveTools
         [Description("MIME type. Default text/plain.")] string mimeType = "text/plain",
         [Description("Optional parent folder id.")] string? folderId = null)
     {
-        var meta = new DriveData.File { Name = name, MimeType = mimeType };
-        if (!string.IsNullOrWhiteSpace(folderId)) meta.Parents = new List<string> { folderId };
+        if (GdriveValidation.ValidateName(name) is { } nameErr) return Err(nameErr);
+        if (GdriveValidation.ValidateContent(content) is { } contentErr) return Err(contentErr);
+        if (GdriveValidation.ValidateMimeType(mimeType) is { } mimeErr) return Err(mimeErr);
+        if (GdriveValidation.ValidateFolderId(folderId) is { } folderErr) return Err(folderErr);
 
-        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(content));
-        var req = drive.Files.Create(meta, stream, mimeType);
-        req.Fields = FileFields;
-        var progress = await req.UploadAsync();
-        if (progress.Exception is not null) throw progress.Exception;
-        return Summarize(req.ResponseBody);
+        try
+        {
+            var meta = new DriveData.File { Name = name, MimeType = mimeType };
+            if (!string.IsNullOrWhiteSpace(folderId)) meta.Parents = new List<string> { folderId };
+
+            using var stream = new MemoryStream(Encoding.UTF8.GetBytes(content));
+            var req = drive.Files.Create(meta, stream, mimeType);
+            req.Fields = FileFields;
+            var progress = await req.UploadAsync();
+            if (progress.Exception is not null) return Err(progress.Exception.Message);
+            return Summarize(req.ResponseBody);
+        }
+        catch (Exception e) { return Err(e.Message); }
     }
 
     [McpServerTool(Name = "update_file")]
@@ -181,22 +242,31 @@ public sealed class DriveTools
         [Description("Optional new UTF-8 text content. Omit to keep the current content.")] string? newContent = null,
         [Description("MIME type to set when replacing content. Default text/plain.")] string mimeType = "text/plain")
     {
-        var meta = new DriveData.File();
-        if (newName is not null) meta.Name = newName;
+        if (GdriveValidation.ValidateFileId(fileId) is { } idErr) return Err(idErr);
+        if (GdriveValidation.ValidateOptionalNewName(newName) is { } nameErr) return Err(nameErr);
+        if (GdriveValidation.ValidateOptionalNewContent(newContent) is { } contentErr) return Err(contentErr);
+        if (GdriveValidation.ValidateMimeType(mimeType) is { } mimeErr) return Err(mimeErr);
 
-        if (newContent is not null)
+        try
         {
-            using var stream = new MemoryStream(Encoding.UTF8.GetBytes(newContent));
-            var up = drive.Files.Update(meta, fileId, stream, mimeType);
-            up.Fields = FileFields;
-            var progress = await up.UploadAsync();
-            if (progress.Exception is not null) throw progress.Exception;
-            return Summarize(up.ResponseBody);
-        }
+            var meta = new DriveData.File();
+            if (newName is not null) meta.Name = newName;
 
-        var req = drive.Files.Update(meta, fileId);
-        req.Fields = FileFields;
-        return Summarize(await req.ExecuteAsync());
+            if (newContent is not null)
+            {
+                using var stream = new MemoryStream(Encoding.UTF8.GetBytes(newContent));
+                var up = drive.Files.Update(meta, fileId, stream, mimeType);
+                up.Fields = FileFields;
+                var progress = await up.UploadAsync();
+                if (progress.Exception is not null) return Err(progress.Exception.Message);
+                return Summarize(up.ResponseBody);
+            }
+
+            var req = drive.Files.Update(meta, fileId);
+            req.Fields = FileFields;
+            return Summarize(await req.ExecuteAsync());
+        }
+        catch (Exception e) { return Err(e.Message); }
     }
 
     [McpServerTool(Name = "delete_file")]
@@ -206,16 +276,22 @@ public sealed class DriveTools
         [Description("The Drive file id.")] string fileId,
         [Description("Permanently delete instead of trashing. Default false (trash).")] bool permanent = false)
     {
-        if (permanent)
-        {
-            await drive.Files.Delete(fileId).ExecuteAsync();
-            return new { fileId, deleted = "permanent" };
-        }
+        if (GdriveValidation.ValidateFileId(fileId) is { } idErr) return Err(idErr);
 
-        var req = drive.Files.Update(new DriveData.File { Trashed = true }, fileId);
-        req.Fields = "id,name,trashed";
-        var f = await req.ExecuteAsync();
-        return new { fileId = f.Id, name = f.Name, deleted = "trashed", trashed = f.Trashed };
+        try
+        {
+            if (permanent)
+            {
+                await drive.Files.Delete(fileId).ExecuteAsync();
+                return new { fileId, deleted = "permanent" };
+            }
+
+            var req = drive.Files.Update(new DriveData.File { Trashed = true }, fileId);
+            req.Fields = "id,name,trashed";
+            var f = await req.ExecuteAsync();
+            return new { fileId = f.Id, name = f.Name, deleted = "trashed", trashed = f.Trashed };
+        }
+        catch (Exception e) { return Err(e.Message); }
     }
 
     private static object Summarize(DriveData.File f) => new

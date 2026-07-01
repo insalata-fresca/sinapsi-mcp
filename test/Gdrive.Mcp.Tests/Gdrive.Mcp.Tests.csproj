@@ -28,6 +28,8 @@
     <Compile Include="../../src/servers/Gdrive.Mcp/DriveTools.cs" />
     <Compile Include="../../src/servers/Gdrive.Mcp/DriveDownload.cs" />
     <Compile Include="../../src/servers/Gdrive.Mcp/GdriveConfig.cs" />
+    <Compile Include="../../src/servers/Gdrive.Mcp/GdriveValidation.cs" />
+    <Compile Include="../../src/servers/Gdrive.Mcp/GdriveErrors.cs" />
     <PackageReference Include="ModelContextProtocol.AspNetCore" Version="1.3.0" />
     <PackageReference Include="Google.Apis.Drive.v3" Version="1.74.0.4135" />
   </ItemGroup>

@@ -28,6 +28,22 @@ public sealed record GdriveConfig
     /// <summary>Lifetime of a download_to_url ticket in seconds. Short by design (signed-URL style).</summary>
     public required int DownloadTtlSeconds { get; init; }
 
+    /// <summary>Per-request ceiling (seconds) applied to the Drive
+    /// <c>HttpClient.Timeout</c>, so a hung Google API call cannot pin a request
+    /// forever. Bound by a canonical env var with a sane default AND a hard
+    /// ceiling; a non-numeric / non-positive / out-of-range value fails startup.</summary>
+    public required int HttpTimeoutSeconds { get; init; }
+
+    /// <summary>Default Drive <c>HttpClient</c> timeout (seconds) when none is
+    /// configured. Generous enough for a large-file range download, short enough
+    /// to bound a hang.</summary>
+    internal const int DefaultHttpTimeoutSeconds = 100;
+
+    /// <summary>Upper bound on a configurable Drive <c>HttpClient</c> timeout
+    /// (seconds). 1 hour is far past any legitimate Drive call; a larger value is
+    /// treated as a config error, not honoured.</summary>
+    internal const int MaxHttpTimeoutSeconds = 3_600;
+
     public static GdriveConfig FromEnvironment()
     {
         var home = Environment.GetEnvironmentVariable("HOME") ?? "/home/app";
@@ -51,6 +67,34 @@ public sealed record GdriveConfig
                 Environment.GetEnvironmentVariable("GDRIVE_MCP_DOWNLOAD_TTL_SECONDS"), out var ttl) && ttl > 0
                 ? ttl
                 : 600,
+            HttpTimeoutSeconds = ReadHttpTimeoutSeconds(),
         };
+    }
+
+    /// <summary>
+    /// Bounds every Drive <c>HttpClient</c> request. Canonical name is
+    /// <c>GDRIVE_MCP_HTTP_TIMEOUT_SECONDS</c>.
+    /// <para>
+    /// Fail-closed validation: a value of <c>0</c> or negative would either make
+    /// every request time out instantly or throw inside <c>HttpClient.Timeout</c>;
+    /// an absurdly large value defeats the purpose of a ceiling. Any non-numeric,
+    /// <c>&lt;= 0</c>, or above <see cref="MaxHttpTimeoutSeconds"/> value is
+    /// rejected as invalid config — we throw a clear error naming the offending
+    /// env var rather than silently honouring a footgun.
+    /// </para>
+    /// </summary>
+    private static int ReadHttpTimeoutSeconds()
+    {
+        const string envVar = "GDRIVE_MCP_HTTP_TIMEOUT_SECONDS";
+        var raw = Environment.GetEnvironmentVariable(envVar);
+        if (string.IsNullOrEmpty(raw))
+            return DefaultHttpTimeoutSeconds;
+
+        if (!int.TryParse(raw, out var s) || s <= 0 || s > MaxHttpTimeoutSeconds)
+            throw new InvalidOperationException(
+                $"{envVar}='{raw}' is invalid: expected an integer in 1..{MaxHttpTimeoutSeconds} s " +
+                $"(default {DefaultHttpTimeoutSeconds}).");
+
+        return s;
     }
 }

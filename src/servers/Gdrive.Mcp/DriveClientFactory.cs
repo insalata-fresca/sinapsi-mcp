@@ -42,11 +42,20 @@ public sealed class DriveClientFactory
         // Validate the refresh token works (and prime an access token) — fail fast at startup.
         await credential.RefreshTokenAsync(ct);
 
-        return new DriveService(new BaseClientService.Initializer
+        var drive = new DriveService(new BaseClientService.Initializer
         {
             HttpClientInitializer = credential,
             ApplicationName = cfg.ApplicationName,
         });
+
+        // Clamp the per-request timeout so a hung Google API call cannot pin a
+        // request forever. The ceiling itself is validated fail-closed in
+        // GdriveConfig (throws on a bad value); here we just apply it. The Drive
+        // client's own MediaDownloader still chunks large files, so a legitimate
+        // multi-chunk download resets the timeout per chunk rather than racing it.
+        drive.HttpClient.Timeout = TimeSpan.FromSeconds(cfg.HttpTimeoutSeconds);
+
+        return drive;
     }
 
     /// <summary>Accept either a bare refresh-token string, or a JSON object with a
