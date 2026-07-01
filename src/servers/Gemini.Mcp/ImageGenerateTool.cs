@@ -1,3 +1,11 @@
+// ---------------------------------------------------------------------------
+// image_generate — delegates to the gemini nanobanana extension. Validates the
+// prompt + aspect_ratio BEFORE minting a call dir or spawning the subprocess, and
+// scrubs the stderr tail on the no-output error so a secret in the CLI's
+// diagnostics cannot leak. The error CHANNEL is unchanged (validation failures use
+// the same throw-InvalidOperationException(JSON) path as the existing no-output
+// case) so the tool's structured-error contract is uniform.
+// ---------------------------------------------------------------------------
 using System.ComponentModel;
 using System.Text.Json;
 using ModelContextProtocol.Server;
@@ -22,6 +30,13 @@ public sealed class ImageGenerateTool
         [Description("The image generation prompt.")] string prompt,
         [Description("Optional aspect ratio: 1:1 | 16:9 | 9:16 | 4:3 | 3:4")] string? aspect_ratio = null)
     {
+        // Fail-fast validation BEFORE minting a call dir / spawning the subprocess.
+        // Uses the same structured-error channel as the no-output case below.
+        if (GeminiValidation.ValidatePrompt(prompt) is { } pErr)
+            throw new InvalidOperationException(JsonSerializer.Serialize(new { error = pErr }, Jsons.IndentedWeb));
+        if (GeminiValidation.ValidateAspectRatio(aspect_ratio) is { } arErr)
+            throw new InvalidOperationException(JsonSerializer.Serialize(new { error = arErr }, Jsons.IndentedWeb));
+
         var callId = Guid.NewGuid().ToString();
         var callDir = Path.Combine(cfg.OutputDir, callId);
         Directory.CreateDirectory(callDir);
@@ -61,7 +76,7 @@ public sealed class ImageGenerateTool
             {
                 error = "no image produced — nanobanana extension likely missing NANOBANANA_API_KEY",
                 hint = "set NANOBANANA_API_KEY in the extension environment for this server",
-                gemini_stderr_tail = Jsons.TailLeft(r.Stderr, 300),
+                gemini_stderr_tail = GeminiErrors.SanitizedStderrTail(r.Stderr, 300),
             }, Jsons.IndentedWeb));
         }
 

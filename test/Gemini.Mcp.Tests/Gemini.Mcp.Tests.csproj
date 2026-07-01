@@ -16,10 +16,21 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Reference the server project directly so the tests exercise the real tool
-         methods and config/state types (the tools are public static, callable without
-         spinning up the Web host). -->
-    <ProjectReference Include="../../src/servers/Gemini.Mcp/Gemini.Mcp.csproj" />
+    <!-- Compile the server's logic sources directly (mirrors StepCa.Mcp.Tests) so
+         the tests exercise the real tool methods AND the internal hardening helpers
+         (GeminiValidation / GeminiErrors) without referencing the Web (Sdk.Web)
+         server project and without widening those helpers' visibility in the shipped
+         assembly. Program.cs (the Web host entrypoint) is intentionally excluded. -->
+    <Compile Include="../../src/servers/Gemini.Mcp/GeminiConfig.cs" />
+    <Compile Include="../../src/servers/Gemini.Mcp/GeminiCli.cs" />
+    <Compile Include="../../src/servers/Gemini.Mcp/GeminiErrors.cs" />
+    <Compile Include="../../src/servers/Gemini.Mcp/GeminiValidation.cs" />
+    <Compile Include="../../src/servers/Gemini.Mcp/State.cs" />
+    <Compile Include="../../src/servers/Gemini.Mcp/AskTool.cs" />
+    <Compile Include="../../src/servers/Gemini.Mcp/ImageGenerateTool.cs" />
+    <Compile Include="../../src/servers/Gemini.Mcp/ResearchTools.cs" />
+    <Compile Include="../../src/servers/Gemini.Mcp/SessionTools.cs" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="1.3.0" />
   </ItemGroup>
 
 </Project>

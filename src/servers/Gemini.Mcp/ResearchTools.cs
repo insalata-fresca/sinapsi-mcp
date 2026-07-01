@@ -1,3 +1,11 @@
+// ---------------------------------------------------------------------------
+// research / get_status — the async task pair. `research` validates its query +
+// depth before minting a task, and its background run scrubs any stderr/exception
+// before it is persisted to the task file (which get_status returns verbatim), so
+// a secret in the CLI's diagnostics cannot leak through the polled status.
+// `get_status` validates the task_id (a filesystem path segment) so a value with a
+// path separator / traversal token cannot read outside the task dir.
+// ---------------------------------------------------------------------------
 using System.ComponentModel;
 using System.Text.Json;
 using ModelContextProtocol.Server;
@@ -22,6 +30,14 @@ public sealed class ResearchTool
         [Description("The research query / topic.")] string query,
         [Description("Depth: quick | standard | deep")] string depth = "standard")
     {
+        // Fail-fast validation BEFORE minting a task / writing a task file. The
+        // return channel is a JSON string, so a validation failure returns a
+        // {error} JSON object rather than a running handle.
+        if (GeminiValidation.ValidatePrompt(query, "query") is { } qErr)
+            return JsonSerializer.Serialize(new { error = qErr }, Jsons.IndentedWeb);
+        if (GeminiValidation.ValidateDepth(depth) is { } dErr)
+            return JsonSerializer.Serialize(new { error = dErr }, Jsons.IndentedWeb);
+
         var taskId = Guid.NewGuid().ToString();
         var taskFile = Path.Combine(cfg.TaskDir, $"{taskId}.json");
 
@@ -61,14 +77,17 @@ public sealed class ResearchTool
                 else
                 {
                     state.Status = "failed";
-                    state.Error = Jsons.TailLeft(r.Stderr, 500);
+                    // Scrub the stderr tail before it is persisted: get_status
+                    // returns the task file verbatim, so an unredacted secret here
+                    // would leak to the poller.
+                    state.Error = GeminiErrors.SanitizedStderrTail(r.Stderr, 500);
                 }
             }
             catch (Exception e)
             {
                 state.EndedAt = Jsons.NowMs();
                 state.Status = "failed";
-                state.Error = e.Message;
+                state.Error = GeminiErrors.Sanitize(e.Message);
             }
             try { File.WriteAllText(taskFile, JsonSerializer.Serialize(state, Jsons.IndentedWeb)); }
             catch { /* best-effort */ }
@@ -94,6 +113,12 @@ public sealed class GetStatusTool
         GeminiConfig cfg,
         [Description("The task_id returned by an async tool.")] string task_id)
     {
+        // Validate the id (it becomes a filesystem path segment) BEFORE touching
+        // the filesystem, so a value with a path separator / traversal token cannot
+        // read a file outside the task dir.
+        if (GeminiValidation.ValidateId(task_id, "task_id") is { } idErr)
+            throw new InvalidOperationException(idErr);
+
         var taskFile = Path.Combine(cfg.TaskDir, $"{task_id}.json");
         if (!File.Exists(taskFile))
             throw new InvalidOperationException($"task {task_id} not found");
