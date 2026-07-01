@@ -69,8 +69,11 @@ public sealed partial class GitHubForgeClient(HttpClient http) : IForgeClient
     private static async Task EnsureOkAsync(HttpResponseMessage resp, CancellationToken ct)
     {
         if (resp.IsSuccessStatusCode) return;
+        // Status is the RAW verdict; the upstream body is scrubbed of any credential/key
+        // material before it becomes the exception message a tool may surface.
         var body = await resp.Content.ReadAsStringAsync(ct);
-        throw new ForgeApiException((int)resp.StatusCode, $"{(int)resp.StatusCode} {resp.ReasonPhrase}: {(body.Length > 600 ? body[..600] + "…" : body)}");
+        var safe = Sinapsi.Forge.Tools.SinapsiForgeErrors.Sanitize(body.Length > 600 ? body[..600] + "…" : body);
+        throw new ForgeApiException((int)resp.StatusCode, $"{(int)resp.StatusCode} {resp.ReasonPhrase}: {safe}");
     }
 
     private static readonly JsonSerializerOptions J = new(JsonSerializerDefaults.Web);

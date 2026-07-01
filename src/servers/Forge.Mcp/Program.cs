@@ -9,12 +9,17 @@ var builder = WebApplication.CreateBuilder(args);
 var cfg = ForgeConfig.FromEnv();
 builder.Services.AddSingleton(cfg);
 
+// Fail-closed HTTP timeout: canonical FORGE_HTTP_TIMEOUT_MS, validated to 1..600000 ms;
+// a non-numeric / <=0 / out-of-range value throws on startup rather than running unbounded.
+var httpTimeoutMs = ForgeClientOptions.ReadHttpTimeoutMs("FORGE_HTTP_TIMEOUT_MS");
+
 // Typed HttpClient → GiteaForgeClient registered as IForgeClient. The token is held
 // server-side (Authorization: token <PAT>); a fronting gateway, if any, terminates the
 // caller's own auth — the host only ever holds the static forge token.
 builder.Services.AddHttpClient<IForgeClient, GiteaForgeClient>(c =>
 {
     c.BaseAddress = new Uri(cfg.ApiBaseUrl);
+    c.Timeout = TimeSpan.FromMilliseconds(httpTimeoutMs);
     c.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("token", cfg.Token);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("sinapsi-forge-mcp/1.0");
 });

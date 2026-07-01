@@ -46,25 +46,33 @@ public sealed class ContentTools
 
     [McpServerTool(Name = "get_file", ReadOnly = true)]
     [Description("Get a file's content (base64) or a directory listing at an optional ref (branch/tag/sha).")]
-    public static async Task<object> GetFile(
+    public static Task<object> GetFile(
         IForgeClient forge, string owner, string repo,
         [Description("Path in the repo.")] string path,
         [Description("Branch/tag/sha. Omit for the default branch.")] string? gitRef = null,
         CancellationToken ct = default)
-        => await forge.GetContentsAsync(owner, repo, path, gitRef, ct);
+        => ForgeToolGuard.RunAsync(
+            () => SinapsiForgeValidation.ValidateOwnerRepo(owner, repo)
+                  ?? SinapsiForgeValidation.ValidatePath(path)
+                  ?? SinapsiForgeValidation.ValidateRef(gitRef, "gitRef", required: false),
+            async () => await forge.GetContentsAsync(owner, repo, path, gitRef, ct));
 
     [McpServerTool(Name = "get_file_binary", ReadOnly = true)]
     [Description("Get a file's RAW bytes as base64 (for binary/non-UTF-8 files), at an optional ref.")]
-    public static async Task<object> GetFileBinary(
+    public static Task<object> GetFileBinary(
         IForgeClient forge, string owner, string repo,
         [Description("Path in the repo.")] string path,
         [Description("Branch/tag/sha. Omit for the default branch.")] string? gitRef = null,
         CancellationToken ct = default)
-        => await forge.GetFileBinaryAsync(owner, repo, path, gitRef, ct);
+        => ForgeToolGuard.RunAsync(
+            () => SinapsiForgeValidation.ValidateOwnerRepo(owner, repo)
+                  ?? SinapsiForgeValidation.ValidatePath(path)
+                  ?? SinapsiForgeValidation.ValidateRef(gitRef, "gitRef", required: false),
+            async () => await forge.GetFileBinaryAsync(owner, repo, path, gitRef, ct));
 
     [McpServerTool(Name = "create_or_update_file", Destructive = false)]
     [Description("Create or update a single file. Provide the content as `content` (RAW UTF-8 text — easiest; the server base64-encodes it) OR `content_base64` (exact/binary bytes) — exactly one. To UPDATE pass the current file sha; omit sha to CREATE.")]
-    public static async Task<object> CreateOrUpdateFile(
+    public static Task<object> CreateOrUpdateFile(
         IForgeClient forge, string owner, string repo,
         [Description("Path in the repo.")] string path,
         [Description("Commit message.")] string message,
@@ -73,27 +81,39 @@ public sealed class ContentTools
         [Description("File content, base64-encoded (exact bytes) — for binary/non-UTF-8 files. Mutually exclusive with content.")] string? content_base64 = null,
         [Description("Current file sha — REQUIRED to update; omit to create.")] string? sha = null,
         CancellationToken ct = default)
-        => await forge.CreateOrUpdateFileAsync(owner, repo, path, ResolveBase64(content, content_base64), message, branch, sha, ct);
+        => ForgeToolGuard.RunAsync(
+            () => SinapsiForgeValidation.ValidateOwnerRepo(owner, repo)
+                  ?? SinapsiForgeValidation.ValidatePath(path)
+                  ?? SinapsiForgeValidation.ValidateRef(branch, "branch"),
+            async () => await forge.CreateOrUpdateFileAsync(owner, repo, path, ResolveBase64(content, content_base64), message, branch, sha, ct));
 
     [McpServerTool(Name = "delete_file", Destructive = false)]
     [Description("Delete a file. Requires the current file sha.")]
-    public static async Task<object> DeleteFile(
+    public static Task<object> DeleteFile(
         IForgeClient forge, string owner, string repo,
         [Description("Path in the repo.")] string path,
         [Description("Commit message.")] string message,
         [Description("Branch to commit to.")] string branch,
         [Description("Current file sha.")] string sha,
         CancellationToken ct = default)
-        => await forge.DeleteFileAsync(owner, repo, path, message, branch, sha, ct);
+        => ForgeToolGuard.RunAsync(
+            () => SinapsiForgeValidation.ValidateOwnerRepo(owner, repo)
+                  ?? SinapsiForgeValidation.ValidatePath(path)
+                  ?? SinapsiForgeValidation.ValidateRef(branch, "branch"),
+            async () => await forge.DeleteFileAsync(owner, repo, path, message, branch, sha, ct));
 
     [McpServerTool(Name = "commit_files", Destructive = false)]
     [Description("Atomic, byte-safe, multi-file commit. Each file: {path, operation: create|update|delete, content (RAW UTF-8 text, easiest) OR content_base64 (exact/binary bytes) for create/update — exactly one, sha (for update/delete), from_path (rename)}. One commit on `branch` (optionally creating `new_branch` from it first). Binary + whitespace-sensitive files are byte-perfect.")]
-    public static async Task<object> CommitFiles(
+    public static Task<object> CommitFiles(
         IForgeClient forge, string owner, string repo,
         [Description("Branch to commit to (or to base new_branch on).")] string branch,
         [Description("Commit message.")] string message,
         [Description("Files to change in one commit.")] ForgeFileChange[] files,
         [Description("If set, create this branch from `branch` and commit there.")] string? new_branch = null,
         CancellationToken ct = default)
-        => await forge.CommitFilesAsync(owner, repo, branch, new_branch, message, NormalizeFiles(files), ct);
+        => ForgeToolGuard.RunAsync(
+            () => SinapsiForgeValidation.ValidateOwnerRepo(owner, repo)
+                  ?? SinapsiForgeValidation.ValidateRef(branch, "branch")
+                  ?? SinapsiForgeValidation.ValidateRef(new_branch, "new_branch", required: false),
+            async () => await forge.CommitFilesAsync(owner, repo, branch, new_branch, message, NormalizeFiles(files), ct));
 }

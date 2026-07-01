@@ -19,6 +19,8 @@
     <!-- Compile the host's config sources directly so we can unit-test the env-driven
          forgejo-vs-codeberg differentiation without spinning up the Web app. -->
     <Compile Include="../../src/servers/Forge.Mcp/ForgeConfig.cs" />
+    <!-- The shared fail-closed HTTP-timeout binding the host uses (FORGE_HTTP_TIMEOUT_MS). -->
+    <Compile Include="../../src/libs/Sinapsi.Forge/ForgeClientOptions.cs" />
   </ItemGroup>
 
 </Project>

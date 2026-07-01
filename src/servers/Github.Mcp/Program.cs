@@ -12,10 +12,15 @@ var token = Environment.GetEnvironmentVariable("GITHUB_TOKEN")
             ?? throw new InvalidOperationException(
                 "GITHUB_TOKEN (or GITHUB_PERSONAL_ACCESS_TOKEN) not set — inject the GitHub PAT at deploy, not baked in.");
 
+// Fail-closed HTTP timeout: canonical GITHUB_HTTP_TIMEOUT_MS, validated to 1..600000 ms;
+// a non-numeric / <=0 / out-of-range value throws on startup rather than running unbounded.
+var httpTimeoutMs = ForgeClientOptions.ReadHttpTimeoutMs("GITHUB_HTTP_TIMEOUT_MS");
+
 // Typed HttpClient → GitHubForgeClient registered as the shared IForgeClient.
 builder.Services.AddHttpClient<IForgeClient, GitHubForgeClient>(c =>
 {
     c.BaseAddress = new Uri("https://api.github.com/");
+    c.Timeout = TimeSpan.FromMilliseconds(httpTimeoutMs);
     c.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
     c.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
     c.DefaultRequestHeaders.UserAgent.ParseAdd("sinapsi-github-mcp/2.0");
