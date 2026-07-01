@@ -58,7 +58,7 @@ public sealed class SshgwToolErrorTests : IDisposable
         var canned = new CannedTransport(
             exec: new ExecResult(ExitCode: 3, Stdout: "partial output", Stderr: "connect failed\npassword=hunter2-supersecret"));
 
-        var r = await SshgwTools.ExecuteCommand(_registry, canned, "alpha", "some-cmd", CancellationToken.None);
+        var r = await SshgwTools.ExecuteCommand(_registry, canned, cmdString: "some-cmd", connectionName: "alpha", ct: CancellationToken.None);
 
         var stderr = r["stderr"]!.GetValue<string>();
         Assert.Contains("connect failed", stderr);            // diagnostic survives
@@ -77,7 +77,7 @@ public sealed class SshgwToolErrorTests : IDisposable
         var canned = new CannedTransport(
             exec: new ExecResult(ExitCode: 0, Stdout: "ok", Stderr: "warning token=leaked.jwt.value"));
 
-        var r = await SshgwTools.ExecuteCommand(_registry, canned, "alpha", "some-cmd", CancellationToken.None);
+        var r = await SshgwTools.ExecuteCommand(_registry, canned, cmdString: "some-cmd", connectionName: "alpha", ct: CancellationToken.None);
 
         Assert.True(Ok(r));
         Assert.Equal(0, r["exitCode"]!.GetValue<int>());
@@ -92,7 +92,7 @@ public sealed class SshgwToolErrorTests : IDisposable
         var canned = new CannedTransport(
             exec: new ExecResult(ExitCode: 42, Stdout: "", Stderr: "no such file"));
 
-        var r = await SshgwTools.ExecuteCommand(_registry, canned, "alpha", "some-cmd", CancellationToken.None);
+        var r = await SshgwTools.ExecuteCommand(_registry, canned, cmdString: "some-cmd", connectionName: "alpha", ct: CancellationToken.None);
 
         Assert.False(Ok(r));
         Assert.Equal(42, r["exitCode"]!.GetValue<int>());
@@ -105,7 +105,7 @@ public sealed class SshgwToolErrorTests : IDisposable
         var canned = new CannedTransport(
             exec: new ExecResult(ExitCode: 0, Stdout: "clean", Stderr: ""));
 
-        var r = await SshgwTools.ExecuteCommand(_registry, canned, "alpha", "some-cmd", CancellationToken.None);
+        var r = await SshgwTools.ExecuteCommand(_registry, canned, cmdString: "some-cmd", connectionName: "alpha", ct: CancellationToken.None);
 
         Assert.True(Ok(r));
         Assert.Null(r["stderr"]);
@@ -157,7 +157,7 @@ public sealed class SshgwToolErrorTests : IDisposable
         var canned = new CannedTransport(
             exec: new ExecResult(ExitCode: -1, Stdout: "", Stderr: "command killed after 30000ms timeout"));
 
-        var r = await SshgwTools.ExecuteCommand(_registry, canned, "alpha", "hang", CancellationToken.None);
+        var r = await SshgwTools.ExecuteCommand(_registry, canned, cmdString: "hang", connectionName: "alpha", ct: CancellationToken.None);
 
         Assert.False(Ok(r));
         Assert.Equal(-1, r["exitCode"]!.GetValue<int>());

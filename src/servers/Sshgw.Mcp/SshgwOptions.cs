@@ -22,7 +22,8 @@ public sealed record SshgwOptions(
     int ConnectTimeoutMs,
     int CommandTimeoutMs,
     int ReadFileDefaultMaxBytes,
-    int ReadFileHardMaxBytes)
+    int ReadFileHardMaxBytes,
+    bool RequireHostKeyPin = false)
 {
     // ── SSH connect timeout ──────────────────────────────────────────────────
     /// <summary>Default SSH connect timeout (ms).</summary>
@@ -83,7 +84,27 @@ public sealed record SshgwOptions(
             ConnectTimeoutMs:        ReadBoundedInt("SSHGW_CONNECT_TIMEOUT_MS", DefaultConnectTimeoutMs, MaxConnectTimeoutMs),
             CommandTimeoutMs:        ReadBoundedInt("SSHGW_COMMAND_TIMEOUT_MS", DefaultCommandTimeoutMs, MaxCommandTimeoutMs),
             ReadFileDefaultMaxBytes: defaultCap,
-            ReadFileHardMaxBytes:    hardCap);
+            ReadFileHardMaxBytes:    hardCap,
+            // Global host-key posture: when set, even a server WITHOUT a configured
+            // fingerprint is refused (no trust-on-first-use anywhere). Off by default
+            // so per-server pins are opt-in; flip on once every server is pinned.
+            RequireHostKeyPin:       ReadBool("SSHGW_REQUIRE_HOST_KEY_PIN", false));
+    }
+
+    /// <summary>Read a boolean env var. Unset ⇒ <paramref name="def"/>. Accepts
+    /// <c>1/0</c>, <c>true/false</c>, <c>yes/no</c>, <c>on/off</c> (case-insensitive);
+    /// any other value THROWS naming the offending var rather than guessing.</summary>
+    private static bool ReadBool(string envVar, bool def)
+    {
+        var raw = Environment.GetEnvironmentVariable(envVar);
+        if (raw is not { Length: > 0 }) return def;
+        return raw.Trim().ToLowerInvariant() switch
+        {
+            "1" or "true" or "yes" or "on" => true,
+            "0" or "false" or "no" or "off" => false,
+            _ => throw new InvalidOperationException(
+                $"{envVar}='{raw}' is invalid: expected a boolean (1/0, true/false, yes/no, on/off)."),
+        };
     }
 
     /// <summary>

@@ -74,4 +74,33 @@ public sealed class ServerRegistryTests
         Assert.True(wl.IsAllowed("uptime"));
         Assert.False(wl.IsAllowed("cat /etc/shadow"));
     }
+
+    // ── hostKeyFingerprint: string OR array of strings ───────────────────────
+
+    [Fact]
+    public void HostKeyFingerprint_single_string_parses_to_one_element_array()
+    {
+        const string json = """
+        [ { "name": "s", "host": "h", "hostKeyFingerprint": "SHA256:abc123" } ]
+        """;
+        var map = ServerRegistry.ParseJson(json);
+        Assert.Equal(new[] { "SHA256:abc123" }, map["s"].HostKeyFingerprints);
+    }
+
+    [Fact]
+    public void HostKeyFingerprint_array_parses_to_the_array()
+    {
+        const string json = """
+        [ { "name": "s", "host": "h", "hostKeyFingerprint": ["SHA256:a", "SHA256:b"] } ]
+        """;
+        var map = ServerRegistry.ParseJson(json);
+        Assert.Equal(new[] { "SHA256:a", "SHA256:b" }, map["s"].HostKeyFingerprints);
+    }
+
+    [Fact]
+    public void HostKeyFingerprint_absent_is_null()
+    {
+        var map = ServerRegistry.ParseJson(Json);
+        Assert.Null(map["alpha"].HostKeyFingerprints);
+    }
 }

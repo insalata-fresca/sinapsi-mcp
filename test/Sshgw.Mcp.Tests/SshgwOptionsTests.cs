@@ -19,6 +19,7 @@ public sealed class SshgwOptionsTests : IDisposable
     {
         "SSHGW_CONFIG_FILE", "SSHGW_CONNECT_TIMEOUT_MS", "SSHGW_COMMAND_TIMEOUT_MS",
         "SSHGW_READFILE_DEFAULT_MAX_BYTES", "SSHGW_READFILE_HARD_MAX_BYTES",
+        "SSHGW_REQUIRE_HOST_KEY_PIN",
     };
 
     public SshgwOptionsTests() => Clear();
@@ -155,5 +156,44 @@ public sealed class SshgwOptionsTests : IDisposable
         var o = SshgwOptions.FromEnvironment();
         Assert.Equal(524_288, o.ReadFileDefaultMaxBytes);
         Assert.Equal(524_288, o.ReadFileHardMaxBytes);
+    }
+
+    // ── host-key pin posture (bool env) ──────────────────────────────────────
+
+    [Fact]
+    public void RequireHostKeyPin_defaults_off()
+    {
+        Assert.False(SshgwOptions.FromEnvironment().RequireHostKeyPin);
+    }
+
+    [Theory]
+    [InlineData("1")]
+    [InlineData("true")]
+    [InlineData("TRUE")]
+    [InlineData("yes")]
+    [InlineData("on")]
+    public void RequireHostKeyPin_truthy_values_enable_it(string val)
+    {
+        Environment.SetEnvironmentVariable("SSHGW_REQUIRE_HOST_KEY_PIN", val);
+        Assert.True(SshgwOptions.FromEnvironment().RequireHostKeyPin);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("false")]
+    [InlineData("no")]
+    [InlineData("off")]
+    public void RequireHostKeyPin_falsy_values_keep_it_off(string val)
+    {
+        Environment.SetEnvironmentVariable("SSHGW_REQUIRE_HOST_KEY_PIN", val);
+        Assert.False(SshgwOptions.FromEnvironment().RequireHostKeyPin);
+    }
+
+    [Fact]
+    public void RequireHostKeyPin_invalid_value_is_rejected_naming_the_var()
+    {
+        Environment.SetEnvironmentVariable("SSHGW_REQUIRE_HOST_KEY_PIN", "maybe");
+        var ex = Assert.Throws<InvalidOperationException>(() => SshgwOptions.FromEnvironment());
+        Assert.Contains("SSHGW_REQUIRE_HOST_KEY_PIN", ex.Message);
     }
 }

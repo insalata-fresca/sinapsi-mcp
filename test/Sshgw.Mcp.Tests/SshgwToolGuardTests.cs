@@ -50,7 +50,7 @@ public sealed class SshgwToolGuardTests : IDisposable
     public async Task ExecuteCommand_InvalidConnectionName_ShortCircuits_NoSshIo()
     {
         var t = new ThrowingTransport();
-        var r = await SshgwTools.ExecuteCommand(_registry, t, "", "uptime", CancellationToken.None);
+        var r = await SshgwTools.ExecuteCommand(_registry, t, cmdString: "uptime", connectionName: "", ct: CancellationToken.None);
         Assert.False(Ok(r));
         Assert.Equal("connectionName is required", Err(r));
         Assert.False(t.Reached);
@@ -60,7 +60,7 @@ public sealed class SshgwToolGuardTests : IDisposable
     public async Task ExecuteCommand_InvalidCommand_NewlineInjection_ShortCircuits_NoSshIo()
     {
         var t = new ThrowingTransport();
-        var r = await SshgwTools.ExecuteCommand(_registry, t, "alpha", "uptime\nrm -rf /", CancellationToken.None);
+        var r = await SshgwTools.ExecuteCommand(_registry, t, cmdString: "uptime\nrm -rf /", connectionName: "alpha", ct: CancellationToken.None);
         Assert.False(Ok(r));
         Assert.Contains("control characters", Err(r));
         Assert.False(t.Reached);
@@ -70,7 +70,7 @@ public sealed class SshgwToolGuardTests : IDisposable
     public async Task ExecuteCommand_EmptyCommand_ShortCircuits_NoSshIo()
     {
         var t = new ThrowingTransport();
-        var r = await SshgwTools.ExecuteCommand(_registry, t, "alpha", "   ", CancellationToken.None);
+        var r = await SshgwTools.ExecuteCommand(_registry, t, cmdString: "   ", connectionName: "alpha", ct: CancellationToken.None);
         Assert.False(Ok(r));
         Assert.Equal("cmdString is required", Err(r));
         Assert.False(t.Reached);
@@ -80,7 +80,7 @@ public sealed class SshgwToolGuardTests : IDisposable
     public async Task ExecuteCommand_UnknownServer_ShortCircuits_NoSshIo()
     {
         var t = new ThrowingTransport();
-        var r = await SshgwTools.ExecuteCommand(_registry, t, "ghost", "uptime", CancellationToken.None);
+        var r = await SshgwTools.ExecuteCommand(_registry, t, cmdString: "uptime", connectionName: "ghost", ct: CancellationToken.None);
         Assert.False(Ok(r));
         Assert.Contains("unknown server", Err(r));
         Assert.False(t.Reached);
@@ -92,7 +92,7 @@ public sealed class SshgwToolGuardTests : IDisposable
         // A validation-clean but not-whitelisted command must still be rejected
         // before any SSH I/O.
         var t = new ThrowingTransport();
-        var r = await SshgwTools.ExecuteCommand(_registry, t, "alpha", "cat /etc/shadow", CancellationToken.None);
+        var r = await SshgwTools.ExecuteCommand(_registry, t, cmdString: "cat /etc/shadow", connectionName: "alpha", ct: CancellationToken.None);
         Assert.False(Ok(r));
         Assert.Contains("whitelist", Err(r));
         Assert.False(t.Reached);
@@ -152,31 +152,50 @@ public sealed class SshgwToolGuardTests : IDisposable
         Assert.False(t.Reached);
     }
 
-    // ── upload (stub still validates) ─────────────────────────────────────────
+    // ── upload (elevated write; validates + host-key pinned) ──────────────────
 
     [Fact]
-    public void Upload_InvalidConnectionName_RejectedBeforeStub()
+    public async Task Upload_InvalidConnectionName_ShortCircuits_NoSshIo()
     {
-        var r = SshgwTools.Upload("", "/local/f", "/remote/f");
+        var t = new ThrowingTransport();
+        var r = await SshgwTools.Upload(_registry, t, "/local/f", "/remote/f", connectionName: "", ct: CancellationToken.None);
         Assert.False(Ok(r));
         Assert.Equal("connectionName is required", Err(r));
+        Assert.False(t.Reached);
     }
 
     [Fact]
-    public void Upload_LeadingDashLocalPath_Rejected()
+    public async Task Upload_LeadingDashLocalPath_ShortCircuits_NoSshIo()
     {
-        var r = SshgwTools.Upload("alpha", "-rf", "/remote/f");
+        var t = new ThrowingTransport();
+        var r = await SshgwTools.Upload(_registry, t, "-rf", "/remote/f", connectionName: "alpha", ct: CancellationToken.None);
         Assert.False(Ok(r));
         Assert.Contains("localPath", Err(r));
         Assert.Contains("must not start with '-'", Err(r));
+        Assert.False(t.Reached);
     }
 
     [Fact]
-    public void Upload_CleanArgs_ReachesStub()
+    public async Task Upload_UnknownServer_ShortCircuits_NoSshIo()
     {
-        // Validation-clean args fall through to the deliberate not-implemented stub.
-        var r = SshgwTools.Upload("alpha", "/local/f", "/remote/f");
+        var t = new ThrowingTransport();
+        var r = await SshgwTools.Upload(_registry, t, "/local/f", "/remote/f", connectionName: "ghost", ct: CancellationToken.None);
         Assert.False(Ok(r));
-        Assert.Contains("not yet implemented", Err(r));
+        Assert.Contains("unknown server", Err(r));
+        Assert.False(t.Reached);
+    }
+
+    [Fact]
+    public async Task Upload_IsNotWhitelistGated_ElevatedWrite_ReachesTransport()
+    {
+        // upload is an elevated WRITE: even though 'alpha' carries a read-only
+        // command whitelist, upload is NOT gated by it — clean args reach the
+        // transport (proven by the canned transport recording the call).
+        var canned = new CannedTransport(upload: new UploadResult(BytesSent: 42, Ok: true, NotFound: false));
+        var r = await SshgwTools.Upload(_registry, canned, "/local/f", "/remote/f", connectionName: "alpha", ct: CancellationToken.None);
+        Assert.True(Ok(r));
+        Assert.Equal(42, r["bytes_sent"]!.GetValue<long>());
+        Assert.Single(canned.UploadCalls);
+        Assert.Equal(("/local/f", "/remote/f"), canned.UploadCalls[0]);
     }
 }

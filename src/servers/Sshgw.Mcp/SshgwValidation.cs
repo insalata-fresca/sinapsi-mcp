@@ -97,6 +97,45 @@ internal static class SshgwValidation
         return null;
     }
 
+    /// <summary>
+    /// Validate the optional <c>directory</c> (working dir) for
+    /// <c>execute-command</c>. Because the tool applies it by prefixing the command
+    /// with <c>cd -- &lt;dir&gt; &amp;&amp; …</c>, this value MUST NOT be able to
+    /// terminate the <c>cd</c> and start a second command — so it is held to a much
+    /// tighter rule than a free path: it must be ABSOLUTE and contain ZERO shell
+    /// metacharacters (no whitespace, quotes, <c>;</c>, <c>&amp;</c>, <c>|</c>,
+    /// <c>$</c>, <c>`</c>, <c>&lt;&gt;</c>, <c>()</c>, <c>{}</c>, <c>*?[]</c>, <c>~</c>,
+    /// <c>\</c>, <c>!</c>, <c>#</c>). This is deliberately conservative: a legitimate
+    /// working directory is a plain absolute path. Returns <c>null</c> when valid,
+    /// otherwise a human-readable reason.
+    /// </summary>
+    internal static string? ValidateDirectory(string? directory)
+    {
+        // Optional: an absent/empty directory means "no cd prefix" and is valid.
+        if (string.IsNullOrEmpty(directory))
+            return null;
+        if (directory.Length > MaxPathLength)
+            return $"directory too long ({directory.Length} chars; max {MaxPathLength})";
+        if (directory[0] != '/')
+            return "directory must be an absolute path";
+        foreach (var c in directory)
+        {
+            if (char.IsControl(c))
+                return "directory contains control characters or newlines";
+            if (IsShellMetacharacter(c))
+                return $"directory must not contain shell metacharacters (found '{c}')";
+        }
+        return null;
+    }
+
+    /// <summary>Characters that could break out of the <c>cd -- &lt;dir&gt;</c> fence
+    /// or trigger shell expansion. A working directory has no legitimate need for any
+    /// of them.</summary>
+    private static bool IsShellMetacharacter(char c) =>
+        c is ' ' or '\t' or ';' or '&' or '|' or '$' or '`' or '"' or '\''
+          or '<' or '>' or '(' or ')' or '{' or '}' or '[' or ']'
+          or '*' or '?' or '~' or '\\' or '!' or '#' or '\n' or '\r';
+
     private static bool ContainsControlOrNewline(string s)
     {
         foreach (var c in s)

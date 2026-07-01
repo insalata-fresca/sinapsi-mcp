@@ -45,9 +45,9 @@ Architecturally it is a handful of small seams:
 | Tool | Mutates | What it does |
 |------|:-------:|--------------|
 | `list-servers` | no | Enumerate the configured servers and whether each is read-only (has a whitelist). |
-| `execute-command` | no | Run a whitelisted read-only command on a named server; return exit code + stdout + (scrubbed) stderr. |
-| `read_file` | no | Read a remote file's bytes (UTF-8 or base64), path-bounded by the secret denylist / allowlist, capped by `max_bytes`. |
-| `upload` | **yes** | Upload a local file to a remote path. Deliberate not-implemented stub (validates its input, then returns a scaffold error). |
+| `execute-command` | no | Run a whitelisted read-only command on a named server (optional working `directory` + per-call `timeout`); return exit code + stdout + (scrubbed) stderr. |
+| `read_file` | no | Read a remote file's bytes (UTF-8 or base64), path-bounded by the secret denylist / allowlist (with a remote-realpath symlink re-check), capped by `max_bytes`. |
+| `upload` | **yes** | Upload a local file to a remote path via SFTP (elevated write; **not** whitelist-gated). |
 
 ## Per-tool reference
 
@@ -59,22 +59,26 @@ Architecturally it is a handful of small seams:
 
 ### `execute-command`
 - **Params:**
-  - `connectionName` (string, **required**) — server name from `list-servers`. Rejected if empty/whitespace, longer than 128 chars, or containing control characters.
-  - `cmdString` (string, **required**) — the command. Rejected if empty/whitespace, longer than 8192 chars, or containing control characters / newlines. Then gated by the per-server command whitelist.
+  - `cmdString` (string, **required**) — the command. Rejected if empty/whitespace, longer than 8192 chars, or containing control characters / newlines. Then gated by the per-server command whitelist (matched against the **raw** command, never the `cd`-prefixed form).
+  - `connectionName` (string, optional, default `"default"`) — server name from `list-servers`. Rejected if empty/whitespace, longer than 128 chars, or containing control characters.
+  - `directory` (string, optional) — absolute working directory. Applied as a `cd -- <dir> && …` prefix, so it is held to a **tighter** rule than a free path: it must be absolute and contain **no** shell metacharacters (whitespace, `; & | $ \` " ' < > ( ) { } [ ] * ? ~ \ ! #`). This makes a `cd`-breakout impossible.
+  - `timeout` (int, optional, ms) — per-call command timeout, clamped to `[1, hard cap]` (the `SSHGW_COMMAND_TIMEOUT_MS` ceiling). Omitted ⇒ the configured default.
 - **Returns:** `{ ok, exitCode, stdout, stderr }`. `ok`/`exitCode` are computed on the **raw** exit code **before** stderr is scrubbed, so a redaction can never flip the verdict. `stderr` is routed through `SshgwErrors.Sanitize` (or `null` when empty).
-- **Errors:** input-validation failures, an unknown server, and a non-whitelisted command all return `{ ok: false, error }` **before any SSH I/O**.
+- **Errors:** input-validation failures (incl. a metachar-bearing `directory`), an unknown server, a non-whitelisted command, and a host-key-pin rejection all return `{ ok: false, error }` **before / instead of** returning output.
 
 ### `read_file`
 - **Params:**
   - `connectionName` (string, **required**) — validated as above.
   - `remotePath` (string, **required**) — rejected if empty/whitespace, longer than 4096 chars, containing control characters / newlines, or starting with `-`. Then gated by the per-server `ReadFilePolicy` (absolute-path + secret denylist / allowlist).
   - `max_bytes` (int, optional) — clamped to `[1, hard ceiling]`; defaults to the configured default cap.
+- **Symlink re-check:** after the lexical path policy clears, the real target is resolved on the host (`readlink -f`) and the **same** policy is re-applied to it. A symlink that sits inside an allowed dir but points at a secret is refused (`symlink target blocked: …`) before any bytes are read; the returned `path` is the resolved real target.
 - **Returns:** `{ ok: true, path, size, returned_bytes, truncated, sha256, encoding, content }`. `content` is the requested file's bytes verbatim (UTF-8, or base64 when binary) — it is **deliberately not scrubbed**; the path policy is the bound that decides whether the file may be disclosed at all.
-- **Errors:** input-validation failures, an unknown server, a policy-blocked path, a not-found path, and a directory path all return `{ ok: false, error }`; only a policy-cleared path reaches SFTP.
+- **Errors:** input-validation failures, an unknown server, a policy-blocked path (lexical **or** symlink-resolved), a not-found path, a directory path, and a host-key-pin rejection all return `{ ok: false, error }`; only a policy-cleared path reaches SFTP.
 
 ### `upload` (mutates)
-- **Params:** `connectionName`, `localPath`, `remotePath` — each validated (the two paths reject a leading `-`).
-- **Returns:** `{ ok: false, error }` — a deliberate not-implemented stub. Validation runs first so the guard contract holds uniformly and is already in place when the SFTP body is ported.
+- **Params:** `localPath`, `remotePath`, `connectionName` (optional, default `"default"`) — each validated (the two paths reject a leading `-`).
+- **Elevated write:** upload is **not** subject to the command whitelist or the `read_file` path policy — those bound reads. Host-key pinning still applies (MITM guard on the write too).
+- **Returns:** `{ ok: true, path, bytes_sent }` on success; `{ ok: false, error }` on a missing local file, an unknown server, a validation failure, or a host-key-pin rejection.
 
 ## Configuration
 
@@ -85,6 +89,7 @@ Architecturally it is a handful of small seams:
 | `SSHGW_COMMAND_TIMEOUT_MS` | no | `30000` | Per-command timeout. Integer in `1..600000`; invalid values **fail startup**. |
 | `SSHGW_READFILE_DEFAULT_MAX_BYTES` | no | `262144` | Default `read_file` cap (256 KiB). Integer in `1..16777216`; must not exceed the hard cap; invalid values **fail startup**. |
 | `SSHGW_READFILE_HARD_MAX_BYTES` | no | `2097152` | Hard `read_file` ceiling (2 MiB). Integer in `1..67108864`; invalid values **fail startup**. |
+| `SSHGW_REQUIRE_HOST_KEY_PIN` | no | `false` | Global host-key posture. When on (`1/true/yes/on`), even a server **without** a configured `hostKeyFingerprint` is refused (no trust-on-first-use anywhere). Off ⇒ per-server pins are opt-in. An unrecognised value **fails startup**. |
 | `SSHGW_MCP_HOST` | no | `0.0.0.0` | Listen address. |
 | `SSHGW_MCP_PORT` | no | `9204` | Listen port. |
 
@@ -103,7 +108,8 @@ the image.
     "username": "deploy",
     "privateKey": "/etc/sshgw/keys/id_ed25519",
     "whitelist": "^uptime$|^df -h$|^cat /etc/os-release$",
-    "readFilePolicy": { "allow": ["/var/log/**"] }
+    "readFilePolicy": { "allow": ["/var/log/**"] },
+    "hostKeyFingerprint": "SHA256:Zm9vYmFyYmF6cXV4..."
   }
 ]
 ```
@@ -113,6 +119,12 @@ the image.
   (give a read-only server an explicit whitelist instead).
 - `readFilePolicy.allow` present ⇒ deny-by-default allowlist mode. Absent ⇒
   denylist mode (the global secret denylist applies, plus any extra `deny` globs).
+- `hostKeyFingerprint` — pinned host-key fingerprint (OpenSSH SHA-256 form
+  `SHA256:<base64>`, or a raw hex SHA-256; a single string or an array for a
+  rotation window). Get it with `ssh-keyscan -t ed25519 <host> | ssh-keygen -lf -`.
+  When present the presented host key MUST match one of them or the connection is
+  refused (MITM guard). Absent ⇒ trust-on-first-use unless
+  `SSHGW_REQUIRE_HOST_KEY_PIN` is on.
 
 ## Run
 
@@ -141,13 +153,26 @@ fail safe:
   required/non-empty, length caps, control-char/newline rejection, and a
   leading-`-` reject on paths. Invalid input returns a structured error, never an
   exception, and never opens a connection.
+- **Host-key pinning (MITM guard).** SSH.NET trusts any host key by default; this
+  server wires a per-server `HostKeyPolicy` into the `HostKeyReceived` event. A
+  server carrying a `hostKeyFingerprint` refuses any key that does not match it (the
+  handshake is aborted before authentication); `SSHGW_REQUIRE_HOST_KEY_PIN` extends
+  that to refuse even unpinned servers. A rejection surfaces as a structured error
+  naming the presented fingerprint — never key material.
 - **Command bound.** `execute-command` is gated by the per-server
-  `CommandWhitelist` (self-anchored regexes); a non-whitelisted command is refused
-  before any SSH I/O.
-- **Path bound.** `read_file` is gated by the per-server `ReadFilePolicy` — a
-  global secret denylist (keys, `.env`, secret-manager and NATS-client dirs, local
-  DBs, …) plus an optional deny-by-default allowlist. A secret path is refused
-  before any SSH I/O.
+  `CommandWhitelist` (self-anchored regexes), matched against the **raw** command
+  (never the `cd`-prefixed form); a non-whitelisted command is refused before any
+  SSH I/O. An optional working `directory` is validated to be absolute +
+  metacharacter-free so the `cd -- <dir> && …` prefix cannot be broken out of.
+- **Path bound + symlink re-check.** `read_file` is gated by the per-server
+  `ReadFilePolicy` — a global secret denylist (keys, `.env`, secret-manager and
+  NATS-client dirs, local DBs, …) plus an optional deny-by-default allowlist. The
+  lexical policy is followed by a **remote realpath re-check** (`readlink -f`): the
+  real target is resolved on the host and the same policy re-applied, so a symlink
+  inside an allowed dir that points at a secret is refused before any bytes are read.
+- **`upload` is an elevated write.** It is deliberately **not** gated by the command
+  whitelist or the read_file path policy (those bound reads); host-key pinning still
+  applies. It validates its inputs, then streams the local file over SFTP.
 - **No secret leakage in surfaced errors.** `execute-command`'s surfaced `stderr`
   is passed through `SshgwErrors.Sanitize`: PEM **private-key** blocks and
   `password=/token=/secret=/Authorization:` style assignments are redacted, and the
@@ -189,3 +214,46 @@ escape `\0` for NUL inputs), and the **hardening paths**:
   stay on the raw exit code (a redaction cannot flip the verdict); a
   credential-shaped requested file is returned untouched; and a timeout surfaces as
   a structured error, not an unhandled throw.
+- **`CommandWhitelistParityTests` — the byte-parity merge gate.** A faithful,
+  SEPARATE reimplementation of the incumbent Node matcher
+  (`whitelist.split("|").map(p => new RegExp(p)).some(r => r.test(cmd))`) is run as a
+  differential ORACLE, and `CommandWhitelist.IsAllowed(cmd)` is asserted **equal** to
+  the oracle for EVERY `(whitelist, cmd)` row across a broad corpus that exercises
+  all three whitelist SHAPES (bounded-read, router-with-writes, broad-read) and an
+  adversarial reject corpus (metachar breakout, leading-dash, unbounded-read on a
+  bounded set, internal-`|` crash-parity). The whitelist strings are **synthetic /
+  neutral** — the real homelab whitelists are proven at SHADOW time against the live
+  (private) Node server, never committed here.
+
+  **Byte-parity scope and documented intentional divergences:** the C# matcher is
+  byte-identical to the Node incumbent **except** for three explicitly documented
+  families, all of which make C# *stricter* (never more permissive):
+
+  1. **Empty-piece whitelists** (leading `|`, trailing `|`, double `||`, bare `|`):
+     Node's `String.split("|")` keeps empty pieces; `new RegExp("")` matches
+     everything, so any whitelist with an empty piece becomes silently allow-all
+     (fail-open). C#'s `Split('|', RemoveEmptyEntries)` drops empty pieces; only
+     the non-empty patterns survive, so the matcher remains fail-closed. Production
+     whitelists contain no empty pieces (confirmed at shadow time); this divergence
+     is a deliberate security improvement. Pinned and asserted by
+     `CommandWhitelistEmptyPieceDivergenceTests`.
+
+  2. **Whitespace-only whitelist**: C# treats a whitespace-only string as allow-all
+     (`IsNullOrWhiteSpace`); Node would compile the literal spaces as a pattern that
+     matches almost nothing. Only affects a degenerate misconfiguration. Pinned by
+     `Whitespace_only_whitelist_is_a_documented_intended_divergence`.
+
+  3. **Internal-`|` crash-parity**: a whitelist piece containing unbalanced-paren
+     alternation (e.g. `^(uptime|whoami)$`) is torn by the `|` split into invalid
+     regex fragments; both C# and Node throw rather than silently mis-matching. Pinned
+     by `Internal_pipe_alternation_is_crash_parity_BOTH_throw`.
+
+  C# is **never more permissive than Node** on any of these families — that
+  one-directional invariant is explicitly asserted in
+  `CommandWhitelistEmptyPieceDivergenceTests.CSharp_is_never_more_permissive_than_Node_on_empty_piece_whitelists`.
+- `HostKeyPolicyTests` proves the MITM-pin logic (matching/​non-matching keys, TOFU
+  vs. `requirePin`, rotation via multiple pins, and a loud throw on a malformed pin).
+- `SshgwParityFeatureTests` covers the `directory` cd-prefix (incl. metachar
+  rejection), the per-call `timeout` pass-through, the `upload` round-trip, and the
+  `read_file` symlink realpath re-check (allowed-target read + escaping-target
+  refusal). `SshClientUploadTests` covers the concrete transport's local-file guard.

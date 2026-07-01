@@ -46,8 +46,10 @@ public sealed class SshgwTools
     [Description("Run a (read-only, whitelisted) command on a configured server and return its output.")]
     public static async Task<JsonObject> ExecuteCommand(
         ServerRegistry registry, SshClient ssh,
-        [Description("Server name from list-servers")] string connectionName,
         [Description("Command to execute (must match the server's read-only whitelist)")] string cmdString,
+        [Description("Server name from list-servers (default: 'default')")] string connectionName = "default",
+        [Description("Optional absolute working directory to run the command in (no shell metacharacters)")] string? directory = null,
+        [Description("Optional per-call timeout in ms (clamped to the server hard cap)")] int? timeout = null,
         CancellationToken ct = default)
     {
         // Fail-fast input validation BEFORE the whitelist bound and any SSH I/O.
@@ -55,16 +57,32 @@ public sealed class SshgwTools
             return Err(nameErr);
         if (SshgwValidation.ValidateCommand(cmdString) is { } cmdErr)
             return Err(cmdErr);
+        // The working directory is held to a tighter rule than a free path: it must be
+        // absolute + metachar-free, because it is prefixed as `cd -- <dir> && …`.
+        if (SshgwValidation.ValidateDirectory(directory) is { } dirErr)
+            return Err(dirErr);
 
         var entry = registry.Get(connectionName);
         if (entry is null) return Err($"unknown server '{connectionName}'");
 
-        // The in-MCP bound: the command must be on this server's whitelist.
+        // The in-MCP bound: the command must be on this server's whitelist. The
+        // whitelist matches the RAW command (never the cd-prefixed form), matching
+        // the incumbent contract exactly.
         var wl = new CommandWhitelist(entry.Whitelist);
         if (!wl.IsAllowed(cmdString))
             return Err("Command not in whitelist, execution forbidden");
 
-        var r = await ssh.ExecuteAsync(entry, cmdString, ct);
+        ExecResult r;
+        try
+        {
+            r = await ssh.ExecuteAsync(entry, cmdString, timeout, directory, ct);
+        }
+        catch (HostKeyRejectedException hk)
+        {
+            // MITM guard fired: surface a precise, non-leaky reason (no key material).
+            return Err(hk.Message);
+        }
+
         // Compute the success verdict on the RAW exit code FIRST, so that
         // sanitizing the surfaced stderr can never flip ok/exitCode. Only the
         // human-facing stderr text is routed through the secret scrubber.
@@ -95,14 +113,48 @@ public sealed class SshgwTools
         var entry = registry.Get(connectionName);
         if (entry is null) return Err($"unknown server '{connectionName}'");
 
-        // The in-MCP bound: refuse secret paths.
+        // The in-MCP bound: refuse secret paths (lexical canonicalisation only).
         var policy = new ReadFilePolicy(entry.ReadFilePolicy);
         var reject = policy.Evaluate(remotePath, out var canonical);
         if (reject is not null) return Err(reject);
 
         int cap = Math.Clamp(max_bytes ?? opts.ReadFileDefaultMaxBytes, 1, opts.ReadFileHardMaxBytes);
 
-        var res = await ssh.ReadFileAsync(entry, canonical, cap, ct);
+        // SYMLINK RE-CHECK: the lexical policy above cannot see a remote symlink that
+        // points OUT of an allowed dir at a secret. Resolve the REAL target over SSH
+        // (`readlink -f`) and re-apply the SAME policy to it, so a symlinked secret
+        // is refused before any bytes are read. Only skip the re-check if the target
+        // resolves to the same canonical path (no symlink in play) — a resolution
+        // that differs must clear the policy again.
+        string realTarget;
+        try
+        {
+            var resolved = await ssh.ResolveRealPathAsync(entry, canonical, ct);
+            realTarget = resolved ?? canonical;
+        }
+        catch (HostKeyRejectedException hk)
+        {
+            return Err(hk.Message);
+        }
+        if (!string.Equals(realTarget, canonical, StringComparison.Ordinal))
+        {
+            var realReject = policy.Evaluate(realTarget, out var realCanonical);
+            if (realReject is not null)
+                return Err($"symlink target blocked: {realReject}");
+            // Read from the resolved real target so we return the actual bytes the
+            // policy just cleared (not the symlink path).
+            canonical = realCanonical;
+        }
+
+        ReadResult res;
+        try
+        {
+            res = await ssh.ReadFileAsync(entry, canonical, cap, ct);
+        }
+        catch (HostKeyRejectedException hk)
+        {
+            return Err(hk.Message);
+        }
         if (res.NotFound) return Err($"file not found: {canonical}");
         if (res.IsDirectory) return Err($"path is a directory: {canonical}");
 
@@ -121,15 +173,16 @@ public sealed class SshgwTools
     }
 
     [McpServerTool(Name = "upload")]
-    [Description("Upload a local file to a remote path (write).")]
-    public static JsonObject Upload(
-        [Description("Server name")] string connectionName,
+    [Description("Upload a local file to a remote path (WRITE — elevated; not whitelist-gated).")]
+    public static async Task<JsonObject> Upload(
+        ServerRegistry registry, SshClient ssh,
         [Description("Local source path")] string localPath,
-        [Description("Remote destination path")] string remotePath)
+        [Description("Remote destination path")] string remotePath,
+        [Description("Server name from list-servers (default: 'default')")] string connectionName = "default",
+        CancellationToken ct = default)
     {
-        // Fail-fast input validation runs even for the stub, so the guard contract
-        // (validate at the TOP, before any I/O) holds uniformly across all four
-        // tools and is already in place when the SFTP body is ported.
+        // Fail-fast input validation at the TOP, before any I/O — the same guard
+        // contract as the read tools.
         if (SshgwValidation.ValidateConnectionName(connectionName) is { } nameErr)
             return Err(nameErr);
         if (SshgwValidation.ValidatePath(localPath, "localPath") is { } localErr)
@@ -137,9 +190,29 @@ public sealed class SshgwTools
         if (SshgwValidation.ValidatePath(remotePath, "remotePath") is { } remoteErr)
             return Err(remoteErr);
 
-        // TODO: port the SFTP upload (SftpClient.UploadFile). Left as a deliberate
-        // stub so it is not silently half-implemented; this is a write tool.
-        return Err("upload not yet implemented (scaffold)");
+        var entry = registry.Get(connectionName);
+        if (entry is null) return Err($"unknown server '{connectionName}'");
+
+        // upload is an ELEVATED WRITE: it is deliberately NOT subject to the command
+        // whitelist or the read_file path policy (those bound READS). Host-key
+        // pinning still applies via the transport (MITM guard on the write too).
+        UploadResult res;
+        try
+        {
+            res = await ssh.UploadAsync(entry, localPath, remotePath, ct);
+        }
+        catch (HostKeyRejectedException hk)
+        {
+            return Err(hk.Message);
+        }
+        if (res.NotFound) return Err($"local file not found: {localPath}");
+
+        return new JsonObject
+        {
+            ["ok"] = res.Ok,
+            ["path"] = remotePath,
+            ["bytes_sent"] = res.BytesSent,
+        };
     }
 
     private static JsonObject Err(string message) => new() { ["ok"] = false, ["error"] = message };

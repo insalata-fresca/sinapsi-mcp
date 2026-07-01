@@ -119,4 +119,65 @@ public sealed class SshgwValidationTests
     [InlineData("-/etc/passwd")]
     public void ValidatePath_RejectsLeadingDash(string path) =>
         Assert.Contains("must not start with '-'", SshgwValidation.ValidatePath(path, "remotePath")!);
+
+    // ── directory (execute-command working dir) — TIGHTER than a free path ────
+    // It becomes `cd -- <dir> && …`, so it must be absolute + metachar-free.
+
+    [Fact]
+    public void ValidateDirectory_NullOrEmpty_IsValid_MeansNoCdPrefix()
+    {
+        Assert.Null(SshgwValidation.ValidateDirectory(null));
+        Assert.Null(SshgwValidation.ValidateDirectory(""));
+    }
+
+    [Theory]
+    [InlineData("/srv")]
+    [InlineData("/srv/app")]
+    [InlineData("/var/log/nginx")]
+    [InlineData("/opt/a-b_c.d/1")]
+    public void ValidateDirectory_AcceptsAbsoluteMetacharFreePaths(string dir) =>
+        Assert.Null(SshgwValidation.ValidateDirectory(dir));
+
+    [Theory]
+    [InlineData("relative/dir")]
+    [InlineData("srv")]
+    [InlineData("./srv")]
+    public void ValidateDirectory_RejectsNonAbsolute(string dir) =>
+        Assert.Contains("absolute", SshgwValidation.ValidateDirectory(dir)!);
+
+    [Theory]
+    [InlineData("/srv; rm -rf /")]     // ';' + space
+    [InlineData("/srv && x")]          // '&' + space
+    [InlineData("/srv|x")]             // '|'
+    [InlineData("/srv/$(x)")]          // '$' '(' ')'
+    [InlineData("/srv/`x`")]           // backtick
+    [InlineData("/srv/a b")]           // space
+    [InlineData("/srv/*")]             // glob '*'
+    [InlineData("/srv/a?b")]           // glob '?'
+    [InlineData("/srv/~root")]         // '~'
+    [InlineData("/srv/a\\b")]          // backslash
+    [InlineData("/srv/{a,b}")]         // brace expansion
+    [InlineData("/srv/[a]")]           // bracket
+    [InlineData("/srv/a>b")]           // redirection
+    [InlineData("/srv/a<b")]           // redirection
+    [InlineData("/srv/a#b")]           // comment
+    [InlineData("/srv/a!b")]           // history expansion
+    [InlineData("/srv/a\"b")]          // double quote
+    [InlineData("/srv/a'b")]           // single quote
+    public void ValidateDirectory_RejectsShellMetacharacters(string dir) =>
+        Assert.Contains("metacharacters", SshgwValidation.ValidateDirectory(dir)!);
+
+    [Theory]
+    [InlineData("/srv/\ndir")]
+    [InlineData("/srv/\tdir")]
+    [InlineData("/srv/\0dir")]         // C# escape \0 == NUL
+    public void ValidateDirectory_RejectsControlChars(string dir) =>
+        Assert.NotNull(SshgwValidation.ValidateDirectory(dir));
+
+    [Fact]
+    public void ValidateDirectory_RejectsTooLong()
+    {
+        var dir = "/" + new string('a', SshgwValidation.MaxPathLength);
+        Assert.Contains("too long", SshgwValidation.ValidateDirectory(dir)!);
+    }
 }
