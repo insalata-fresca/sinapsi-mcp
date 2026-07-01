@@ -23,8 +23,25 @@ public sealed class IndexTools
         [Description("Max results (default 10, max 30).")] int limit = 10,
         CancellationToken cancellationToken = default)
     {
-        var hits = await store.SearchAsync(query, source, kind, limit, cancellationToken);
-        return new { query, result_count = hits.Count, results = hits };
+        // Validate ALL params BEFORE any DB round-trip; return a structured error.
+        if (IndexerValidation.ValidateQuery(query) is { } qErr) return new { error = qErr };
+        if (IndexerValidation.ValidateFilterToken("source", source) is { } sErr) return new { error = sErr };
+        if (IndexerValidation.ValidateKind(kind) is { } kErr) return new { error = kErr };
+        if (IndexerValidation.ValidateLimit(limit) is { } lErr) return new { error = lErr };
+
+        try
+        {
+            var hits = await store.SearchAsync(query, source, kind, limit, cancellationToken);
+            return new { query, result_count = hits.Count, results = hits };
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception e)
+        {
+            // Any upstream (Postgres) failure is surfaced as a scrubbed, capped
+            // structured error — never a raw exception that could echo a
+            // connection-string password back to the caller.
+            return new { error = IndexerErrors.FromException(e) };
+        }
     }
 
     [McpServerTool(Name = "semantic_search")]
@@ -40,10 +57,22 @@ public sealed class IndexTools
         [Description("Max results (default 10, max 30).")] int limit = 10,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(query)) return new { error = "query is required" };
-        var vec = embedder.Embed(query);
-        var hits = await store.SemanticSearchAsync(vec, query, limit, cancellationToken);
-        return new { query, mode = "hybrid-rrf", result_count = hits.Count, results = hits };
+        // Validate ALL params BEFORE embedding or any DB round-trip. The empty
+        // query still yields the exact "query is required" message (parity).
+        if (IndexerValidation.ValidateQuery(query) is { } qErr) return new { error = qErr };
+        if (IndexerValidation.ValidateLimit(limit) is { } lErr) return new { error = lErr };
+
+        try
+        {
+            var vec = embedder.Embed(query);
+            var hits = await store.SemanticSearchAsync(vec, query, limit, cancellationToken);
+            return new { query, mode = "hybrid-rrf", result_count = hits.Count, results = hits };
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception e)
+        {
+            return new { error = IndexerErrors.FromException(e) };
+        }
     }
 
     [McpServerTool(Name = "get_learning")]
@@ -57,7 +86,21 @@ public sealed class IndexTools
         [Description("Max results (default 10, max 30).")] int limit = 10,
         CancellationToken cancellationToken = default)
     {
-        var hits = await store.GetLearningsAsync(scope, query, limit, cancellationToken);
-        return new { scope, query, result_count = hits.Count, results = hits };
+        // Validate ALL params BEFORE any DB round-trip. Both scope and query are
+        // optional (a null query lists the scope), so each is guarded as optional.
+        if (IndexerValidation.ValidateFilterToken("scope", scope) is { } sErr) return new { error = sErr };
+        if (IndexerValidation.ValidateOptionalQuery(query) is { } qErr) return new { error = qErr };
+        if (IndexerValidation.ValidateLimit(limit) is { } lErr) return new { error = lErr };
+
+        try
+        {
+            var hits = await store.GetLearningsAsync(scope, query, limit, cancellationToken);
+            return new { scope, query, result_count = hits.Count, results = hits };
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception e)
+        {
+            return new { error = IndexerErrors.FromException(e) };
+        }
     }
 }

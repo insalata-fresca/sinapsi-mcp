@@ -38,12 +38,24 @@ public sealed partial class LearnTools
     {
         slug = (slug ?? "").Trim();
         scope = string.IsNullOrWhiteSpace(scope) ? "global" : scope.Trim();
+        // Kebab-case token guards first (these carry the exact NATS-subject-token
+        // messages callers rely on). The kebab regex itself excludes control
+        // characters and newlines from slug/scope.
         if (!TokenRx().IsMatch(slug))
             return new { error = "slug must be kebab-case [a-z0-9-] (it is the entry id + NATS subject token)" };
         if (!TokenRx().IsMatch(scope))
             return new { error = "scope must be a NATS-safe token [a-z0-9-] — e.g. 'global' or a project slug" };
         if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(body))
             return new { error = "title and body are required" };
+
+        // Defence-in-depth length/control-char caps on every remaining field
+        // BEFORE any NATS connect/publish. These run after the exact-message
+        // guards above so existing behaviour for those cases is unchanged.
+        if (IndexerValidation.ValidateSlug(slug) is { } slugErr) return new { error = slugErr };
+        if (IndexerValidation.ValidateTitle(title) is { } titleErr) return new { error = titleErr };
+        if (IndexerValidation.ValidateBody(body) is { } bodyErr) return new { error = bodyErr };
+        if (IndexerValidation.ValidateTags(tags) is { } tagsErr) return new { error = tagsErr };
+        if (IndexerValidation.ValidateSessionContext(session_context) is { } scErr) return new { error = scErr };
 
         var tagArr = new JsonArray();
         foreach (var t in tags ?? Array.Empty<string>())
@@ -60,7 +72,18 @@ public sealed partial class LearnTools
         if (!string.IsNullOrWhiteSpace(session_context))
             data["session_context"] = session_context.Trim();
 
-        await publisher.PublishLearningAsync(slug, scope, data, cancellationToken);
+        try
+        {
+            await publisher.PublishLearningAsync(slug, scope, data, cancellationToken);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception e)
+        {
+            // A NATS connect/publish failure surfaces as a scrubbed, capped
+            // structured error — never a raw exception that could echo an NKey
+            // seed path or a bearer token back to the caller.
+            return new { error = IndexerErrors.FromException(e) };
+        }
         return new { published = true, subject = publisher.SubjectFor(scope), slug };
     }
 }

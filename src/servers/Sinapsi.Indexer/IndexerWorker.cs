@@ -38,10 +38,11 @@ public sealed class IndexerWorker : JetStreamWorker
         _store = store;
         _scanner = scanner;
         _embedder = embedder;
-        var mins = int.TryParse(Environment.GetEnvironmentVariable("INDEXER_RESCAN_INTERVAL_MIN"), out var m) ? m : 60;
-        _rescanInterval = TimeSpan.FromMinutes(Math.Max(5, mins));
-        var deb = int.TryParse(Environment.GetEnvironmentVariable("INDEXER_DEBOUNCE_SEC"), out var d) ? d : 15;
-        _debounce = TimeSpan.FromSeconds(Math.Max(2, deb));
+        // Fail-closed numeric config: a bad INDEXER_RESCAN_INTERVAL_MIN /
+        // INDEXER_DEBOUNCE_SEC now throws (naming the var) at startup rather than
+        // being silently clamped/defaulted. A valid value behaves exactly as before.
+        _rescanInterval = TimeSpan.FromMinutes(IndexerConfig.RescanIntervalMin());
+        _debounce = TimeSpan.FromSeconds(IndexerConfig.DebounceSec());
     }
 
     protected override string StreamName => Environment.GetEnvironmentVariable("INDEXER_STREAM") ?? "EVENTS";
@@ -154,8 +155,7 @@ public sealed class IndexerWorker : JetStreamWorker
     // event acks or saturate the shared host.
     private async Task EmbedLoopAsync(CancellationToken ct)
     {
-        var idle = TimeSpan.FromSeconds(
-            int.TryParse(Environment.GetEnvironmentVariable("INDEXER_EMBED_IDLE_SEC"), out var s) ? Math.Max(5, s) : 30);
+        var idle = TimeSpan.FromSeconds(IndexerConfig.EmbedIdleSec());
         while (!ct.IsCancellationRequested)
         {
             int embedded;
@@ -179,8 +179,7 @@ public sealed class IndexerWorker : JetStreamWorker
     private async Task<int> BackfillEmbeddingsAsync(CancellationToken ct)
     {
         const int batch = 32;
-        var throttle = TimeSpan.FromMilliseconds(
-            int.TryParse(Environment.GetEnvironmentVariable("INDEXER_EMBED_THROTTLE_MS"), out var t) ? Math.Max(0, t) : 50);
+        var throttle = TimeSpan.FromMilliseconds(IndexerConfig.EmbedThrottleMs());
         var total = 0;
         for (var i = 0; i < 200 && !ct.IsCancellationRequested; i++)
         {

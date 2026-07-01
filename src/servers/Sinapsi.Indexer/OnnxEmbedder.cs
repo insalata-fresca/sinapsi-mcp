@@ -32,8 +32,11 @@ public sealed class OnnxEmbedder : IEmbedder, IDisposable
         _log = log;
         var modelPath = Env("EMBED_MODEL_PATH", "/opt/models/all-MiniLM-L6-v2/model.onnx");
         var vocabPath = Env("EMBED_VOCAB_PATH", "/opt/models/all-MiniLM-L6-v2/vocab.txt");
-        _maxTokens = int.TryParse(Environment.GetEnvironmentVariable("EMBED_MAX_TOKENS"), out var m) ? m : 256;
-        Dim = int.TryParse(Environment.GetEnvironmentVariable("EMBED_DIM"), out var d) ? d : 384;
+        // Fail-closed: a non-numeric / out-of-range EMBED_MAX_TOKENS or EMBED_DIM
+        // now throws (naming the var) rather than silently falling back to the
+        // default. A valid value binds exactly as before.
+        _maxTokens = IndexerConfig.EmbedMaxTokens();
+        Dim = IndexerConfig.EmbedDim();
 
         _tok = BertTokenizer.Create(vocabPath);
 

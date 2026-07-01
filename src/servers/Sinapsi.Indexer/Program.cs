@@ -49,7 +49,9 @@ app.MapGet("/", async (IndexerWorker w, IIndexStore store) =>
 });
 
 var host = Environment.GetEnvironmentVariable("INDEXER_HEALTH_HOST") ?? "0.0.0.0";
-var port = Environment.GetEnvironmentVariable("INDEXER_HEALTH_PORT") ?? "8009";
+// Fail-closed: a non-numeric / out-of-range INDEXER_HEALTH_PORT throws here
+// (naming the var) instead of letting Kestrel reject it opaquely at bind time.
+var port = IndexerConfig.HealthPort();
 app.Urls.Add($"http://{host}:{port}");
 
 app.Run();
