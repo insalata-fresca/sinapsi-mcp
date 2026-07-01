@@ -14,7 +14,11 @@ public sealed class UserTools
         ZitadelClient zitadel,
         [Description("Max results (default 100).")] int limit = 100,
         CancellationToken ct = default)
-        => ZitadelToolGuard.RunAsync(async () => await zitadel.ListUsersAsync(limit, ct));
+    {
+        if (ZitadelValidation.ValidateLimit(limit) is { } err)
+            return Task.FromResult<object>(new { ok = false, error = err });
+        return ZitadelToolGuard.RunAsync(async () => await zitadel.ListUsersAsync(limit, ct));
+    }
 
     [McpServerTool(Name = "get_user", ReadOnly = true)]
     [Description("Get a single user by id.")]
@@ -22,5 +26,9 @@ public sealed class UserTools
         ZitadelClient zitadel,
         [Description("The ZITADEL user id.")] string userId,
         CancellationToken ct = default)
-        => ZitadelToolGuard.RunAsync(async () => await zitadel.GetUserAsync(userId, ct));
+    {
+        if (ZitadelValidation.ValidateId("userId", userId) is { } err)
+            return Task.FromResult<object>(new { ok = false, error = err });
+        return ZitadelToolGuard.RunAsync(async () => await zitadel.GetUserAsync(userId, ct));
+    }
 }

@@ -16,7 +16,13 @@ public sealed class OidcAppTools
         [Description("The ZITADEL project id.")] string projectId,
         [Description("Max results (default 100).")] int limit = 100,
         CancellationToken ct = default)
-        => ZitadelToolGuard.RunAsync(async () => await zitadel.ListAppsAsync(projectId, limit, ct));
+    {
+        if (ZitadelValidation.ValidateId("projectId", projectId) is { } err)
+            return Task.FromResult<object>(new { ok = false, error = err });
+        if (ZitadelValidation.ValidateLimit(limit) is { } limErr)
+            return Task.FromResult<object>(new { ok = false, error = limErr });
+        return ZitadelToolGuard.RunAsync(async () => await zitadel.ListAppsAsync(projectId, limit, ct));
+    }
 
     [McpServerTool(Name = "get_oidc_app", ReadOnly = true)]
     [Description("Get a single application within a project.")]
@@ -25,7 +31,13 @@ public sealed class OidcAppTools
         [Description("The ZITADEL project id.")] string projectId,
         [Description("The application id.")] string appId,
         CancellationToken ct = default)
-        => ZitadelToolGuard.RunAsync(async () => await zitadel.GetAppAsync(projectId, appId, ct));
+    {
+        if (ZitadelValidation.ValidateId("projectId", projectId) is { } err)
+            return Task.FromResult<object>(new { ok = false, error = err });
+        if (ZitadelValidation.ValidateId("appId", appId) is { } appErr)
+            return Task.FromResult<object>(new { ok = false, error = appErr });
+        return ZitadelToolGuard.RunAsync(async () => await zitadel.GetAppAsync(projectId, appId, ct));
+    }
 
     [McpServerTool(Name = "create_oidc_app", Destructive = false)]
     [Description("Create an OIDC application (= client). Returns {appId, clientId, clientSecret?, details}. MUTATES.")]
@@ -43,6 +55,25 @@ public sealed class OidcAppTools
         [Description("Dev mode (default false).")] bool devMode = false,
         CancellationToken ct = default)
     {
+        if (ZitadelValidation.ValidateId("projectId", projectId) is { } pErr)
+            return Task.FromResult<object>(new { ok = false, error = pErr });
+        if (ZitadelValidation.ValidateName("name", name) is { } nErr)
+            return Task.FromResult<object>(new { ok = false, error = nErr });
+        if (ZitadelValidation.ValidateUris("redirectUris", redirectUris, required: true) is { } rErr)
+            return Task.FromResult<object>(new { ok = false, error = rErr });
+        if (ZitadelValidation.ValidateUris("postLogoutRedirectUris", postLogoutRedirectUris, required: false) is { } plErr)
+            return Task.FromResult<object>(new { ok = false, error = plErr });
+        if (ZitadelValidation.ValidateEnumList("responseTypes", responseTypes) is { } rtErr)
+            return Task.FromResult<object>(new { ok = false, error = rtErr });
+        if (ZitadelValidation.ValidateEnumList("grantTypes", grantTypes) is { } gtErr)
+            return Task.FromResult<object>(new { ok = false, error = gtErr });
+        if (ZitadelValidation.ValidateEnum("appType", appType) is { } atErr)
+            return Task.FromResult<object>(new { ok = false, error = atErr });
+        if (ZitadelValidation.ValidateEnum("authMethodType", authMethodType) is { } amErr)
+            return Task.FromResult<object>(new { ok = false, error = amErr });
+        if (ZitadelValidation.ValidateEnum("accessTokenType", accessTokenType) is { } acErr)
+            return Task.FromResult<object>(new { ok = false, error = acErr });
+
         var body = new
         {
             name,
@@ -74,6 +105,25 @@ public sealed class OidcAppTools
         [Description("Dev mode (omit to leave unchanged; false sets it false).")] bool? devMode = null,
         CancellationToken ct = default)
     {
+        if (ZitadelValidation.ValidateId("projectId", projectId) is { } pErr)
+            return Task.FromResult<object>(new { ok = false, error = pErr });
+        if (ZitadelValidation.ValidateId("appId", appId) is { } aErr)
+            return Task.FromResult<object>(new { ok = false, error = aErr });
+        if (ZitadelValidation.ValidateUris("redirectUris", redirectUris, required: false) is { } rErr)
+            return Task.FromResult<object>(new { ok = false, error = rErr });
+        if (ZitadelValidation.ValidateUris("postLogoutRedirectUris", postLogoutRedirectUris, required: false) is { } plErr)
+            return Task.FromResult<object>(new { ok = false, error = plErr });
+        if (ZitadelValidation.ValidateEnumList("responseTypes", responseTypes) is { } rtErr)
+            return Task.FromResult<object>(new { ok = false, error = rtErr });
+        if (ZitadelValidation.ValidateEnumList("grantTypes", grantTypes) is { } gtErr)
+            return Task.FromResult<object>(new { ok = false, error = gtErr });
+        if (ZitadelValidation.ValidateEnum("appType", appType) is { } atErr)
+            return Task.FromResult<object>(new { ok = false, error = atErr });
+        if (ZitadelValidation.ValidateEnum("authMethodType", authMethodType) is { } amErr)
+            return Task.FromResult<object>(new { ok = false, error = amErr });
+        if (ZitadelValidation.ValidateEnum("accessTokenType", accessTokenType) is { } acErr)
+            return Task.FromResult<object>(new { ok = false, error = acErr });
+
         // Only-non-null body: a bool? null means "leave unchanged"; bool? false means "set false".
         var body = new Dictionary<string, object?>(StringComparer.Ordinal);
         if (redirectUris           is not null) body["redirectUris"]           = redirectUris;
@@ -94,7 +144,13 @@ public sealed class OidcAppTools
         [Description("The ZITADEL project id.")] string projectId,
         [Description("The application id.")] string appId,
         CancellationToken ct = default)
-        => ZitadelToolGuard.RunAsync(async () => await zitadel.DeleteAppAsync(projectId, appId, ct));
+    {
+        if (ZitadelValidation.ValidateId("projectId", projectId) is { } err)
+            return Task.FromResult<object>(new { ok = false, error = err });
+        if (ZitadelValidation.ValidateId("appId", appId) is { } appErr)
+            return Task.FromResult<object>(new { ok = false, error = appErr });
+        return ZitadelToolGuard.RunAsync(async () => await zitadel.DeleteAppAsync(projectId, appId, ct));
+    }
 
     [McpServerTool(Name = "regenerate_oidc_secret", Destructive = true)]
     [Description("Rotate the client secret. Returns the new secret in the response. MUTATES + SENSITIVE — treat the result as a secret.")]
@@ -103,5 +159,11 @@ public sealed class OidcAppTools
         [Description("The ZITADEL project id.")] string projectId,
         [Description("The application id.")] string appId,
         CancellationToken ct = default)
-        => ZitadelToolGuard.RunAsync(async () => await zitadel.RegenerateOidcSecretAsync(projectId, appId, ct));
+    {
+        if (ZitadelValidation.ValidateId("projectId", projectId) is { } err)
+            return Task.FromResult<object>(new { ok = false, error = err });
+        if (ZitadelValidation.ValidateId("appId", appId) is { } appErr)
+            return Task.FromResult<object>(new { ok = false, error = appErr });
+        return ZitadelToolGuard.RunAsync(async () => await zitadel.RegenerateOidcSecretAsync(projectId, appId, ct));
+    }
 }

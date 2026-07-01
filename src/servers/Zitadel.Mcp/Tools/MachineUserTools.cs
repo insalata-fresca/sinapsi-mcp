@@ -27,6 +27,15 @@ public sealed class MachineUserTools
         [Description("Access token type — default ACCESS_TOKEN_TYPE_JWT.")] string accessTokenType = "ACCESS_TOKEN_TYPE_JWT",
         CancellationToken ct = default)
     {
+        if (ZitadelValidation.ValidateName("username", username) is { } uErr)
+            return Task.FromResult<object>(new { ok = false, error = uErr });
+        if (ZitadelValidation.ValidateName("name", name ?? username) is { } nErr)
+            return Task.FromResult<object>(new { ok = false, error = nErr });
+        if (ZitadelValidation.ValidateDescription(description) is { } dErr)
+            return Task.FromResult<object>(new { ok = false, error = dErr });
+        if (ZitadelValidation.ValidateEnum("accessTokenType", accessTokenType) is { } aErr)
+            return Task.FromResult<object>(new { ok = false, error = aErr });
+
         var body = new
         {
             userName        = username,
@@ -49,6 +58,15 @@ public sealed class MachineUserTools
         [Description("Access token type (default ACCESS_TOKEN_TYPE_JWT).")] string accessTokenType = "ACCESS_TOKEN_TYPE_JWT",
         CancellationToken ct = default)
     {
+        if (ZitadelValidation.ValidateId("userId", userId) is { } idErr)
+            return Task.FromResult<object>(new { ok = false, error = idErr });
+        if (ZitadelValidation.ValidateName("name", name) is { } nErr)
+            return Task.FromResult<object>(new { ok = false, error = nErr });
+        if (ZitadelValidation.ValidateDescription(description) is { } dErr)
+            return Task.FromResult<object>(new { ok = false, error = dErr });
+        if (ZitadelValidation.ValidateEnum("accessTokenType", accessTokenType) is { } aErr)
+            return Task.FromResult<object>(new { ok = false, error = aErr });
+
         var body = new
         {
             name,
@@ -66,7 +84,11 @@ public sealed class MachineUserTools
         ZitadelClient zitadel,
         [Description("User id to delete (irreversible).")] string userId,
         CancellationToken ct = default)
-        => ZitadelToolGuard.RunAsync(async () => await zitadel.DeleteMachineUserAsync(userId, ct));
+    {
+        if (ZitadelValidation.ValidateId("userId", userId) is { } err)
+            return Task.FromResult<object>(new { ok = false, error = err });
+        return ZitadelToolGuard.RunAsync(async () => await zitadel.DeleteMachineUserAsync(userId, ct));
+    }
 
     [McpServerTool(Name = "create_pat", Destructive = false)]
     [Description("Issue a Personal Access Token for a machine user. Returns {tokenId, token, details}. " +
@@ -76,7 +98,13 @@ public sealed class MachineUserTools
         [Description("User id.")] string userId,
         [Description("Expiration (ISO-8601, default 2099-01-01T00:00:00Z).")] string expirationIso = "2099-01-01T00:00:00Z",
         CancellationToken ct = default)
-        => ZitadelToolGuard.RunAsync(async () => await zitadel.CreatePatAsync(userId, new { expirationDate = expirationIso }, ct));
+    {
+        if (ZitadelValidation.ValidateId("userId", userId) is { } idErr)
+            return Task.FromResult<object>(new { ok = false, error = idErr });
+        if (ZitadelValidation.ValidateExpiration(expirationIso) is { } expErr)
+            return Task.FromResult<object>(new { ok = false, error = expErr });
+        return ZitadelToolGuard.RunAsync(async () => await zitadel.CreatePatAsync(userId, new { expirationDate = expirationIso }, ct));
+    }
 
     [McpServerTool(Name = "create_machine_key", Destructive = false)]
     [Description("Issue a JSON private key for a machine user and write it HOST-SIDE to " +
@@ -91,8 +119,13 @@ public sealed class MachineUserTools
         [Description("Expiration (ISO-8601, default 2099-01-01T00:00:00Z).")] string expirationIso = "2099-01-01T00:00:00Z",
         CancellationToken ct = default)
     {
-        if (!IsSafeBasename(agentFile))
-            return new { ok = false, error = "agent_file must be a bare basename (no '/', '\\' or '..')" };
+        // Fail-fast input validation BEFORE any HTTP call or disk write.
+        if (ZitadelValidation.ValidateId("userId", userId) is { } idErr)
+            return new { ok = false, error = idErr };
+        if (ZitadelValidation.ValidateAgentFile(agentFile) is { } fileErr)
+            return new { ok = false, error = fileErr };
+        if (ZitadelValidation.ValidateExpiration(expirationIso) is { } expErr)
+            return new { ok = false, error = expErr };
 
         try
         {
@@ -125,17 +158,18 @@ public sealed class MachineUserTools
         }
         catch (ZitadelApiException ex)
         {
-            return new { ok = false, status = ex.Status, error = ex.Message };
+            // Route through the same scrub the ZitadelToolGuard applies, so a credential echoed
+            // in the upstream body can never reach the caller from this hand-rolled catch either.
+            return new { ok = false, status = ex.Status, error = ZitadelErrors.Sanitize(ex.Message) };
         }
         catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or IOException)
         {
-            return new { ok = false, status = (int?)null, error = $"{ex.GetType().Name}: {ex.Message}" };
+            return new { ok = false, status = (int?)null, error = ZitadelErrors.Sanitize($"{ex.GetType().Name}: {ex.Message}") };
         }
     }
 
-    /// <summary>Guard against path traversal — the key filename must be a bare basename.</summary>
-    public static bool IsSafeBasename(string name) =>
-        !string.IsNullOrWhiteSpace(name)
-        && !name.Contains('/') && !name.Contains('\\') && !name.Contains("..")
-        && name == Path.GetFileName(name);
+    /// <summary>Guard against path traversal — the key filename must be a bare basename.
+    /// Delegates to <see cref="ZitadelValidation.IsSafeBasename"/> (retained as a public
+    /// method so the existing basename-guard test can call it directly).</summary>
+    public static bool IsSafeBasename(string name) => ZitadelValidation.IsSafeBasename(name);
 }

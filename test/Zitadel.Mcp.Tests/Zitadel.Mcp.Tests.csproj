@@ -23,6 +23,8 @@
          config, the HTTP client plumbing, and the registered tool surface can be
          unit-tested without referencing the Web server project. -->
     <Compile Include="../../src/servers/Zitadel.Mcp/ZitadelConfig.cs" />
+    <Compile Include="../../src/servers/Zitadel.Mcp/ZitadelValidation.cs" />
+    <Compile Include="../../src/servers/Zitadel.Mcp/ZitadelErrors.cs" />
     <Compile Include="../../src/servers/Zitadel.Mcp/Api/ZitadelApiException.cs" />
     <Compile Include="../../src/servers/Zitadel.Mcp/Api/ZitadelClient.cs" />
     <Compile Include="../../src/servers/Zitadel.Mcp/Tools/ZitadelToolGuard.cs" />

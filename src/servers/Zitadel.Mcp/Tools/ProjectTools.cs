@@ -14,7 +14,11 @@ public sealed class ProjectTools
         ZitadelClient zitadel,
         [Description("Max results (default 100).")] int limit = 100,
         CancellationToken ct = default)
-        => ZitadelToolGuard.RunAsync(async () => await zitadel.ListProjectsAsync(limit, ct));
+    {
+        if (ZitadelValidation.ValidateLimit(limit) is { } err)
+            return Task.FromResult<object>(new { ok = false, error = err });
+        return ZitadelToolGuard.RunAsync(async () => await zitadel.ListProjectsAsync(limit, ct));
+    }
 
     [McpServerTool(Name = "create_project", Destructive = false)]
     [Description("Create a new project. Returns {id, details}. MUTATES.")]
@@ -22,5 +26,9 @@ public sealed class ProjectTools
         ZitadelClient zitadel,
         [Description("Project name.")] string name,
         CancellationToken ct = default)
-        => ZitadelToolGuard.RunAsync(async () => await zitadel.CreateProjectAsync(name, ct));
+    {
+        if (ZitadelValidation.ValidateName("name", name) is { } err)
+            return Task.FromResult<object>(new { ok = false, error = err });
+        return ZitadelToolGuard.RunAsync(async () => await zitadel.CreateProjectAsync(name, ct));
+    }
 }

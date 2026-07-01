@@ -16,6 +16,9 @@ builder.Services.AddHttpClient<ZitadelClient>(c =>
     c.BaseAddress = new Uri($"{cfg.BaseUrl}/");
     c.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", cfg.Token);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("sinapsi-zitadel-mcp/1.0");
+    // Hard per-request ceiling (ZITADEL_HTTP_TIMEOUT_MS, default 30 s, validated fail-closed
+    // in ZitadelConfig) so a hung upstream cannot wedge a tool call indefinitely.
+    c.Timeout = TimeSpan.FromMilliseconds(cfg.HttpTimeoutMs);
 });
 
 builder
