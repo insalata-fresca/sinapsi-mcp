@@ -30,7 +30,13 @@
       upload_release_asset now accepts source_path / source_url (streamed) in addition
       to content_base64 for large (20MB+) binaries; edit_repo gains has_releases to
       toggle the Releases unit (fixes release endpoints 404ing when has_releases:false).</PackageReleaseNotes>
+    <!-- License (Apache-2.0) inherited from Directory.Build.props. -->
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- Server-side MCP tool attributes ([McpServerTool]/[McpServerToolType],

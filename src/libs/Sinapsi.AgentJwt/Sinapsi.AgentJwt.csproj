@@ -19,7 +19,13 @@
       RS256 assertion, and exchanges it for a project-audience access token at
       the provider's token endpoint. Fully environment-driven; no external JWT
       library, no shell-out. Part of a personal research lab; offered as-is.</Description>
+    <!-- License (Apache-2.0) inherited from Directory.Build.props. -->
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />

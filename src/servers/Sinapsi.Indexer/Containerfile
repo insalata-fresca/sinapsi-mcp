@@ -1,0 +1,45 @@
+# Sinapsi.Indexer — OCI image. Two-stage: dotnet SDK 8.0 (build/publish) ->
+# aspnet 8.0 (runtime). Build context is the REPO ROOT so the in-repo
+# ProjectReference to src/libs/Sinapsi.Nats resolves; restore is nuget.org-only
+# (no private feed, no build secret). Build from the repo root:
+#   podman build --network=host -f src/servers/Sinapsi.Indexer/Containerfile -t <img> .
+#
+# Runtime deps: aspnet + ca-certificates + git (SourceScanner shells out to
+# `git` to sync watched repos) + libgomp1 (ONNX Runtime's OpenMP native dep).
+# The all-MiniLM-L6-v2 embedding model + vocab are BAKED at build time (fetched
+# from HuggingFace with --network=host) so nothing leaves the host at runtime
+# and no model download is needed on start. Runs non-root (uid 10009).
+
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+COPY . .
+RUN dotnet publish src/servers/Sinapsi.Indexer/Sinapsi.Indexer.csproj \
+        -c Release -o /app /p:UseAppHost=false
+
+FROM mcr.microsoft.com/dotnet/aspnet:8.0
+WORKDIR /app
+# git: SourceScanner shells out to `git`. libgomp1: ONNX Runtime OpenMP native
+# dep. curl: fetch the embedding model at build. ca-certificates: outbound HTTPS.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates curl libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+# Bake the all-MiniLM-L6-v2 ONNX model + vocab (HuggingFace) into the image.
+# ~90 MB; offline at runtime (no SaaS, no data leaves — white-label rule).
+# OnnxEmbedder defaults EMBED_MODEL_PATH/EMBED_VOCAB_PATH to exactly these paths.
+ARG HF=https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main
+RUN mkdir -p /opt/models/all-MiniLM-L6-v2 \
+    && curl -fsSL "$HF/onnx/model.onnx" -o /opt/models/all-MiniLM-L6-v2/model.onnx \
+    && curl -fsSL "$HF/vocab.txt"       -o /opt/models/all-MiniLM-L6-v2/vocab.txt
+COPY --from=build /app .
+# Non-root by default (rootless-podman friendly). The Quadlet overrides to
+# User=0 at deploy so the process can read the 0600 NATS seed — parity with the
+# other Sinapsi.Nats daemons.
+RUN useradd --system --no-create-home --uid 10009 indexer
+USER indexer
+ENV INDEXER_HEALTH_HOST=0.0.0.0 \
+    INDEXER_HEALTH_PORT=8009 \
+    DOTNET_EnableDiagnostics=0
+# Documentation only; the listen address is env-driven (INDEXER_HEALTH_HOST/PORT)
+# and overridden by the Quadlet at deploy.
+EXPOSE 8009
+ENTRYPOINT ["dotnet", "Sinapsi.Indexer.dll"]

@@ -1,0 +1,28 @@
+# Infisical.Mcp — OCI image. Two-stage: dotnet SDK 8.0 (build/publish) -> aspnet 8.0
+# (runtime). Build context is the REPO ROOT so the in-repo ProjectReference to
+# src/libs/ resolves; restore is nuget.org-only (no private feed, no build
+# secret). Build from the repo root:
+#   podman build --network=host -f src/servers/Infisical.Mcp/Containerfile -t <img> .
+#
+# Runtime deps: bare aspnet + ca-certificates (this server makes outbound TLS
+# calls). Any host-mounted binary or key is supplied at DEPLOY by the Quadlet,
+# never baked into the image.
+
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+COPY . .
+RUN dotnet publish src/servers/Infisical.Mcp/Infisical.Mcp.csproj \
+        -c Release -o /app /p:UseAppHost=false
+
+FROM mcr.microsoft.com/dotnet/aspnet:8.0
+WORKDIR /app
+# ca-certificates: the server makes outbound HTTPS calls (system trust store).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /app .
+ENV DOTNET_EnableDiagnostics=0
+# Documentation only; the listen address is env-driven (<PREFIX>_HOST/_PORT,
+# default 0.0.0.0:9215) and overridden by the Quadlet at deploy.
+EXPOSE 9215
+ENTRYPOINT ["dotnet", "Infisical.Mcp.dll"]

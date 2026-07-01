@@ -1,0 +1,41 @@
+# Gemini.Mcp — OCI image. Two-stage: dotnet SDK 8.0 (build/publish) -> aspnet
+# 8.0 (runtime). Build context is the REPO ROOT so the in-repo ProjectReference
+# to src/libs/ resolves; restore is nuget.org-only (no private feed, no build
+# secret). Build from the repo root:
+#   podman build --network=host -f src/servers/Gemini.Mcp/Containerfile -t <img> .
+#
+# Runtime deps: aspnet + ca-certificates + Node.js 20. GeminiCli spawns
+# /usr/bin/node against the @google/gemini-cli bundle. The CLI bundle itself is
+# HOST-MOUNTED at deploy (GEMINI_BIN points at the mounted path) — NOT baked —
+# but the node runtime that executes it MUST be present in the image, so Node 20
+# (NodeSource) is installed here. HOME (npm/config cache) is a deploy concern.
+
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+COPY . .
+RUN dotnet publish src/servers/Gemini.Mcp/Gemini.Mcp.csproj \
+        -c Release -o /app /p:UseAppHost=false
+
+FROM mcr.microsoft.com/dotnet/aspnet:8.0
+WORKDIR /app
+# ca-certificates: outbound HTTPS (system trust). curl+gnupg: add the NodeSource
+# apt repo. nodejs 20: GeminiCli invokes /usr/bin/node with the mounted CLI bundle.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+    && mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+        | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
+        > /etc/apt/sources.list.d/nodesource.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends nodejs \
+    && node --version \
+    && apt-get purge -y gnupg \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /app .
+ENV DOTNET_EnableDiagnostics=0
+# Documentation only; the listen address is env-driven (GEMINI_MCP_HOST/_PORT,
+# default 0.0.0.0:9211) and overridden by the Quadlet at deploy.
+EXPOSE 9211
+ENTRYPOINT ["dotnet", "Gemini.Mcp.dll"]
