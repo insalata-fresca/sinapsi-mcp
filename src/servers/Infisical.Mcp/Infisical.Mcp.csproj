@@ -17,4 +17,11 @@
     <PackageReference Include="NATS.NKeys" Version="1.0.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Expose the internal hardening helpers (InfisicalValidation / InfisicalErrors and
+         the option consts) to the server's own test project only, so they can be unit
+         tested without being made part of the public API. -->
+    <InternalsVisibleTo Include="Infisical.Mcp.Tests" />
+  </ItemGroup>
+
 </Project>

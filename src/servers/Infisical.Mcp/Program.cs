@@ -3,8 +3,12 @@ using Sinapsi.Mcp;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddSingleton(InfisicalOptions.FromEnvironment());
-builder.Services.AddHttpClient<InfisicalClient>();
+var infisicalOptions = InfisicalOptions.FromEnvironment();
+builder.Services.AddSingleton(infisicalOptions);
+// Bound every Infisical REST call with the configured hard timeout so a hung upstream
+// cannot wedge a tool call (default 30 s; clamped fail-closed in InfisicalOptions).
+builder.Services.AddHttpClient<InfisicalClient>(c =>
+    c.Timeout = TimeSpan.FromMilliseconds(infisicalOptions.HttpTimeoutMs));
 
 builder
     .AddSinapsiMcpServer("infisical-mcp", "0.1.0")
