@@ -37,12 +37,15 @@ public sealed class CardTools
         [Description("Database id.")] int databaseId,
         [Description("SQL query text.")] string sql,
         CancellationToken ct = default)
-        => MetabaseToolGuard.RunAsync(async () => await metabase.PostAsync("/api/dataset", new
+    {
+        if (MetabaseValidation.ValidateSql(sql) is { } e) return Task.FromResult(MetabaseToolGuard.Rejected(e));
+        return MetabaseToolGuard.RunAsync(async () => await metabase.PostAsync("/api/dataset", new
         {
             database = databaseId,
             type = "native",
             native = new { query = sql },
         }, ct));
+    }
 
     [McpServerTool(Name = "run_card_query", ReadOnly = true)]
     [Description("Run a saved card (question) and return its result rows. "
@@ -53,6 +56,7 @@ public sealed class CardTools
         [Description("Optional parameters as a JSON array string.")] string? parametersJson = null,
         CancellationToken ct = default)
     {
+        if (MetabaseValidation.ValidateOptionalJson("parameters_json", parametersJson) is { } e) return Task.FromResult(MetabaseToolGuard.Rejected(e));
         object body = string.IsNullOrWhiteSpace(parametersJson)
             ? new { }
             : new { parameters = MetabaseJson.ParseElement(parametersJson) };
@@ -74,6 +78,10 @@ public sealed class CardTools
         [Description("Optional collection id to file it under.")] int? collectionId = null,
         CancellationToken ct = default)
     {
+        if (MetabaseValidation.ValidateName("name", name) is { } e1) return Task.FromResult(MetabaseToolGuard.Rejected(e1));
+        if (MetabaseValidation.ValidateSql(sql) is { } e2) return Task.FromResult(MetabaseToolGuard.Rejected(e2));
+        if (MetabaseValidation.ValidateDisplay(display) is { } e3) return Task.FromResult(MetabaseToolGuard.Rejected(e3));
+        if (MetabaseValidation.ValidateOptionalJson("visualization_settings_json", visualizationSettingsJson) is { } e4) return Task.FromResult(MetabaseToolGuard.Rejected(e4));
         var body = new JsonObject
         {
             ["name"] = name,
@@ -96,7 +104,10 @@ public sealed class CardTools
         MetabaseClient metabase,
         [Description("Full card body as a JSON string.")] string bodyJson,
         CancellationToken ct = default)
-        => MetabaseToolGuard.RunAsync(async () => await metabase.PostAsync("/api/card", MetabaseJson.ParseElement(bodyJson), ct));
+    {
+        if (MetabaseValidation.ValidateRequiredJson("body_json", bodyJson) is { } e) return Task.FromResult(MetabaseToolGuard.Rejected(e));
+        return MetabaseToolGuard.RunAsync(async () => await metabase.PostAsync("/api/card", MetabaseJson.ParseElement(bodyJson), ct));
+    }
 
     [McpServerTool(Name = "update_card", Destructive = true)]
     [Description("Update a card. patch_json is the partial JSON (e.g. {\"name\":\"x\"} or "
@@ -106,7 +117,10 @@ public sealed class CardTools
         [Description("Card id.")] int id,
         [Description("Patch as a JSON string.")] string patchJson,
         CancellationToken ct = default)
-        => MetabaseToolGuard.RunAsync(async () => await metabase.PutAsync($"/api/card/{id}", MetabaseJson.ParseElement(patchJson), ct));
+    {
+        if (MetabaseValidation.ValidateRequiredJson("patch_json", patchJson) is { } e) return Task.FromResult(MetabaseToolGuard.Rejected(e));
+        return MetabaseToolGuard.RunAsync(async () => await metabase.PutAsync($"/api/card/{id}", MetabaseJson.ParseElement(patchJson), ct));
+    }
 
     [McpServerTool(Name = "delete_card", Destructive = true)]
     [Description("Delete a card permanently. Prefer archiving via update_card {\"archived\":true}. MUTATES (destructive).")]

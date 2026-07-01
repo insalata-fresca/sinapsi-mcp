@@ -23,7 +23,10 @@ public sealed class CollectionTools
         MetabaseClient metabase,
         [Description("Collection id, or 'root'.")] string id,
         CancellationToken ct = default)
-        => MetabaseToolGuard.RunAsync(async () => await metabase.GetAsync($"/api/collection/{Uri.EscapeDataString(id)}/items", ct));
+    {
+        if (MetabaseValidation.ValidateStringId("id", id) is { } e) return Task.FromResult(MetabaseToolGuard.Rejected(e));
+        return MetabaseToolGuard.RunAsync(async () => await metabase.GetAsync($"/api/collection/{Uri.EscapeDataString(id)}/items", ct));
+    }
 
     [McpServerTool(Name = "create_collection", Destructive = false)]
     [Description("Create a collection. MUTATES.")]
@@ -34,6 +37,8 @@ public sealed class CollectionTools
         [Description("Optional description.")] string? description = null,
         CancellationToken ct = default)
     {
+        if (MetabaseValidation.ValidateName("name", name) is { } e1) return Task.FromResult(MetabaseToolGuard.Rejected(e1));
+        if (MetabaseValidation.ValidateDescription(description) is { } e2) return Task.FromResult(MetabaseToolGuard.Rejected(e2));
         var body = new JsonObject { ["name"] = name };
         if (parentId is { } pid) body["parent_id"] = pid;
         if (description is not null) body["description"] = description;
@@ -47,5 +52,8 @@ public sealed class CollectionTools
         [Description("Collection id.")] int id,
         [Description("Patch as a JSON string.")] string patchJson,
         CancellationToken ct = default)
-        => MetabaseToolGuard.RunAsync(async () => await metabase.PutAsync($"/api/collection/{id}", MetabaseJson.ParseElement(patchJson), ct));
+    {
+        if (MetabaseValidation.ValidateRequiredJson("patch_json", patchJson) is { } e) return Task.FromResult(MetabaseToolGuard.Rejected(e));
+        return MetabaseToolGuard.RunAsync(async () => await metabase.PutAsync($"/api/collection/{id}", MetabaseJson.ParseElement(patchJson), ct));
+    }
 }

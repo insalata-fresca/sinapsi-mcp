@@ -41,13 +41,18 @@ public sealed class DatabaseTools
         [Description("Engine, e.g. postgres.")] string engine,
         [Description("Connection details as a JSON string.")] string detailsJson,
         CancellationToken ct = default)
-        => MetabaseToolGuard.RunAsync(async () => await metabase.PostAsync("/api/database", new
+    {
+        if (MetabaseValidation.ValidateName("name", name) is { } e1) return Task.FromResult(MetabaseToolGuard.Rejected(e1));
+        if (MetabaseValidation.ValidateEngine(engine) is { } e2) return Task.FromResult(MetabaseToolGuard.Rejected(e2));
+        if (MetabaseValidation.ValidateRequiredJson("details_json", detailsJson) is { } e3) return Task.FromResult(MetabaseToolGuard.Rejected(e3));
+        return MetabaseToolGuard.RunAsync(async () => await metabase.PostAsync("/api/database", new
         {
             name,
             engine,
             details = MetabaseJson.ParseElement(detailsJson),
             is_full_sync = true,
         }, ct));
+    }
 
     [McpServerTool(Name = "update_database", Destructive = true)]
     [Description("Update a database. patch_json is the partial JSON to merge. MUTATES.")]
@@ -56,7 +61,10 @@ public sealed class DatabaseTools
         [Description("Database id.")] int id,
         [Description("Patch as a JSON string.")] string patchJson,
         CancellationToken ct = default)
-        => MetabaseToolGuard.RunAsync(async () => await metabase.PutAsync($"/api/database/{id}", MetabaseJson.ParseElement(patchJson), ct));
+    {
+        if (MetabaseValidation.ValidateRequiredJson("patch_json", patchJson) is { } e) return Task.FromResult(MetabaseToolGuard.Rejected(e));
+        return MetabaseToolGuard.RunAsync(async () => await metabase.PutAsync($"/api/database/{id}", MetabaseJson.ParseElement(patchJson), ct));
+    }
 
     [McpServerTool(Name = "delete_database", Destructive = true)]
     [Description("Disconnect/delete a database. MUTATES (destructive).")]

@@ -34,6 +34,8 @@ public sealed class DashboardTools
         [Description("Optional collection id.")] int? collectionId = null,
         CancellationToken ct = default)
     {
+        if (MetabaseValidation.ValidateName("name", name) is { } e1) return Task.FromResult(MetabaseToolGuard.Rejected(e1));
+        if (MetabaseValidation.ValidateDescription(description) is { } e2) return Task.FromResult(MetabaseToolGuard.Rejected(e2));
         var body = new JsonObject { ["name"] = name };
         if (description is not null) body["description"] = description;
         if (collectionId is { } cid) body["collection_id"] = cid;
@@ -49,7 +51,10 @@ public sealed class DashboardTools
         [Description("Dashboard id.")] int id,
         [Description("Patch as a JSON string.")] string patchJson,
         CancellationToken ct = default)
-        => MetabaseToolGuard.RunAsync(async () => await metabase.PutAsync($"/api/dashboard/{id}", MetabaseJson.ParseElement(patchJson), ct));
+    {
+        if (MetabaseValidation.ValidateRequiredJson("patch_json", patchJson) is { } e) return Task.FromResult(MetabaseToolGuard.Rejected(e));
+        return MetabaseToolGuard.RunAsync(async () => await metabase.PutAsync($"/api/dashboard/{id}", MetabaseJson.ParseElement(patchJson), ct));
+    }
 
     [McpServerTool(Name = "delete_dashboard", Destructive = true)]
     [Description("Delete a dashboard. MUTATES (destructive).")]

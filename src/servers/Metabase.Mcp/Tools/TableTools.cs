@@ -40,5 +40,8 @@ public sealed class TableTools
         [Description("Field id.")] int fieldId,
         [Description("Patch as a JSON string.")] string patchJson,
         CancellationToken ct = default)
-        => MetabaseToolGuard.RunAsync(async () => await metabase.PutAsync($"/api/field/{fieldId}", MetabaseJson.ParseElement(patchJson), ct));
+    {
+        if (MetabaseValidation.ValidateRequiredJson("patch_json", patchJson) is { } e) return Task.FromResult(MetabaseToolGuard.Rejected(e));
+        return MetabaseToolGuard.RunAsync(async () => await metabase.PutAsync($"/api/field/{fieldId}", MetabaseJson.ParseElement(patchJson), ct));
+    }
 }

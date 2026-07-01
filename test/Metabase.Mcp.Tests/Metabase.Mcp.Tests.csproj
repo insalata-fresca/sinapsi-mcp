@@ -23,6 +23,8 @@
          config, the HTTP client plumbing, and the registered tool surface can be
          unit-tested without referencing the Web server project. -->
     <Compile Include="../../src/servers/Metabase.Mcp/MetabaseConfig.cs" />
+    <Compile Include="../../src/servers/Metabase.Mcp/MetabaseValidation.cs" />
+    <Compile Include="../../src/servers/Metabase.Mcp/MetabaseErrors.cs" />
     <Compile Include="../../src/servers/Metabase.Mcp/Api/MetabaseApiException.cs" />
     <Compile Include="../../src/servers/Metabase.Mcp/Api/MetabaseClient.cs" />
     <Compile Include="../../src/servers/Metabase.Mcp/Tools/MetabaseToolGuard.cs" />

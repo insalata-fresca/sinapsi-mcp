@@ -20,7 +20,12 @@ public sealed class ApiTools
         [Description("API path, e.g. /api/dashboard/2.")] string path,
         [Description("Optional request body as a JSON string.")] string? bodyJson = null,
         CancellationToken ct = default)
-        => MetabaseToolGuard.RunAsync(async () => await metabase.SendRawAsync(method, path, MetabaseJson.ParseElement(bodyJson), ct));
+    {
+        if (MetabaseValidation.ValidateMethod(method) is { } e1) return Task.FromResult(MetabaseToolGuard.Rejected(e1));
+        if (MetabaseValidation.ValidatePath(path) is { } e2) return Task.FromResult(MetabaseToolGuard.Rejected(e2));
+        if (MetabaseValidation.ValidateOptionalJson("body_json", bodyJson) is { } e3) return Task.FromResult(MetabaseToolGuard.Rejected(e3));
+        return MetabaseToolGuard.RunAsync(async () => await metabase.SendRawAsync(method, path, MetabaseJson.ParseElement(bodyJson), ct));
+    }
 
     [McpServerTool(Name = "search", ReadOnly = true)]
     [Description("Search across Metabase entities (cards, dashboards, tables, collections…).")]
@@ -30,6 +35,8 @@ public sealed class ApiTools
         [Description("Optional comma-list of models to filter: card,dashboard,table,collection,database.")] string? models = null,
         CancellationToken ct = default)
     {
+        if (MetabaseValidation.ValidateQuery(q) is { } e1) return Task.FromResult(MetabaseToolGuard.Rejected(e1));
+        if (MetabaseValidation.ValidateModels(models) is { } e2) return Task.FromResult(MetabaseToolGuard.Rejected(e2));
         var qs = $"/api/search?q={Uri.EscapeDataString(q)}";
         if (!string.IsNullOrWhiteSpace(models))
             foreach (var m in models.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))

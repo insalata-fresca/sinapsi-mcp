@@ -9,6 +9,11 @@ namespace Metabase.Mcp.Tests;
 /// URL shaping, the required API key (never baked in), the port default + override, and that
 /// the guidance examples stay instance-neutral.
 /// </summary>
+// Shares the "metabase-env" xUnit collection with MetabaseConfigFailClosedTests so the two
+// classes never run in parallel — both mutate the same process-global METABASE_* env vars, and
+// concurrent mutation made the fail-closed timeout assertion flake (a null API key from this
+// class tripped the API-key throw before the timeout check). Mirrors StepCa's [Collection].
+[Collection("metabase-env")]
 public sealed class MetabaseConfigTests
 {
     private static T WithEnv<T>(IReadOnlyDictionary<string, string?> env, Func<T> body)

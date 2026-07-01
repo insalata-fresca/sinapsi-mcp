@@ -15,6 +15,9 @@ builder.Services.AddHttpClient<MetabaseClient>(c =>
     c.BaseAddress = new Uri($"{cfg.BaseUrl}/");
     c.DefaultRequestHeaders.Add("X-API-KEY", cfg.ApiKey);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("sinapsi-metabase-mcp/1.0");
+    // Hard per-request ceiling (METABASE_HTTP_TIMEOUT_MS, default 30 s, validated fail-closed
+    // in MetabaseConfig) so a hung upstream cannot wedge a tool call indefinitely.
+    c.Timeout = TimeSpan.FromMilliseconds(cfg.HttpTimeoutMs);
 });
 
 builder
