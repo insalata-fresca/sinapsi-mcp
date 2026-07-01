@@ -40,24 +40,54 @@ public sealed record CouncilOptions
     public string GeminiAgent { get; init; } = "agent-council-gemini";
     public string ChatgptAgent { get; init; } = "agent-council-chatgpt";
 
+    /// <summary>Default per-outbound-call ceiling (ms) when none is configured.</summary>
+    internal const int DefaultTimeoutMs = 30 * 60 * 1000;   // 30 min
+
+    /// <summary>Default per-member wall-clock deadline (ms) when none is configured.</summary>
+    internal const int DefaultMemberTimeoutMs = 25 * 60 * 1000; // 25 min
+
+    /// <summary>Hard ceiling on either configurable timeout (ms). A consult is
+    /// intentionally long-running, so this is generous — 2 hours is far past any
+    /// legitimate research call; a larger value (e.g. a mistyped extra zero) is
+    /// treated as a config error, not honoured.</summary>
+    internal const int MaxTimeoutMs = 2 * 60 * 60 * 1000;   // 7_200_000
+
     public static CouncilOptions FromEnvironment()
     {
-        static int Ms(string k, int dflt) =>
-            int.TryParse(Environment.GetEnvironmentVariable(k), out var v) ? v : dflt;
         static string Env(string k, string dflt) =>
             Environment.GetEnvironmentVariable(k) is { Length: > 0 } v ? v : dflt;
         return new CouncilOptions
         {
             BackendUrl = new Uri(Env("AGENT_BACKEND_URL", "http://127.0.0.1:8088")),
             GatewayUrl = new Uri(Env("GATEWAY_URL", "http://127.0.0.1:8443/mcp")),
-            Timeout = TimeSpan.FromMilliseconds(Ms("SAGE_TIMEOUT_MS", 30 * 60 * 1000)),
-            MemberDeadline = TimeSpan.FromMilliseconds(Ms("SAGE_MEMBER_TIMEOUT_MS", 25 * 60 * 1000)),
+            Timeout = TimeSpan.FromMilliseconds(ReadTimeoutMs("SAGE_TIMEOUT_MS", DefaultTimeoutMs)),
+            MemberDeadline = TimeSpan.FromMilliseconds(ReadTimeoutMs("SAGE_MEMBER_TIMEOUT_MS", DefaultMemberTimeoutMs)),
             Model = Env("AGENT_MODEL", "claude-sonnet-4-6"),
             ClaudeAgent = Env("COUNCIL_CLAUDE_AGENT", "agent-council-claude"),
             GeminiAgent = Env("COUNCIL_GEMINI_AGENT", "agent-council-gemini"),
             ChatgptAgent = Env("COUNCIL_CHATGPT_AGENT", "agent-council-chatgpt"),
             ExtraPersonas = LoadPersonas(Env("PERSONA_DIR", "/etc/sage-council-mcp/personas")),
         };
+    }
+
+    /// <summary>
+    /// Read a timeout (ms) env var fail-closed. Unset → the supplied default. A
+    /// non-numeric, <c>&lt;= 0</c>, or above-<see cref="MaxTimeoutMs"/> value is
+    /// rejected as invalid config — we throw a clear error naming the offending
+    /// env var rather than silently honouring a footgun (a 0 would make every
+    /// call time out instantly; a negative throws deep in the cancellation path;
+    /// a wildly-large value defeats the safety net).
+    /// </summary>
+    private static int ReadTimeoutMs(string envVar, int dflt)
+    {
+        var raw = Environment.GetEnvironmentVariable(envVar);
+        if (string.IsNullOrEmpty(raw))
+            return dflt;
+        if (!int.TryParse(raw, out var ms) || ms <= 0 || ms > MaxTimeoutMs)
+            throw new InvalidOperationException(
+                $"{envVar}='{raw}' is invalid: expected an integer in 1..{MaxTimeoutMs} ms " +
+                $"(default {dflt}).");
+        return ms;
     }
 
     /// <summary>Load `<name>.md` persona files from a directory (optional; empty if absent).</summary>
@@ -141,7 +171,7 @@ public sealed class CouncilService(HttpClient http, GatewayMcpClient gateway, Ag
         "claude-research" => ClaudeMemberAsync(prompt, focus, ct),
         "gemini-research" => GeminiMemberAsync(prompt, focus, ct),
         "chatgpt-research" => ChatgptMemberAsync(prompt, focus, ct),
-        _ => Task.FromResult(new MemberResult(member, "", 0, $"unknown member type: {member}")),
+        _ => Task.FromResult(new MemberResult(member, "", 0, CouncilErrors.Sanitize($"unknown member type: {member}"))),
     };
 
     /// <summary>Bound a member to a hard wall-clock deadline.</summary>
@@ -152,7 +182,7 @@ public sealed class CouncilService(HttpClient http, GatewayMcpClient gateway, Ag
         var done = await Task.WhenAny(work, delay).ConfigureAwait(false);
         if (done == work)
             return await work.ConfigureAwait(false);
-        return new MemberResult(member, "", sw.ElapsedMilliseconds, $"member deadline exceeded ({opt.MemberDeadline.TotalMilliseconds}ms)");
+        return new MemberResult(member, "", sw.ElapsedMilliseconds, CouncilErrors.Sanitize($"member deadline exceeded ({opt.MemberDeadline.TotalMilliseconds}ms)"));
     }
 
     private static AuthenticationHeaderValue Bearer(string jwt) => new("Bearer", jwt);
@@ -163,11 +193,11 @@ public sealed class CouncilService(HttpClient http, GatewayMcpClient gateway, Ag
         var sw = Stopwatch.StartNew();
         string jwt;
         try { jwt = await jwtMinter.MintAsync(opt.ClaudeAgent, ct).ConfigureAwait(false); }
-        catch (Exception e) { return new("claude-research", "", sw.ElapsedMilliseconds, $"mint: {e.Message}"); }
+        catch (Exception e) { return new("claude-research", "", sw.ElapsedMilliseconds, CouncilErrors.Sanitize($"mint: {e.Message}")); }
 
         string sessionId;
         try { sessionId = await CreateSessionAsync(jwt, focus, ct).ConfigureAwait(false); }
-        catch (Exception e) { return new("claude-research", "", sw.ElapsedMilliseconds, $"session: {e.Message}"); }
+        catch (Exception e) { return new("claude-research", "", sw.ElapsedMilliseconds, CouncilErrors.Sanitize($"session: {e.Message}")); }
 
         var composed = $"{Sys(focus)}\n\nQuestion: {prompt}";
         try
@@ -175,7 +205,7 @@ public sealed class CouncilService(HttpClient http, GatewayMcpClient gateway, Ag
             var report = await SendMessageAsync(jwt, sessionId, composed, ct).ConfigureAwait(false);
             return new("claude-research", report, sw.ElapsedMilliseconds);
         }
-        catch (Exception e) { return new("claude-research", "", sw.ElapsedMilliseconds, $"message: {e.Message}"); }
+        catch (Exception e) { return new("claude-research", "", sw.ElapsedMilliseconds, CouncilErrors.Sanitize($"message: {e.Message}")); }
         finally { await DeleteSessionAsync(jwt, sessionId).ConfigureAwait(false); }
     }
 
@@ -203,7 +233,7 @@ public sealed class CouncilService(HttpClient http, GatewayMcpClient gateway, Ag
             var report = await PollGeminiResearchAsync(taskId, cts.Token).ConfigureAwait(false);
             return new("gemini-research", report, sw.ElapsedMilliseconds);
         }
-        catch (Exception e) { return new("gemini-research", "", sw.ElapsedMilliseconds, e.Message); }
+        catch (Exception e) { return new("gemini-research", "", sw.ElapsedMilliseconds, CouncilErrors.Sanitize(e.Message)); }
     }
 
     private static string GeminiDepth(string focus) => focus switch
@@ -282,7 +312,7 @@ public sealed class CouncilService(HttpClient http, GatewayMcpClient gateway, Ag
             var report = await gateway.CallToolAsync(opt.GatewayUrl, jwt, "codex_codex", args, cts.Token).ConfigureAwait(false);
             return new("chatgpt-research", report, sw.ElapsedMilliseconds);
         }
-        catch (Exception e) { return new("chatgpt-research", "", sw.ElapsedMilliseconds, e.Message); }
+        catch (Exception e) { return new("chatgpt-research", "", sw.ElapsedMilliseconds, CouncilErrors.Sanitize(e.Message)); }
     }
 
     // ---- Synthesis (a 4th "claude" session) ----
@@ -307,14 +337,14 @@ public sealed class CouncilService(HttpClient http, GatewayMcpClient gateway, Ag
 
         string jwt;
         try { jwt = await jwtMinter.MintAsync(opt.ClaudeAgent, ct).ConfigureAwait(false); }
-        catch (Exception e) { return $"(synthesis failed: mint: {e.Message})"; }
+        catch (Exception e) { return CouncilErrors.Sanitize($"(synthesis failed: mint: {e.Message})"); }
 
         string sid;
         try { sid = await CreateSessionAsync(jwt, "general", ct).ConfigureAwait(false); }
-        catch (Exception e) { return $"(synthesis session failed: {e.Message})"; }
+        catch (Exception e) { return CouncilErrors.Sanitize($"(synthesis session failed: {e.Message})"); }
 
         try { return await SendMessageAsync(jwt, sid, sb.ToString(), ct).ConfigureAwait(false); }
-        catch (Exception e) { return $"(synthesis message failed: {e.Message})"; }
+        catch (Exception e) { return CouncilErrors.Sanitize($"(synthesis message failed: {e.Message})"); }
         finally { await DeleteSessionAsync(jwt, sid).ConfigureAwait(false); }
     }
 

@@ -110,7 +110,11 @@ public sealed class ConsultJobStore(IServiceScopeFactory scopes, CouncilOptions 
         }
         catch (Exception e)
         {
-            job.Fail(e.Message);
+            // Sanitize the surfaced failure text: an exception message could carry
+            // an upstream credential/token. The overall-ceiling message above is
+            // server-authored and secret-free, so only this arbitrary-exception
+            // leg needs redacting.
+            job.Fail(CouncilErrors.Sanitize(e.Message));
             log.LogError(e, "consult job {Id} failed", job.Id);
         }
         finally

@@ -29,6 +29,15 @@ public sealed class ConsultTool
         [Description("Council members: claude-research | gemini-research | chatgpt-research. Default: all three for a real cross-vendor council.")]
         string[]? members = null)
     {
+        // Fail-fast input validation BEFORE the job is dispatched. Returns a
+        // structured {ok:false,error} envelope; never throws.
+        if (CouncilValidation.ValidatePrompt(prompt) is { } promptError)
+            return Error(promptError);
+        if (CouncilValidation.ValidateFocus(focus) is { } focusError)
+            return Error(focusError);
+        if (CouncilValidation.ValidateMembers(members) is { } membersError)
+            return Error(membersError);
+
         var roster = members is { Length: > 0 }
             ? members
             : ["claude-research", "gemini-research", "chatgpt-research"];
@@ -56,15 +65,28 @@ public sealed class ConsultTool
         ConsultJobStore store,
         [Description("The job_id returned by a prior `consult` call.")] string job_id)
     {
+        // Fail-fast input validation BEFORE the store lookup.
+        if (CouncilValidation.ValidateJobId(job_id) is { } jobIdError)
+            return Error(jobIdError);
+
         var job = store.Get(job_id);
         if (job is null)
             return JsonSerializer.Serialize(new
             {
                 job_id,
                 status = "not_found",
-                error = "no such job_id (it may have expired after the ~1h retention window, or never existed)",
+                // Static, secret-free text, but routed through the same fail-safe
+                // sanitizer every surfaced error string takes.
+                error = CouncilErrors.Sanitize(
+                    "no such job_id (it may have expired after the ~1h retention window, or never existed)"),
             }, _json);
 
         return job.Snapshot(_json);
     }
+
+    /// <summary>Structured validation-error envelope (mirrors the reference-grade
+    /// {ok:false,error} shape). The reason is sanitized for uniformity, though a
+    /// validation reason is server-authored and carries no secret.</summary>
+    private static string Error(string reason) =>
+        JsonSerializer.Serialize(new { ok = false, error = CouncilErrors.Sanitize(reason) }, _json);
 }
