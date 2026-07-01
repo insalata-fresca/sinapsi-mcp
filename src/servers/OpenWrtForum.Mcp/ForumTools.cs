@@ -13,6 +13,14 @@ public sealed class ForumTools
 
     private static string Trim(string s, int max) => s.Length <= max ? s : s.Substring(0, max);
 
+    /// <summary>Build the structured <c>{ ok: false, error }</c> envelope every tool
+    /// returns on an input-validation failure — emitted BEFORE any HTTP call. The
+    /// <paramref name="reason"/> is a validation message (no upstream text), but it
+    /// is routed through <see cref="OpenWrtForumErrors.Sanitize"/> for uniformity so
+    /// there is exactly one error-shaping choke point in the tool surface.</summary>
+    private static string ValidationError(string reason) =>
+        new JsonObject { ["ok"] = false, ["error"] = OpenWrtForumErrors.Sanitize(reason) }.ToJsonString(_ind);
+
     // Tolerant type accessors — Discourse occasionally returns null or a
     // differently-typed field, and JsonNode.GetValue<T>() is a strict cast that
     // throws InvalidOperationException on type mismatch. These coerce defensively.
@@ -52,6 +60,11 @@ public sealed class ForumTools
         [Description("Page (default 1)")] int page = 1,
         CancellationToken ct = default)
     {
+        // Validate every parameter BEFORE any HTTP call; a bad value short-circuits
+        // to a structured error rather than a wasted round-trip.
+        if (OpenWrtForumValidation.ValidateQuery(query) is { } e) return ValidationError(e);
+        if (OpenWrtForumValidation.ValidatePage(page) is { } ep) return ValidationError(ep);
+
         var data = await c.GetAsync("/search.json", new Dictionary<string, string?>
         {
             ["q"] = query, ["page"] = page.ToString(),
@@ -104,6 +117,9 @@ public sealed class ForumTools
         [Description("Post page (default 0)")] int page = 0,
         CancellationToken ct = default)
     {
+        if (OpenWrtForumValidation.ValidateId(topic_id, "topic_id") is { } e) return ValidationError(e);
+        if (OpenWrtForumValidation.ValidatePage(page) is { } ep) return ValidationError(ep);
+
         var query = page != 0 ? new Dictionary<string, string?> { ["page"] = page.ToString() } : null;
         var data = await c.GetAsync($"/t/{topic_id}.json", query, ct);
 
@@ -145,6 +161,9 @@ public sealed class ForumTools
         [Description("Page (default 0)")] int page = 0,
         CancellationToken ct = default)
     {
+        if (OpenWrtForumValidation.ValidateCategorySlug(category_slug) is { } e) return ValidationError(e);
+        if (OpenWrtForumValidation.ValidatePage(page) is { } ep) return ValidationError(ep);
+
         var path = string.IsNullOrEmpty(category_slug) ? "/latest.json" : $"/c/{category_slug}/l/latest.json";
         var data = await c.GetAsync(path, new Dictionary<string, string?> { ["page"] = page.ToString() }, ct);
 
@@ -179,6 +198,13 @@ public sealed class ForumTools
         [Description("Optional tags")] string[]? tags = null,
         CancellationToken ct = default)
     {
+        // Validate every parameter BEFORE the login handshake + POST, so a
+        // malformed create never authenticates or mutates the forum.
+        if (OpenWrtForumValidation.ValidateTitle(title) is { } et) return ValidationError(et);
+        if (OpenWrtForumValidation.ValidateBody(body) is { } eb) return ValidationError(eb);
+        if (OpenWrtForumValidation.ValidateId(category_id, "category_id") is { } ec) return ValidationError(ec);
+        if (OpenWrtForumValidation.ValidateTags(tags) is { } eg) return ValidationError(eg);
+
         var payload = new JsonObject
         {
             ["title"] = title,
@@ -212,6 +238,9 @@ public sealed class ForumTools
         [Description("Markdown body")] string body,
         CancellationToken ct = default)
     {
+        if (OpenWrtForumValidation.ValidateId(topic_id, "topic_id") is { } e) return ValidationError(e);
+        if (OpenWrtForumValidation.ValidateBody(body) is { } eb) return ValidationError(eb);
+
         var data = await c.PostAuthAsync("/posts.json", new JsonObject
         {
             ["topic_id"] = topic_id,
@@ -237,6 +266,8 @@ public sealed class ForumTools
         [Description("'all' | 'unread' (default: all)")] string filter = "all",
         CancellationToken ct = default)
     {
+        if (OpenWrtForumValidation.ValidateNotificationFilter(filter) is { } e) return ValidationError(e);
+
         await c.EnsureAuthenticatedAsync(ct);
         var query = filter == "unread"
             ? new Dictionary<string, string?> { ["filter"] = "unread" }

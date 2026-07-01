@@ -39,10 +39,10 @@ public sealed class ForumWriteToolsTests
     }
 
     private static DiscourseClient AuthedClient(RoutingHandler h) =>
-        new(new DiscourseOptions("https://forum.example.com", "alice", "s3cret"), h);
+        new(new DiscourseOptions("https://forum.example.com", "alice", "s3cret", 30_000), h);
 
     private static DiscourseClient ReadOnlyClient(RoutingHandler h) =>
-        new(new DiscourseOptions("https://forum.example.com", "", ""), h);
+        new(new DiscourseOptions("https://forum.example.com", "", "", 30_000), h);
 
     /// <summary>Standard handshake replies: CSRF token then a successful session login.</summary>
     private static (HttpStatusCode, string) Handshake(string method, string path) => path switch

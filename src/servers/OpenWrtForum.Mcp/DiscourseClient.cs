@@ -30,7 +30,9 @@ public sealed class DiscourseClient : IDisposable
     public DiscourseClient(DiscourseOptions opts, HttpMessageHandler handler)
     {
         _opts = opts;
-        _http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(30) };
+        // Timeout is bound + clamped in DiscourseOptions (fail-closed on bad
+        // config); apply it here so a hung/slow forum cannot wedge a request.
+        _http = new HttpClient(handler) { Timeout = TimeSpan.FromMilliseconds(opts.HttpTimeoutMs) };
         _http.DefaultRequestHeaders.UserAgent.ParseAdd(UA);
     }
 
@@ -138,6 +140,14 @@ public sealed class DiscourseClient : IDisposable
         string body;
         try { body = await res.Content.ReadAsStringAsync(ct); }
         catch { body = ""; }
+
+        // Fail safe: scrub any key/credential material out of the upstream body
+        // BEFORE it is placed in the envelope that becomes the caller-facing error
+        // message. A verbose Discourse error that echoed the account password, a
+        // session token, or a pasted key can never reach a caller. Sanitize also
+        // length-caps, so a pathological body cannot blow up the response; the
+        // subsequent 500-char clamp is a further belt-and-braces bound.
+        body = OpenWrtForumErrors.Sanitize(body);
 
         JsonNode? parsed = null;
         try { parsed = JsonNode.Parse(body); } catch { /* leave null */ }

@@ -31,7 +31,7 @@ public sealed class ForumToolsTests
     }
 
     private static DiscourseClient Client(StubHandler h) =>
-        new(new DiscourseOptions("https://forum.example.com", "", ""), h);
+        new(new DiscourseOptions("https://forum.example.com", "", "", 30_000), h);
 
     [Fact]
     public async Task ListCategories_Projects_Id_Name_Slug_Count()
