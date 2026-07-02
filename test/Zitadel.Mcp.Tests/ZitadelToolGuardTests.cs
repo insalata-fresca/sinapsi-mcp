@@ -42,11 +42,11 @@ public sealed class ZitadelToolGuardTests
             });
     }
 
-    private static ZitadelClient GuardClient()
-        => new(new HttpClient(new ThrowingHandler()) { BaseAddress = new Uri("https://auth.example.com/") });
+    private static ZitadelClient GuardClient(string agentKeyDir = "/tmp/agent-keys-test")
+        => new(new HttpClient(new ThrowingHandler()) { BaseAddress = new Uri("https://auth.example.com/") }, Config(agentKeyDir));
 
-    private static ZitadelClient ScriptedClient(HttpStatusCode status, string body)
-        => new(new HttpClient(new ScriptedHandler(status, body)) { BaseAddress = new Uri("https://auth.example.com/") });
+    private static ZitadelClient ScriptedClient(HttpStatusCode status, string body, string agentKeyDir = "/tmp/agent-keys-test")
+        => new(new HttpClient(new ScriptedHandler(status, body)) { BaseAddress = new Uri("https://auth.example.com/") }, Config(agentKeyDir));
 
     private static ZitadelConfig Config(string agentKeyDir) =>
         new(
@@ -167,7 +167,7 @@ public sealed class ZitadelToolGuardTests
     public async Task CreateMachineKey_PathTraversalAgentFile_RejectedBeforeHttp()
     {
         var (ok, error) = Envelope(await MachineUserTools.CreateMachineKey(
-            GuardClient(), Config("/tmp/agent-keys-test"), userId: "user1", agentFile: "../etc/passwd"));
+            GuardClient(), userId: "user1", agentFile: "../etc/passwd"));
         Assert.False(ok);
         Assert.Contains("bare basename", error!);
     }
@@ -176,7 +176,7 @@ public sealed class ZitadelToolGuardTests
     public async Task CreateMachineKey_EmptyUserId_RejectedBeforeHttp()
     {
         var (ok, error) = Envelope(await MachineUserTools.CreateMachineKey(
-            GuardClient(), Config("/tmp/agent-keys-test"), userId: "", agentFile: "agent-x"));
+            GuardClient(), userId: "", agentFile: "agent-x"));
         Assert.False(ok);
         Assert.Equal("userId is required", error);
     }
@@ -250,9 +250,9 @@ public sealed class ZitadelToolGuardTests
         try
         {
             var client = ScriptedClient(HttpStatusCode.InternalServerError,
-                """{"message":"key issuance failed, api_key=leaked-key-value in log"}""");
+                """{"message":"key issuance failed, api_key=leaked-key-value in log"}""", agentKeyDir: dir);
 
-            var result = await MachineUserTools.CreateMachineKey(client, Config(dir), userId: "user1", agentFile: "agent-x");
+            var result = await MachineUserTools.CreateMachineKey(client, userId: "user1", agentFile: "agent-x");
             var (ok, error) = Envelope(result);
 
             Assert.False(ok);
