@@ -27,6 +27,8 @@
     <Compile Include="../../src/servers/Zitadel.Mcp/ZitadelErrors.cs" />
     <Compile Include="../../src/servers/Zitadel.Mcp/Api/ZitadelApiException.cs" />
     <Compile Include="../../src/servers/Zitadel.Mcp/Api/ZitadelClient.cs" />
+    <Compile Include="../../src/servers/Zitadel.Mcp/Auth/ServiceAccount.cs" />
+    <Compile Include="../../src/servers/Zitadel.Mcp/Auth/JwtBearerTokenProvider.cs" />
     <Compile Include="../../src/servers/Zitadel.Mcp/Tools/ZitadelToolGuard.cs" />
     <Compile Include="../../src/servers/Zitadel.Mcp/Tools/UserTools.cs" />
     <Compile Include="../../src/servers/Zitadel.Mcp/Tools/ProjectTools.cs" />

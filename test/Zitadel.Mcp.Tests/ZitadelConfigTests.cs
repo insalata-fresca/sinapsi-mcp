@@ -9,11 +9,17 @@ namespace Zitadel.Mcp.Tests;
 /// URL shaping, the required token (never baked in), the port default + override, and that
 /// the guidance examples stay instance-neutral.
 /// </summary>
+[Collection(EnvSensitiveCollection.Name)]
 public sealed class ZitadelConfigTests
 {
     private static T WithEnv<T>(IReadOnlyDictionary<string, string?> env, Func<T> body)
     {
-        var keys = new[] { "ZITADEL_BASE_URL", "ZITADEL_TOKEN", "ZITADEL_MCP_PORT", "ZITADEL_HTTP_TIMEOUT_MS", "AGENT_KEY_DIR" };
+        var keys = new[]
+        {
+            "ZITADEL_BASE_URL", "ZITADEL_API_URL", "ZITADEL_TOKEN", "ZITADEL_SA_KEY_FILE",
+            "ZITADEL_ISSUER", "ZITADEL_HOST_HEADER", "ZITADEL_MCP_PORT", "ZITADEL_HTTP_TIMEOUT_MS",
+            "AGENT_KEY_DIR",
+        };
         var saved = keys.ToDictionary(k => k, Environment.GetEnvironmentVariable);
         try
         {

@@ -49,7 +49,16 @@ public sealed class ZitadelToolGuardTests
         => new(new HttpClient(new ScriptedHandler(status, body)) { BaseAddress = new Uri("https://auth.example.com/") });
 
     private static ZitadelConfig Config(string agentKeyDir) =>
-        new("https://auth.example.com", "svc-token", ZitadelConfig.DefaultPort, agentKeyDir, ZitadelConfig.DefaultHttpTimeoutMs);
+        new(
+            BaseUrl: "https://auth.example.com",
+            AuthMode: ZitadelAuthMode.Pat,
+            Token: "svc-token",
+            SaKeyFile: null,
+            Issuer: "https://auth.example.com",
+            HostHeader: "auth.example.com",
+            Port: ZitadelConfig.DefaultPort,
+            AgentKeyDir: agentKeyDir,
+            HttpTimeoutMs: ZitadelConfig.DefaultHttpTimeoutMs);
 
     private static (bool ok, string? error) Envelope(object result)
     {
