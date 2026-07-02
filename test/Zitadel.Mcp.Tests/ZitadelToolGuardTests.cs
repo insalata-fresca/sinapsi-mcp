@@ -76,7 +76,7 @@ public sealed class ZitadelToolGuardTests
     {
         var (ok, error) = Envelope(await UserTools.GetUser(GuardClient(), id));
         Assert.False(ok);
-        Assert.Equal("userId is required", error);
+        Assert.Equal("user_id is required", error);
     }
 
     [Fact]
@@ -109,16 +109,16 @@ public sealed class ZitadelToolGuardTests
     public async Task CreateOidcApp_EmptyRedirectUris_RejectedBeforeHttp()
     {
         var (ok, error) = Envelope(await OidcAppTools.CreateOidcApp(
-            GuardClient(), "proj1", "my-app", redirectUris: Array.Empty<string>()));
+            GuardClient(), "proj1", "my-app", redirect_uris: Array.Empty<string>()));
         Assert.False(ok);
-        Assert.Contains("redirectUris is required", error!);
+        Assert.Contains("redirect_uris is required", error!);
     }
 
     [Fact]
     public async Task CreateOidcApp_ControlCharInName_RejectedBeforeHttp()
     {
         var (ok, error) = Envelope(await OidcAppTools.CreateOidcApp(
-            GuardClient(), "proj1", "bad\nname", redirectUris: new[] { "https://ok" }));
+            GuardClient(), "proj1", "bad\nname", redirect_uris: new[] { "https://ok" }));
         Assert.False(ok);
         Assert.Contains("control characters", error!);
     }
@@ -128,7 +128,7 @@ public sealed class ZitadelToolGuardTests
     {
         var (ok, error) = Envelope(await OidcAppTools.DeleteOidcApp(GuardClient(), "proj1", ""));
         Assert.False(ok);
-        Assert.Equal("appId is required", error);
+        Assert.Equal("app_id is required", error);
     }
 
     [Fact]
@@ -136,7 +136,7 @@ public sealed class ZitadelToolGuardTests
     {
         var (ok, error) = Envelope(await OidcAppTools.RegenerateOidcSecret(GuardClient(), "", "app1"));
         Assert.False(ok);
-        Assert.Equal("projectId is required", error);
+        Assert.Equal("project_id is required", error);
     }
 
     [Fact]
@@ -152,13 +152,13 @@ public sealed class ZitadelToolGuardTests
     {
         var (ok, error) = Envelope(await MachineUserTools.DeleteMachineUser(GuardClient(), ""));
         Assert.False(ok);
-        Assert.Equal("userId is required", error);
+        Assert.Equal("user_id is required", error);
     }
 
     [Fact]
     public async Task CreatePat_BadExpiration_RejectedBeforeHttp()
     {
-        var (ok, error) = Envelope(await MachineUserTools.CreatePat(GuardClient(), "user1", expirationIso: "not-a-date"));
+        var (ok, error) = Envelope(await MachineUserTools.CreatePat(GuardClient(), "user1", expiration_iso: "not-a-date"));
         Assert.False(ok);
         Assert.Contains("not a valid", error!);
     }
@@ -167,7 +167,7 @@ public sealed class ZitadelToolGuardTests
     public async Task CreateMachineKey_PathTraversalAgentFile_RejectedBeforeHttp()
     {
         var (ok, error) = Envelope(await MachineUserTools.CreateMachineKey(
-            GuardClient(), userId: "user1", agentFile: "../etc/passwd"));
+            GuardClient(), user_id: "user1", agent_file: "../etc/passwd"));
         Assert.False(ok);
         Assert.Contains("bare basename", error!);
     }
@@ -176,9 +176,9 @@ public sealed class ZitadelToolGuardTests
     public async Task CreateMachineKey_EmptyUserId_RejectedBeforeHttp()
     {
         var (ok, error) = Envelope(await MachineUserTools.CreateMachineKey(
-            GuardClient(), userId: "", agentFile: "agent-x"));
+            GuardClient(), user_id: "", agent_file: "agent-x"));
         Assert.False(ok);
-        Assert.Equal("userId is required", error);
+        Assert.Equal("user_id is required", error);
     }
 
     // ── upstream failure → SANITIZED error, end-to-end at the tool level ────────
@@ -252,7 +252,7 @@ public sealed class ZitadelToolGuardTests
             var client = ScriptedClient(HttpStatusCode.InternalServerError,
                 """{"message":"key issuance failed, api_key=leaked-key-value in log"}""", agentKeyDir: dir);
 
-            var result = await MachineUserTools.CreateMachineKey(client, userId: "user1", agentFile: "agent-x");
+            var result = await MachineUserTools.CreateMachineKey(client, user_id: "user1", agent_file: "agent-x");
             var (ok, error) = Envelope(result);
 
             Assert.False(ok);

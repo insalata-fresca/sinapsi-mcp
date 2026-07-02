@@ -24,11 +24,11 @@ public sealed class UserTools
     [Description("Get a single user by id.")]
     public static Task<object> GetUser(
         ZitadelClient zitadel,
-        [Description("The ZITADEL user id.")] string userId,
+        [Description("The ZITADEL user id.")] string user_id,
         CancellationToken ct = default)
     {
-        if (ZitadelValidation.ValidateId("userId", userId) is { } err)
+        if (ZitadelValidation.ValidateId("user_id", user_id) is { } err)
             return Task.FromResult<object>(new { ok = false, error = err });
-        return ZitadelToolGuard.RunAsync(async () => await zitadel.GetUserAsync(userId, ct));
+        return ZitadelToolGuard.RunAsync(async () => await zitadel.GetUserAsync(user_id, ct));
     }
 }

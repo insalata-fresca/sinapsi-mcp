@@ -27,7 +27,7 @@ public sealed class MachineUserTools
         [Description("Username (loginName).")] string username,
         [Description("Display name (default = username).")] string? name = null,
         [Description("Description (default empty).")] string? description = null,
-        [Description("Access token type — default ACCESS_TOKEN_TYPE_JWT.")] string accessTokenType = "ACCESS_TOKEN_TYPE_JWT",
+        [Description("Access token type — default ACCESS_TOKEN_TYPE_JWT.")] string access_token_type = "ACCESS_TOKEN_TYPE_JWT",
         CancellationToken ct = default)
     {
         if (ZitadelValidation.ValidateName("username", username) is { } uErr)
@@ -36,7 +36,7 @@ public sealed class MachineUserTools
             return Task.FromResult<object>(new { ok = false, error = nErr });
         if (ZitadelValidation.ValidateDescription(description) is { } dErr)
             return Task.FromResult<object>(new { ok = false, error = dErr });
-        if (ZitadelValidation.ValidateEnum("accessTokenType", accessTokenType) is { } aErr)
+        if (ZitadelValidation.ValidateEnum("access_token_type", access_token_type) is { } aErr)
             return Task.FromResult<object>(new { ok = false, error = aErr });
 
         var body = new
@@ -44,7 +44,7 @@ public sealed class MachineUserTools
             userName        = username,
             name            = name ?? username,
             description     = description ?? "",
-            accessTokenType,
+            accessTokenType = access_token_type,
         };
         return ZitadelToolGuard.RunAsync(async () => await zitadel.CreateMachineUserAsync(body, ct));
     }
@@ -55,28 +55,28 @@ public sealed class MachineUserTools
         "gateway's JWKS validator (a BEARER token is opaque and must be introspected). MUTATES.")]
     public static Task<object> UpdateMachineUser(
         ZitadelClient zitadel,
-        [Description("Machine user id.")] string userId,
+        [Description("Machine user id.")] string user_id,
         [Description("Display name (ZITADEL's UpdateMachine requires it — pass the existing name to leave it unchanged).")] string name,
         [Description("Description (default empty).")] string? description = null,
-        [Description("Access token type (default ACCESS_TOKEN_TYPE_JWT).")] string accessTokenType = "ACCESS_TOKEN_TYPE_JWT",
+        [Description("Access token type (default ACCESS_TOKEN_TYPE_JWT).")] string access_token_type = "ACCESS_TOKEN_TYPE_JWT",
         CancellationToken ct = default)
     {
-        if (ZitadelValidation.ValidateId("userId", userId) is { } idErr)
+        if (ZitadelValidation.ValidateId("user_id", user_id) is { } idErr)
             return Task.FromResult<object>(new { ok = false, error = idErr });
         if (ZitadelValidation.ValidateName("name", name) is { } nErr)
             return Task.FromResult<object>(new { ok = false, error = nErr });
         if (ZitadelValidation.ValidateDescription(description) is { } dErr)
             return Task.FromResult<object>(new { ok = false, error = dErr });
-        if (ZitadelValidation.ValidateEnum("accessTokenType", accessTokenType) is { } aErr)
+        if (ZitadelValidation.ValidateEnum("access_token_type", access_token_type) is { } aErr)
             return Task.FromResult<object>(new { ok = false, error = aErr });
 
         var body = new
         {
             name,
             description = description ?? "",
-            accessTokenType,
+            accessTokenType = access_token_type,
         };
-        return ZitadelToolGuard.RunAsync(async () => await zitadel.UpdateMachineUserAsync(userId, body, ct));
+        return ZitadelToolGuard.RunAsync(async () => await zitadel.UpdateMachineUserAsync(user_id, body, ct));
     }
 
     [McpServerTool(Name = "delete_machine_user", Destructive = true)]
@@ -85,12 +85,12 @@ public sealed class MachineUserTools
         "names, keys, PATs and grants are removed and cannot be recovered. MUTATES.")]
     public static Task<object> DeleteMachineUser(
         ZitadelClient zitadel,
-        [Description("User id to delete (irreversible).")] string userId,
+        [Description("User id to delete (irreversible).")] string user_id,
         CancellationToken ct = default)
     {
-        if (ZitadelValidation.ValidateId("userId", userId) is { } err)
+        if (ZitadelValidation.ValidateId("user_id", user_id) is { } err)
             return Task.FromResult<object>(new { ok = false, error = err });
-        return ZitadelToolGuard.RunAsync(async () => await zitadel.DeleteMachineUserAsync(userId, ct));
+        return ZitadelToolGuard.RunAsync(async () => await zitadel.DeleteMachineUserAsync(user_id, ct));
     }
 
     [McpServerTool(Name = "create_pat", Destructive = false)]
@@ -98,15 +98,15 @@ public sealed class MachineUserTools
         "MUTATES + SENSITIVE — the response carries a long-lived bearer token; treat the result as a secret.")]
     public static Task<object> CreatePat(
         ZitadelClient zitadel,
-        [Description("User id.")] string userId,
-        [Description("Expiration (ISO-8601, default 2099-01-01T00:00:00Z).")] string expirationIso = "2099-01-01T00:00:00Z",
+        [Description("User id.")] string user_id,
+        [Description("Expiration (ISO-8601, default 2099-01-01T00:00:00Z).")] string expiration_iso = "2099-01-01T00:00:00Z",
         CancellationToken ct = default)
     {
-        if (ZitadelValidation.ValidateId("userId", userId) is { } idErr)
+        if (ZitadelValidation.ValidateId("user_id", user_id) is { } idErr)
             return Task.FromResult<object>(new { ok = false, error = idErr });
-        if (ZitadelValidation.ValidateExpiration(expirationIso) is { } expErr)
+        if (ZitadelValidation.ValidateExpiration(expiration_iso) is { } expErr)
             return Task.FromResult<object>(new { ok = false, error = expErr });
-        return ZitadelToolGuard.RunAsync(async () => await zitadel.CreatePatAsync(userId, new { expirationDate = expirationIso }, ct));
+        return ZitadelToolGuard.RunAsync(async () => await zitadel.CreatePatAsync(user_id, new { expirationDate = expiration_iso }, ct));
     }
 
     [McpServerTool(Name = "create_machine_key", Destructive = false)]
@@ -116,17 +116,17 @@ public sealed class MachineUserTools
         "enters any agent transcript. Use to provision a service identity's JWK. MUTATES + writes a secret to disk.")]
     public static async Task<object> CreateMachineKey(
         ZitadelClient zitadel,
-        [Description("Machine user id (from create_machine_user).")] string userId,
-        [Description("Agent file basename, e.g. 'agent-journey-ux' → <AGENT_KEY_DIR>/agent-journey-ux.json.")] string agentFile,
-        [Description("Expiration (ISO-8601, default 2099-01-01T00:00:00Z).")] string expirationIso = "2099-01-01T00:00:00Z",
+        [Description("Machine user id (from create_machine_user).")] string user_id,
+        [Description("Agent file basename, e.g. 'agent-journey-ux' → <AGENT_KEY_DIR>/agent-journey-ux.json.")] string agent_file,
+        [Description("Expiration (ISO-8601, default 2099-01-01T00:00:00Z).")] string expiration_iso = "2099-01-01T00:00:00Z",
         CancellationToken ct = default)
     {
         // Fail-fast input validation BEFORE any HTTP call or disk write.
-        if (ZitadelValidation.ValidateId("userId", userId) is { } idErr)
+        if (ZitadelValidation.ValidateId("user_id", user_id) is { } idErr)
             return new { ok = false, error = idErr };
-        if (ZitadelValidation.ValidateAgentFile(agentFile) is { } fileErr)
+        if (ZitadelValidation.ValidateAgentFile(agent_file) is { } fileErr)
             return new { ok = false, error = fileErr };
-        if (ZitadelValidation.ValidateExpiration(expirationIso) is { } expErr)
+        if (ZitadelValidation.ValidateExpiration(expiration_iso) is { } expErr)
             return new { ok = false, error = expErr };
 
         try
@@ -134,7 +134,7 @@ public sealed class MachineUserTools
             // KEY_TYPE_JSON + no publicKey ⇒ ZITADEL generates the keypair and returns the
             // private key file (base64) in `keyDetails`.
             var el = await zitadel.CreateMachineKeyAsync(
-                userId, new { type = "KEY_TYPE_JSON", expirationDate = expirationIso }, ct).ConfigureAwait(false);
+                user_id, new { type = "KEY_TYPE_JSON", expirationDate = expiration_iso }, ct).ConfigureAwait(false);
 
             if (el.ValueKind != JsonValueKind.Object
                 || !el.TryGetProperty("keyDetails", out var kd) || kd.ValueKind != JsonValueKind.String)
@@ -147,7 +147,7 @@ public sealed class MachineUserTools
             catch (FormatException) { return new { ok = false, error = "keyDetails is not valid base64" }; }
 
             Directory.CreateDirectory(zitadel.AgentKeyDir);
-            var dest = Path.Combine(zitadel.AgentKeyDir, $"{agentFile}.json");
+            var dest = Path.Combine(zitadel.AgentKeyDir, $"{agent_file}.json");
             await File.WriteAllBytesAsync(dest, keyFile, ct).ConfigureAwait(false);
             // 0640 — matches the agent-jwt read expectation. Best-effort on non-Unix.
 #pragma warning disable CA1416 // SetUnixFileMode is unsupported on Windows — guarded by the try/catch.
@@ -156,7 +156,8 @@ public sealed class MachineUserTools
 #pragma warning restore CA1416
 
             // Return ONLY metadata — the key bytes are never serialised back to the caller.
-            return new { ok = true, userId, keyId, path = dest, bytes = keyFile.Length };
+            // The response key stays `userId` (result-contract field, unchanged for callers).
+            return new { ok = true, userId = user_id, keyId, path = dest, bytes = keyFile.Length };
         }
         catch (ZitadelApiException ex)
         {
