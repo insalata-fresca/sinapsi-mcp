@@ -24,11 +24,22 @@ public sealed class ZitadelClientTests
         }
     }
 
+    private static readonly Zitadel.Mcp.ZitadelConfig TestConfig = new(
+        BaseUrl: "https://auth.example.com",
+        AuthMode: Zitadel.Mcp.ZitadelAuthMode.Pat,
+        Token: "svc-token",
+        SaKeyFile: null,
+        Issuer: "https://auth.example.com",
+        HostHeader: "auth.example.com",
+        Port: Zitadel.Mcp.ZitadelConfig.DefaultPort,
+        AgentKeyDir: Zitadel.Mcp.ZitadelConfig.DefaultAgentKeyDir,
+        HttpTimeoutMs: Zitadel.Mcp.ZitadelConfig.DefaultHttpTimeoutMs);
+
     private static (ZitadelClient client, ScriptedHandler handler) Build(HttpStatusCode status, string body)
     {
         var handler = new ScriptedHandler(status, body);
         var http = new HttpClient(handler) { BaseAddress = new Uri("https://auth.example.com/") };
-        return (new ZitadelClient(http), handler);
+        return (new ZitadelClient(http, TestConfig), handler);
     }
 
     [Fact]

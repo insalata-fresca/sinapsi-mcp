@@ -9,7 +9,10 @@ namespace Zitadel.Mcp.Tools;
 /// ZITADEL machine (service) user lifecycle tools — the machine-to-machine (M2M)
 /// identity-minting surface: create/update/delete a machine user, issue a Personal Access
 /// Token, and issue a JSON private key written host-side (never returned to the caller).
-/// The host injects the <see cref="ZitadelClient"/> and <see cref="ZitadelConfig"/>.
+/// The host injects the <see cref="ZitadelClient"/> as the single leading DI param on every
+/// tool; <c>create_machine_key</c> reaches AGENT_KEY_DIR through <c>ZitadelClient.AgentKeyDir</c>
+/// rather than a second injected parameter (a second DI param interleaved before the tool params
+/// breaks the MCP SDK's reflection marshaller).
 /// </summary>
 [McpServerToolType]
 public sealed class MachineUserTools
@@ -113,7 +116,6 @@ public sealed class MachineUserTools
         "enters any agent transcript. Use to provision a service identity's JWK. MUTATES + writes a secret to disk.")]
     public static async Task<object> CreateMachineKey(
         ZitadelClient zitadel,
-        ZitadelConfig config,
         [Description("Machine user id (from create_machine_user).")] string userId,
         [Description("Agent file basename, e.g. 'agent-journey-ux' → <AGENT_KEY_DIR>/agent-journey-ux.json.")] string agentFile,
         [Description("Expiration (ISO-8601, default 2099-01-01T00:00:00Z).")] string expirationIso = "2099-01-01T00:00:00Z",
@@ -144,8 +146,8 @@ public sealed class MachineUserTools
             try { keyFile = Convert.FromBase64String(kd.GetString()!); }
             catch (FormatException) { return new { ok = false, error = "keyDetails is not valid base64" }; }
 
-            Directory.CreateDirectory(config.AgentKeyDir);
-            var dest = Path.Combine(config.AgentKeyDir, $"{agentFile}.json");
+            Directory.CreateDirectory(zitadel.AgentKeyDir);
+            var dest = Path.Combine(zitadel.AgentKeyDir, $"{agentFile}.json");
             await File.WriteAllBytesAsync(dest, keyFile, ct).ConfigureAwait(false);
             // 0640 — matches the agent-jwt read expectation. Best-effort on non-Unix.
 #pragma warning disable CA1416 // SetUnixFileMode is unsupported on Windows — guarded by the try/catch.
