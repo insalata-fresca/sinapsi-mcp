@@ -12,7 +12,8 @@ builder.Services.AddHttpClient<InfisicalClient>(c =>
 
 builder
     .AddSinapsiMcpServer("infisical-mcp", "0.1.0")
-    .WithHttpTransport()
+    // Stateless transport strips a forwarded Mcp-Session-Id so a fronting proxy can't 400 it.
+    .WithHttpTransport(o => o.Stateless = true)
     .WithTools<InfisicalTools>();
 
 var app = builder.Build();

@@ -21,7 +21,8 @@ builder.Services.AddSingleton<LearnPublisher>();
 //   write: publish_learning (LearnTools) — emits a learning-published event.
 builder.Services
     .AddMcpServer(o => o.ServerInfo = new() { Name = "sinapsi-indexer", Version = "1.0.0" })
-    .WithHttpTransport()
+    // Stateless transport strips a forwarded Mcp-Session-Id so a fronting proxy can't 400 it.
+    .WithHttpTransport(o => o.Stateless = true)
     .WithTools<IndexTools>()
     .WithTools<LearnTools>();
 

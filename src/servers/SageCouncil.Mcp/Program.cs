@@ -19,7 +19,8 @@ builder.Services.AddHttpClient<AgentJwtMinter>(); // token mint is quick; defaul
 
 var mcp = builder
     .AddSinapsiMcpServer("sage-council-mcp", "1.0.0")
-    .WithHttpTransport()
+    // Stateless transport strips a forwarded Mcp-Session-Id so a fronting proxy can't 400 it.
+    .WithHttpTransport(o => o.Stateless = true)
     .WithTools<ConsultTool>();
 
 var app = builder.Build();
