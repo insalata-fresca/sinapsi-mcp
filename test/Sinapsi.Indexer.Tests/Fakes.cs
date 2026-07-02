@@ -4,6 +4,7 @@
 // Plain-ASCII banner so this source diffs as TEXT, never binary.
 // ---------------------------------------------------------------------------
 
+using Npgsql;
 using Sinapsi.Indexer;
 
 namespace Sinapsi.Indexer.Tests;
@@ -65,6 +66,56 @@ internal sealed class FakeEmbedder : IEmbedder
 {
     public int Dim => 384;
     public float[] Embed(string text) => new float[Dim];
+}
+
+/// <summary>
+/// A recording <see cref="IIndexStore"/> for the worker's per-doc resilience test.
+/// <c>UpsertAsync</c> records every DocId it is asked to store, and throws a
+/// caller-chosen exception for one poison DocId — letting a test prove that one bad
+/// doc is skipped while the rest of the repo's docs are still upserted, and that a
+/// data-dependent server error (<see cref="PostgresException"/>) is swallowed while a
+/// fatal one (<see cref="NpgsqlException"/>) still propagates. Only the write side is
+/// implemented; the read side is unused here.
+/// </summary>
+internal sealed class RecordingIndexStore : IIndexStore
+{
+    private readonly string _poisonDocId;
+    private readonly Func<Exception> _onPoison;
+
+    /// <summary>DocIds that reached the store successfully (upserted).</summary>
+    public List<string> Upserted { get; } = new();
+    /// <summary>The source + present-set handed to the tombstone pass (proves it still ran).</summary>
+    public string? TombstoneSource { get; private set; }
+    public string[]? TombstonePresent { get; private set; }
+
+    public RecordingIndexStore(string poisonDocId, Func<Exception> onPoison)
+    {
+        _poisonDocId = poisonDocId;
+        _onPoison = onPoison;
+    }
+
+    public Task<bool> UpsertAsync(Document doc, CancellationToken ct)
+    {
+        if (doc.DocId == _poisonDocId) throw _onPoison();
+        Upserted.Add(doc.DocId);
+        return Task.FromResult(true);
+    }
+
+    public Task<int> TombstoneMissingAsync(string source, IReadOnlyCollection<string> presentDocIds, CancellationToken ct)
+    {
+        TombstoneSource = source;
+        TombstonePresent = presentDocIds.ToArray();
+        return Task.FromResult(0);
+    }
+
+    // Unused by the worker path under test — assert non-reach.
+    public Task EnsureSchemaAsync(CancellationToken ct) => Task.CompletedTask;
+    public Task PingAsync(CancellationToken ct) => Task.CompletedTask;
+    public Task<IReadOnlyList<SearchHit>> SearchAsync(string query, string? source, string? kind, int limit, CancellationToken ct) => throw new NotSupportedException();
+    public Task<IReadOnlyList<LearningHit>> GetLearningsAsync(string? scope, string? query, int limit, CancellationToken ct) => throw new NotSupportedException();
+    public Task SetEmbeddingAsync(string docId, float[] vector, CancellationToken ct) => throw new NotSupportedException();
+    public Task<IReadOnlyList<(string DocId, string Title, string Body)>> GetMissingEmbeddingsAsync(int limit, CancellationToken ct) => throw new NotSupportedException();
+    public Task<IReadOnlyList<SearchHit>> SemanticSearchAsync(float[] queryVector, string queryText, int limit, CancellationToken ct) => throw new NotSupportedException();
 }
 
 /// <summary>An embedder that throws if reached — proves semantic_search validates

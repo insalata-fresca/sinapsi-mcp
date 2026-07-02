@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 using NATS.Client.JetStream;
+using Npgsql;
 using Sinapsi.Nats;
 
 namespace Sinapsi.Indexer;
@@ -221,22 +222,56 @@ public sealed class IndexerWorker : JetStreamWorker
                 return;
             }
             var docs = _scanner.Scan(repo);
-            var changed = 0;
-            var present = new List<string>(docs.Count);
-            foreach (var doc in docs)
-            {
-                present.Add(doc.DocId);
-                if (await _store.UpsertAsync(doc, ct)) changed++;
-            }
-            var tombstoned = await _store.TombstoneMissingAsync(repo.Source, present, ct);
-            DocsUpserted += changed;
-            LastReindex = DateTimeOffset.UtcNow;
-            Log.LogInformation("re-indexed {source}: {total} docs, {changed} changed, {tomb} tombstoned",
-                repo.Source, docs.Count, changed, tombstoned);
+            await IndexDocsAsync(repo.Source, docs, ct);
         }
         finally
         {
             _gate.Release();
         }
+    }
+
+    /// <summary>
+    /// Upsert every scanned doc of a source with PER-DOC isolation, then tombstone
+    /// the docs that disappeared. A single poison document (content Postgres rejects
+    /// — a stray NUL byte the scanner missed → SqlState 22021, or any other
+    /// data-dependent server-side error) must NOT abort the rest of the source's
+    /// scan nor, via an escape out of the background loop, kill the whole service:
+    /// it is counted, warned, and skipped. Genuinely fatal problems (connection down,
+    /// auth/schema failure) surface as <see cref="NpgsqlException"/> — NOT
+    /// <see cref="PostgresException"/> — so they still propagate to the outer
+    /// retry/backoff. Internal (not private) so the resilience is unit-testable with a
+    /// mock store, no git and no live Postgres.
+    /// </summary>
+    internal async Task IndexDocsAsync(string source, IReadOnlyList<Document> docs, CancellationToken ct)
+    {
+        var changed = 0;
+        var failed = 0;
+        var present = new List<string>(docs.Count);
+        foreach (var doc in docs)
+        {
+            // Record the DocId as "present" even on a failed upsert so a transient
+            // per-doc failure does not make the tombstone pass wrongly delete an
+            // already-indexed row.
+            present.Add(doc.DocId);
+            try
+            {
+                if (await _store.UpsertAsync(doc, ct)) changed++;
+            }
+            catch (PostgresException e)
+            {
+                failed++;
+                Log.LogWarning(e, "skipping doc {docId} in {source}: upsert rejected (SqlState {state})",
+                    doc.DocId, source, e.SqlState);
+            }
+        }
+        var tombstoned = await _store.TombstoneMissingAsync(source, present, ct);
+        DocsUpserted += changed;
+        LastReindex = DateTimeOffset.UtcNow;
+        if (failed > 0)
+            Log.LogWarning("re-indexed {source}: {total} docs, {changed} changed, {failed} failed, {tomb} tombstoned",
+                source, docs.Count, changed, failed, tombstoned);
+        else
+            Log.LogInformation("re-indexed {source}: {total} docs, {changed} changed, {tomb} tombstoned",
+                source, docs.Count, changed, tombstoned);
     }
 }

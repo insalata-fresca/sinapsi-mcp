@@ -110,6 +110,18 @@ public sealed class SourceScanner
             catch { continue; }
             if (body.Length == 0) continue;
 
+            // A NUL (0x00) byte in the content means this "*.md" file is really
+            // binary-ish (an accidentally-committed blob, a mislabelled file, a
+            // corrupt checkout). Postgres text columns NEVER accept 0x00 regardless
+            // of encoding, so a doc carrying one poisons the upsert (SqlState 22021,
+            // "invalid byte sequence for encoding UTF8: 0x00"). Skip it — log + move
+            // on — so one bad file cannot take the index (and the whole service) down.
+            if (HasNulByte(body))
+            {
+                _log.LogWarning("skipping binary/NUL-byte content in {source}:{path} (contains 0x00)", repo.Source, rel);
+                continue;
+            }
+
             docs.Add(new Document
             {
                 DocId = Document.MakeDocId(repo.Source, rel),
@@ -167,6 +179,11 @@ public sealed class SourceScanner
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(s));
         return Convert.ToHexString(bytes).ToLowerInvariant();
     }
+
+    /// <summary>True when the content contains a NUL (0x00) byte. Such content is
+    /// binary-ish and Postgres <c>text</c> columns reject it (SqlState 22021), so
+    /// the scanner skips it rather than let it poison the upsert.</summary>
+    internal static bool HasNulByte(string content) => content.Contains('\0');
 
     private async Task GitAsync(string? cwd, CancellationToken ct, params string[] args)
     {
