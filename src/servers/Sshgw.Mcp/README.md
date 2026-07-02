@@ -60,7 +60,8 @@ Architecturally it is a handful of small seams:
 ### `execute-command`
 - **Params:**
   - `cmdString` (string, **required**) — the command. Rejected if empty/whitespace, longer than 8192 chars, or containing control characters / newlines. Then gated by the per-server command whitelist (matched against the **raw** command, never the `cd`-prefixed form).
-  - `connectionName` (string, optional, default `"default"`) — server name from `list-servers`. Rejected if empty/whitespace, longer than 128 chars, or containing control characters.
+  - `connectionName` (string, optional, default the `"default"` server) — server name from `list-servers`. Rejected if empty/whitespace, longer than 128 chars, or containing control characters.
+  - `server` (string, optional) — **alias for `connectionName`.** The wire contract is `connectionName`; the harness may advertise the selector as `server`, so both are accepted. `connectionName` wins when both are supplied; the alias is used only when `connectionName` is absent. Same validation as `connectionName`. This is a pure alias — it never invents a routing default.
   - `directory` (string, optional) — absolute working directory. Applied as a `cd -- <dir> && …` prefix, so it is held to a **tighter** rule than a free path: it must be absolute and contain **no** shell metacharacters (whitespace, `; & | $ \` " ' < > ( ) { } [ ] * ? ~ \ ! #`). This makes a `cd`-breakout impossible.
   - `timeout` (int, optional, ms) — per-call command timeout, clamped to `[1, hard cap]` (the `SSHGW_COMMAND_TIMEOUT_MS` ceiling). Omitted ⇒ the configured default.
 - **Returns:** `{ ok, exitCode, stdout, stderr }`. `ok`/`exitCode` are computed on the **raw** exit code **before** stderr is scrubbed, so a redaction can never flip the verdict. `stderr` is routed through `SshgwErrors.Sanitize` (or `null` when empty).
@@ -68,7 +69,8 @@ Architecturally it is a handful of small seams:
 
 ### `read_file`
 - **Params:**
-  - `connectionName` (string, **required**) — validated as above.
+  - `connectionName` (string, **required** — or its `server` alias) — validated as above.
+  - `server` (string, optional) — **alias for `connectionName`** (same semantics as under `execute-command`). One of `connectionName` / `server` is required; `connectionName` wins when both are given. With **both** absent, `read_file` fails closed with `no server specified: pass connectionName (or server)` — it has no literal default.
   - `remotePath` (string, **required**) — rejected if empty/whitespace, longer than 4096 chars, containing control characters / newlines, or starting with `-`. Then gated by the per-server `ReadFilePolicy` (absolute-path + secret denylist / allowlist).
   - `max_bytes` (int, optional) — clamped to `[1, hard ceiling]`; defaults to the configured default cap.
 - **Symlink re-check:** after the lexical path policy clears, the real target is resolved on the host (`readlink -f`) and the **same** policy is re-applied to it. A symlink that sits inside an allowed dir but points at a secret is refused (`symlink target blocked: …`) before any bytes are read; the returned `path` is the resolved real target.
@@ -76,7 +78,7 @@ Architecturally it is a handful of small seams:
 - **Errors:** input-validation failures, an unknown server, a policy-blocked path (lexical **or** symlink-resolved), a not-found path, a directory path, and a host-key-pin rejection all return `{ ok: false, error }`; only a policy-cleared path reaches SFTP.
 
 ### `upload` (mutates)
-- **Params:** `localPath`, `remotePath`, `connectionName` (optional, default `"default"`) — each validated (the two paths reject a leading `-`).
+- **Params:** `localPath`, `remotePath`, `connectionName` (optional, default the `"default"` server) or its `server` alias (same semantics as under `execute-command`; `connectionName` wins when both are given) — each validated (the two paths reject a leading `-`).
 - **Elevated write:** upload is **not** subject to the command whitelist or the `read_file` path policy — those bound reads. Host-key pinning still applies (MITM guard on the write too).
 - **Returns:** `{ ok: true, path, bytes_sent }` on success; `{ ok: false, error }` on a missing local file, an unknown server, a validation failure, or a host-key-pin rejection.
 
@@ -153,6 +155,13 @@ fail safe:
   required/non-empty, length caps, control-char/newline rejection, and a
   leading-`-` reject on paths. Invalid input returns a structured error, never an
   exception, and never opens a connection.
+- **Selector alias, fail-closed.** The selector may be supplied as `connectionName`
+  (the wire contract) OR `server` (the harness alias). `connectionName` wins when
+  both are given; the alias is used only when `connectionName` is absent; an
+  explicitly-blank value under either name is rejected. This is a pure alias — it
+  **never** invents a routing default: an unknown selector still returns
+  `unknown server '…'`, and a tool with no literal default (`read_file`) returns
+  `no server specified: pass connectionName (or server)` when both are absent.
 - **Host-key pinning (MITM guard).** SSH.NET trusts any host key by default; this
   server wires a per-server `HostKeyPolicy` into the `HostKeyReceived` event. A
   server carrying a `hostKeyFingerprint` refuses any key that does not match it (the

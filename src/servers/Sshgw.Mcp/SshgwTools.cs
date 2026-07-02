@@ -47,14 +47,19 @@ public sealed class SshgwTools
     public static async Task<JsonObject> ExecuteCommand(
         ServerRegistry registry, SshClient ssh,
         [Description("Command to execute (must match the server's read-only whitelist)")] string cmdString,
-        [Description("Server name from list-servers (default: 'default')")] string connectionName = "default",
+        [Description("Server name from list-servers. The wire contract is 'connectionName'; 'server' is accepted as an alias. connectionName wins when both are given; when both are absent this defaults to the 'default' server.")] string? connectionName = null,
+        [Description("Alias for connectionName (the harness may send the selector under this name). connectionName wins when both are given.")] string? server = null,
         [Description("Optional absolute working directory to run the command in (no shell metacharacters)")] string? directory = null,
         [Description("Optional per-call timeout in ms (clamped to the server hard cap)")] int? timeout = null,
         CancellationToken ct = default)
     {
+        // Resolve the selector from connectionName (wire) or its 'server' alias BEFORE
+        // any bound or SSH I/O. This tool historically defaults to the literal
+        // 'default' server when neither is supplied (which still fails closed via the
+        // registry lookup if no such server exists) — never an implicit connection.
+        if (ResolveSelector(connectionName, server, bothAbsentFallback: "default", out var effectiveConn) is { } selErr)
+            return selErr;
         // Fail-fast input validation BEFORE the whitelist bound and any SSH I/O.
-        if (SshgwValidation.ValidateConnectionName(connectionName) is { } nameErr)
-            return Err(nameErr);
         if (SshgwValidation.ValidateCommand(cmdString) is { } cmdErr)
             return Err(cmdErr);
         // The working directory is held to a tighter rule than a free path: it must be
@@ -62,8 +67,8 @@ public sealed class SshgwTools
         if (SshgwValidation.ValidateDirectory(directory) is { } dirErr)
             return Err(dirErr);
 
-        var entry = registry.Get(connectionName);
-        if (entry is null) return Err($"unknown server '{connectionName}'");
+        var entry = registry.Get(effectiveConn);
+        if (entry is null) return Err($"unknown server '{effectiveConn}'");
 
         // The in-MCP bound: the command must be on this server's whitelist. The
         // whitelist matches the RAW command (never the cd-prefixed form), matching
@@ -99,19 +104,23 @@ public sealed class SshgwTools
     [Description("Read a remote file's contents and return the bytes to the caller (UTF-8, or base64 if binary). Path-bounded: secret files are refused.")]
     public static async Task<JsonObject> ReadFile(
         ServerRegistry registry, SshClient ssh, SshgwOptions opts,
-        [Description("Server name from list-servers")] string connectionName,
+        [Description("Server name from list-servers. The wire contract is 'connectionName'; 'server' is accepted as an alias. connectionName wins when both are given; one of the two is REQUIRED.")] string? connectionName,
         [Description("Absolute path to the remote file")] string remotePath,
         [Description("Max bytes to return (capped at the server hard limit)")] int? max_bytes = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        [Description("Alias for connectionName (the harness may send the selector under this name). connectionName wins when both are given.")] string? server = null)
     {
+        // Resolve the selector from connectionName (wire) or its 'server' alias BEFORE
+        // any bound or SSH I/O. read_file has no literal default: with both absent it
+        // fails closed with a clear "no server specified" error.
+        if (ResolveSelector(connectionName, server, bothAbsentFallback: null, out var effectiveConn) is { } selErr)
+            return selErr;
         // Fail-fast input validation BEFORE the path policy bound and any SSH I/O.
-        if (SshgwValidation.ValidateConnectionName(connectionName) is { } nameErr)
-            return Err(nameErr);
         if (SshgwValidation.ValidatePath(remotePath, "remotePath") is { } pathErr)
             return Err(pathErr);
 
-        var entry = registry.Get(connectionName);
-        if (entry is null) return Err($"unknown server '{connectionName}'");
+        var entry = registry.Get(effectiveConn);
+        if (entry is null) return Err($"unknown server '{effectiveConn}'");
 
         // The in-MCP bound: refuse secret paths (lexical canonicalisation only).
         var policy = new ReadFilePolicy(entry.ReadFilePolicy);
@@ -178,20 +187,25 @@ public sealed class SshgwTools
         ServerRegistry registry, SshClient ssh,
         [Description("Local source path")] string localPath,
         [Description("Remote destination path")] string remotePath,
-        [Description("Server name from list-servers (default: 'default')")] string connectionName = "default",
+        [Description("Server name from list-servers. The wire contract is 'connectionName'; 'server' is accepted as an alias. connectionName wins when both are given; when both are absent this defaults to the 'default' server.")] string? connectionName = null,
+        [Description("Alias for connectionName (the harness may send the selector under this name). connectionName wins when both are given.")] string? server = null,
         CancellationToken ct = default)
     {
+        // Resolve the selector from connectionName (wire) or its 'server' alias at the
+        // TOP, before any I/O — same guard contract as the read tools, and the same
+        // literal-'default' both-absent fallback as execute-command (fails closed via
+        // the registry lookup when no such server exists).
+        if (ResolveSelector(connectionName, server, bothAbsentFallback: "default", out var effectiveConn) is { } selErr)
+            return selErr;
         // Fail-fast input validation at the TOP, before any I/O — the same guard
         // contract as the read tools.
-        if (SshgwValidation.ValidateConnectionName(connectionName) is { } nameErr)
-            return Err(nameErr);
         if (SshgwValidation.ValidatePath(localPath, "localPath") is { } localErr)
             return Err(localErr);
         if (SshgwValidation.ValidatePath(remotePath, "remotePath") is { } remoteErr)
             return Err(remoteErr);
 
-        var entry = registry.Get(connectionName);
-        if (entry is null) return Err($"unknown server '{connectionName}'");
+        var entry = registry.Get(effectiveConn);
+        if (entry is null) return Err($"unknown server '{effectiveConn}'");
 
         // upload is an ELEVATED WRITE: it is deliberately NOT subject to the command
         // whitelist or the read_file path policy (those bound READS). Host-key
@@ -213,6 +227,68 @@ public sealed class SshgwTools
             ["path"] = remotePath,
             ["bytes_sent"] = res.BytesSent,
         };
+    }
+
+    /// <summary>
+    /// Resolve the effective server selector from the two accepted names. The wire
+    /// contract is <c>connectionName</c>; the harness-facing tool advertises the
+    /// selector as <c>server</c>, so both are accepted and <c>connectionName</c>
+    /// wins when present. This is a pure ALIAS — it never invents a routing default.
+    ///
+    /// <para>Precedence, fail-closed at every step:</para>
+    /// <list type="bullet">
+    /// <item><b>connectionName provided but empty/whitespace</b> ⇒ an explicit
+    /// invalid selector: reject via <see cref="SshgwValidation.ValidateConnectionName"/>
+    /// ("connectionName is required"). An explicit blank is never silently coerced to
+    /// the alias or a default.</item>
+    /// <item><b>connectionName non-empty</b> ⇒ used verbatim (byte-identical to the
+    /// prior single-parameter behavior; the alias is inert).</item>
+    /// <item><b>connectionName absent (null) + server non-empty</b> ⇒ the alias is
+    /// used (and validated the same way).</item>
+    /// <item><b>connectionName absent + server absent</b> ⇒ the caller's
+    /// <paramref name="bothAbsentFallback"/>: a literal registry name for the tools
+    /// that historically defaulted to <c>"default"</c> (still fails closed downstream
+    /// via <see cref="ServerRegistry.Get"/> ⇒ "unknown server '…'" when absent), or
+    /// <c>null</c> ⇒ the clear "no server specified" error for the tools that require
+    /// an explicit selector.</item>
+    /// </list>
+    ///
+    /// <para>Returns <c>null</c> on success (with the resolved value in
+    /// <paramref name="selector"/>), or a structured error object otherwise.</para>
+    /// </summary>
+    private static JsonObject? ResolveSelector(
+        string? connectionName, string? server, string? bothAbsentFallback, out string selector)
+    {
+        selector = "";
+
+        // An explicitly-supplied connectionName is authoritative — even when blank.
+        // A blank explicit value is a malformed selector, NOT an invitation to fall
+        // back to the alias or a default; reject it exactly as before.
+        if (connectionName is not null)
+        {
+            if (SshgwValidation.ValidateConnectionName(connectionName) is { } cnErr)
+                return Err(cnErr);
+            selector = connectionName;
+            return null;
+        }
+
+        // connectionName absent ⇒ the harness alias 'server' may carry the selector.
+        // A supplied-but-blank alias is likewise a malformed selector.
+        if (server is not null)
+        {
+            if (SshgwValidation.ValidateConnectionName(server) is { } svErr)
+                return Err(svErr);
+            selector = server;
+            return null;
+        }
+
+        // Neither selector supplied ⇒ the tool's documented both-absent behavior.
+        if (string.IsNullOrWhiteSpace(bothAbsentFallback))
+            // No literal fallback ⇒ a clear, explicit error — never a silent default.
+            return Err("no server specified: pass connectionName (or server)");
+
+        selector = bothAbsentFallback;
+        return null;
     }
 
     private static JsonObject Err(string message) => new() { ["ok"] = false, ["error"] = message };

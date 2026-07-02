@@ -103,8 +103,23 @@ public sealed class SshgwToolGuardTests : IDisposable
     [Fact]
     public async Task ReadFile_InvalidConnectionName_ShortCircuits_NoSshIo()
     {
+        // read_file has no literal default: with BOTH the wire name (null) and its
+        // 'server' alias (default null) absent, it fails closed with the clear
+        // "no server specified" error — never a silent default connection.
         var t = new ThrowingTransport();
         var r = await SshgwTools.ReadFile(_registry, t, _opts, null!, "/var/log/syslog", null, CancellationToken.None);
+        Assert.False(Ok(r));
+        Assert.Equal("no server specified: pass connectionName (or server)", Err(r));
+        Assert.False(t.Reached);
+    }
+
+    [Fact]
+    public async Task ReadFile_BlankConnectionName_IsRejected_NoSshIo()
+    {
+        // An explicitly-blank connectionName is a malformed selector, not an
+        // invitation to fall back to the alias — rejected before any SSH I/O.
+        var t = new ThrowingTransport();
+        var r = await SshgwTools.ReadFile(_registry, t, _opts, "   ", "/var/log/syslog", null, CancellationToken.None);
         Assert.False(Ok(r));
         Assert.Equal("connectionName is required", Err(r));
         Assert.False(t.Reached);
