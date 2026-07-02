@@ -71,8 +71,12 @@ jobs:
           USER_NAME="${REGISTRY_USER:-ste}"
 
           # Monotonic version from the run number (checkout is shallow; no full
-          # history needed). Tag the image both :<version> and :latest.
-          VER="0.1.${GITHUB_RUN_NUMBER}"
+          # history needed). Tag the image both :sinapsi-<version> and :sinapsi-latest.
+          # The "sinapsi-" prefix is permanent provenance: it disambiguates these
+          # images from the release plane that shares this registry namespace and uses
+          # the same numeric 0.1.<run> scheme, preventing tag collisions on the 8
+          # image names common to both planes.
+          VER="sinapsi-0.1.${GITHUB_RUN_NUMBER}"
           IMAGE="${REGISTRY}/${USER_NAME}/${IMAGE_NAME}"
           echo "Building ${IMAGE}:${VER}"
 
@@ -83,13 +87,13 @@ jobs:
           # build secret). --network=host: the runner LXC has no /dev/net/tun.
           podman build --network=host \
             -f "src/servers/${SERVER}/Containerfile" \
-            -t "${IMAGE}:${VER}" -t "${IMAGE}:latest" .
+            -t "${IMAGE}:${VER}" -t "${IMAGE}:sinapsi-latest" .
 
           # Capture the digest of THIS push via --digestfile. Do NOT use
           # `inspect .RepoDigests` — that list accumulates stale entries across
           # rebuilds of the same content and returns the wrong (old) digest.
           DIGESTFILE="$(mktemp)"
           podman push --digestfile "$DIGESTFILE" "${IMAGE}:${VER}"
-          podman push "${IMAGE}:latest"
+          podman push "${IMAGE}:sinapsi-latest"
           DIGEST="$(cat "$DIGESTFILE")"; rm -f "$DIGESTFILE"
           echo "Pushed ${IMAGE}:${VER} @ ${DIGEST}"
