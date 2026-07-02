@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RootNamespace>Sinapsi.Forge</RootNamespace>
+
+    <!-- Packable so it can be published to a NuGet feed for external consumers
+         (PackageReference, never ProjectReference). Inside this repo the servers
+         consume it via ProjectReference, so the solution builds with no feed. The
+         shared git-forge tool surface: a provider-neutral IForgeClient + DTOs + the
+         common [McpServerTool] classes, with a Gitea adapter (drives Forgejo and
+         Codeberg). The GitHub adapter lives in the Github.Mcp server (raw REST). -->
+    <IsPackable>true</IsPackable>
+    <PackageId>Sinapsi.Forge</PackageId>
+    <!-- Version inherited from Directory.Build.props (repo-wide 0.1.0 pin). -->
+    <Authors>ste</Authors>
+    <Description>Sinapsi.Forge — provider-neutral git-forge MCP tool surface.
+      IForgeClient abstraction + DTOs + the common [McpServerTool] classes shared by
+      the GitHub / Forgejo / Codeberg MCP servers, plus the Gitea REST adapter
+      (GiteaForgeClient — drives both Forgejo and Codeberg). Byte-safe commit_files
+      (base64, atomic, multi-file), binary blob read, release-asset upload, CI
+      workflow dispatch + run listing (Actions), and repository topic management are
+      first-class.</Description>
+    <PackageReleaseNotes>0.4.0 — Release tooling fixes: real forge HTTP errors (status + body)
+      surfaced via ForgeToolGuard instead of the SDK's generic invoke error;
+      upload_release_asset now accepts source_path / source_url (streamed) in addition
+      to content_base64 for large (20MB+) binaries; edit_repo gains has_releases to
+      toggle the Releases unit (fixes release endpoints 404ing when has_releases:false).</PackageReleaseNotes>
+    <!-- License (Apache-2.0) inherited from Directory.Build.props. -->
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Server-side MCP tool attributes ([McpServerTool]/[McpServerToolType],
+         namespace ModelContextProtocol.Server) live in .Core — the light package
+         (no hosting/ASP.NET). Logging.Abstractions (for ILogger<T>) comes
+         transitively via .Core. -->
+    <PackageReference Include="ModelContextProtocol.Core" Version="1.3.0" />
+  </ItemGroup>
+
+</Project>

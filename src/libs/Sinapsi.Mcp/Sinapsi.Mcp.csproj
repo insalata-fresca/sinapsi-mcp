@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RootNamespace>Sinapsi.Mcp</RootNamespace>
+
+    <!-- Packed and consumed as a NuGet package via PackageReference, not
+         ProjectReference, so each experiment depends only on the published
+         version it asks for. -->
+    <IsPackable>true</IsPackable>
+    <PackageId>Sinapsi.Mcp</PackageId>
+    <!-- Version inherited from Directory.Build.props (repo-wide 0.1.0 pin). -->
+    <Authors>ste</Authors>
+    <Description>Small .NET helpers for building and calling Model Context Protocol (MCP) servers over HTTP. Provides GatewayMcpClient, a minimal Streamable-HTTP JSON-RPC client that performs the initialize / notifications-initialized / tools-call round-trip against an upstream MCP endpoint and parses either an SSE data frame or a plain JSON body, plus SinapsiMcpServerBuilder, a pair of extension methods on WebApplicationBuilder and WebApplication that consolidate the bootstrap an MCP server otherwise repeats: single-line console logging, an infinite-timeout HttpClient for the gateway client, an env-driven listen address, and the /mcp route. When the HTTP transport is configured stateless, the mapping helper also strips an inbound Mcp-Session-Id header so a stray session id forwarded by an intermediary proxy does not cause a 400 in stateless mode. Built on ModelContextProtocol.AspNetCore; consumers still see the SDK types directly.</Description>
+    <!-- License (Apache-2.0) inherited from Directory.Build.props. -->
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The internal hardening helpers (McpValidation / McpSanitizer) are tested
+         directly by the sibling test project without widening the public API. -->
+    <InternalsVisibleTo Include="Sinapsi.Mcp.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- WebApplication/WebApplicationBuilder live in the ASP.NET Core shared framework. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <!-- Provides AddMcpServer/IMcpServerBuilder/MapMcp/HttpServerTransportOptions. -->
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="1.3.0" />
+  </ItemGroup>
+
+</Project>

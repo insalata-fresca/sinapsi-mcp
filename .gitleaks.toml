@@ -1,0 +1,30 @@
+# gitleaks config — basic secret scan for this repo.
+# https://github.com/gitleaks/gitleaks
+title = "sinapsi-mcp gitleaks config"
+
+# Start from the bundled default ruleset (AWS keys, generic API tokens,
+# private keys, etc.) and layer a few project-specific rules on top.
+[extend]
+useDefault = true
+
+[[rules]]
+id = "forgejo-nuget-token"
+description = "Forgejo / Gitea package-registry access token"
+regex = '''(?i)(forgejo|gitea)[._-]?(nuget[._-]?)?token['"=:\s]{0,4}[a-f0-9]{40}'''
+tags = ["token", "forgejo"]
+
+[[rules]]
+id = "dotnet-cleartext-password"
+description = "Cleartext password in a NuGet/config XML element"
+regex = '''<add\s+key="ClearTextPassword"\s+value="(?!%[A-Z_]+%)[^"]+"'''
+tags = ["password", "nuget"]
+
+[allowlist]
+description = "Env-var placeholders and the public Forgejo feed URL are not secrets."
+regexes = [
+  '''%FORGEJO_NUGET_TOKEN%''',
+  '''\$\{\{\s*secrets\.[A-Z_]+\s*\}\}''',
+]
+paths = [
+  '''(.*?)\.gitleaks\.toml$''',
+]

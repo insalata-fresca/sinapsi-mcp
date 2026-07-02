@@ -1,0 +1,18 @@
+<Project>
+  <!--
+    Repo-wide version pin for the v0.1.0 release cut.
+    All packable lib csproj files inherit this; bump here for the next release.
+    Individual servers intentionally carry no <Version> (they are deployed OCI
+    images, not NuGet packages).
+  -->
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <!--
+    Repo-wide NuGet package metadata lives in Directory.Build.targets (imported
+    AFTER the project body, so the per-project <IsPackable> is already resolved);
+    conditioning it here in Directory.Build.props would evaluate before the csproj
+    sets IsPackable and silently drop the license. See Directory.Build.targets.
+  -->
+</Project>

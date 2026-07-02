@@ -1,0 +1,99 @@
+# Build + push the 12 MCP server OCI images.
+#
+# Mirrors the home-server build-push-release pattern: a self-hosted runner shells
+# `podman build --network=host` (the runner LXC has no /dev/net/tun, so rootless
+# pasta networking can't set up a netns for RUN steps — host net avoids it),
+# captures the pushed digest with `--digestfile` (never `inspect .RepoDigests`,
+# which accumulates stale entries across rebuilds), and pushes to the configured
+# registry.
+#
+# Fully parameterised from the environment — NOTHING infrastructure-specific is
+# committed here:
+#   - registry host  = ${{ vars.REGISTRY }}       (Actions VARIABLE; no default)
+#   - push token      = ${{ secrets.REGISTRY_TOKEN }} (Actions SECRET)
+#   - registry user   = ${{ vars.REGISTRY_USER }}  (Actions VARIABLE, default "ste")
+# No registry URL, identity, or homelab literal is literalised, and no secret
+# value is ever baked into an image layer (the images build from nuget.org +
+# in-repo ProjectReference alone — no build secret is needed or passed).
+#
+# Trigger: a version tag (v*) — the same trigger the lib publish job in ci.yml
+# uses — so a release cut produces both the packages and the images.
+#
+# NOTE: publishing to any PUBLIC registry is intentionally NOT done here. The
+# target is whatever REGISTRY variable the operator configures; leaving it unset
+# makes this workflow a no-op (it fails fast on the guard) rather than pushing
+# anywhere by default.
+name: build-images
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+jobs:
+  images:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: self-hosted
+    strategy:
+      # One server per matrix leg. Keep the matrix serial-friendly; the runner is
+      # typically capacity-1. `server` is the project dir under src/servers/ AND
+      # the source of the image name; `image` is the lowercased image repo path.
+      fail-fast: false
+      matrix:
+        include:
+          - { server: Forge.Mcp,        image: forge-mcp }
+          - { server: Gdrive.Mcp,       image: gdrive-mcp }
+          - { server: Gemini.Mcp,       image: gemini-mcp }
+          - { server: Github.Mcp,       image: github-mcp }
+          - { server: Infisical.Mcp,    image: infisical-mcp }
+          - { server: Metabase.Mcp,     image: metabase-mcp }
+          - { server: OpenWrtForum.Mcp, image: openwrtforum-mcp }
+          - { server: SageCouncil.Mcp,  image: sagecouncil-mcp }
+          - { server: Sinapsi.Indexer,  image: sinapsi-indexer }
+          - { server: Sshgw.Mcp,        image: sshgw-mcp }
+          - { server: StepCa.Mcp,       image: stepca-mcp }
+          - { server: Zitadel.Mcp,      image: zitadel-mcp }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build + push ${{ matrix.image }} (capture digest)
+        env:
+          REGISTRY: ${{ vars.REGISTRY }}
+          REGISTRY_USER: ${{ vars.REGISTRY_USER }}
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          SERVER: ${{ matrix.server }}
+          IMAGE_NAME: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          : "${REGISTRY:?REGISTRY Actions variable is not set — no default registry is baked in}"
+          : "${REGISTRY_TOKEN:?REGISTRY_TOKEN Actions secret is not set}"
+          USER_NAME="${REGISTRY_USER:-ste}"
+
+          # Monotonic version from the run number (checkout is shallow; no full
+          # history needed). Tag the image both :sinapsi-<version> and :sinapsi-latest.
+          # The "sinapsi-" prefix is permanent provenance: it disambiguates these
+          # images from the release plane that shares this registry namespace and uses
+          # the same numeric 0.1.<run> scheme, preventing tag collisions on the 8
+          # image names common to both planes.
+          VER="sinapsi-0.1.${GITHUB_RUN_NUMBER}"
+          IMAGE="${REGISTRY}/${USER_NAME}/${IMAGE_NAME}"
+          echo "Building ${IMAGE}:${VER}"
+
+          echo "${REGISTRY_TOKEN}" | podman login "${REGISTRY}" -u "${USER_NAME}" --password-stdin
+
+          # Build context is the REPO ROOT so the in-repo ProjectReference to
+          # src/libs/ resolves; restore is nuget.org-only (no private feed, no
+          # build secret). --network=host: the runner LXC has no /dev/net/tun.
+          podman build --network=host \
+            -f "src/servers/${SERVER}/Containerfile" \
+            -t "${IMAGE}:${VER}" -t "${IMAGE}:sinapsi-latest" .
+
+          # Capture the digest of THIS push via --digestfile. Do NOT use
+          # `inspect .RepoDigests` — that list accumulates stale entries across
+          # rebuilds of the same content and returns the wrong (old) digest.
+          DIGESTFILE="$(mktemp)"
+          podman push --digestfile "$DIGESTFILE" "${IMAGE}:${VER}"
+          podman push "${IMAGE}:sinapsi-latest"
+          DIGEST="$(cat "$DIGESTFILE")"; rm -f "$DIGESTFILE"
+          echo "Pushed ${IMAGE}:${VER} @ ${DIGEST}"

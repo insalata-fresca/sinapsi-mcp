@@ -1,0 +1,25 @@
+<Project>
+  <!--
+    Repo-wide NuGet package metadata, applied only to packable projects so the
+    shared libs are publish-ready and clear the `dotnet pack` missing-readme /
+    missing-license warnings. This lives in Directory.Build.targets (not .props)
+    because .targets is imported AFTER the project body, so a per-project
+    <IsPackable>true</IsPackable> is already set and the condition resolves
+    correctly. Nothing infrastructure-specific is baked here:
+
+      - License is the SPDX identifier for the repo's own LICENSE (Apache-2.0) —
+        no host, no path, no homelab literal.
+      - RepositoryUrl is intentionally EMPTY by default and supplied at publish
+        time from the environment (`-p:RepositoryUrl=...`), so no registry host
+        or homelab literal lands in git. RepositoryType is only stamped when a
+        URL is passed, keeping this repo de-positioned / public-bound. (SourceLink
+        still records the commit sha, which carries no host.)
+      - Each packable lib supplies its own README via a per-project
+        <PackageReadmeFile>README.md</PackageReadmeFile> + a <None Include=...>
+        pack item (README lives next to the csproj).
+  -->
+  <PropertyGroup Condition="'$(IsPackable)' == 'true'">
+    <PackageLicenseExpression Condition="'$(PackageLicenseExpression)' == ''">Apache-2.0</PackageLicenseExpression>
+    <RepositoryType Condition="'$(RepositoryUrl)' != '' and '$(RepositoryType)' == ''">git</RepositoryType>
+  </PropertyGroup>
+</Project>

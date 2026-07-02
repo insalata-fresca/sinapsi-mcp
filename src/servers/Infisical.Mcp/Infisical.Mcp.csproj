@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RootNamespace>Infisical.Mcp</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The MCP host helpers come from the in-repo lib via ProjectReference, so the
+         server builds without any NuGet feed. NATS.NKeys is a public nuget.org package
+         used only to generate an Ed25519 nkey pair server-side. -->
+    <ProjectReference Include="../../libs/Sinapsi.Mcp/Sinapsi.Mcp.csproj" />
+    <PackageReference Include="NATS.NKeys" Version="1.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Expose the internal hardening helpers (InfisicalValidation / InfisicalErrors and
+         the option consts) to the server's own test project only, so they can be unit
+         tested without being made part of the public API. -->
+    <InternalsVisibleTo Include="Infisical.Mcp.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,17 @@
+# OCI build context excludes. The server images build from the monorepo root
+# (ProjectReference to src/libs/), restoring from nuget.org only. Keep the
+# context lean and never ship build output or VCS metadata into a layer.
+**/bin
+**/obj
+**/.git
+**/.vs
+**/.vscode
+**/.idea
+**/TestResults
+*.user
+*.suo
+# Local secrets / env — never enter an image layer.
+*.env
+.env
+.env.*
+appsettings.*.Local.json
