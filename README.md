@@ -8,9 +8,9 @@ experiments — mostly [Model Context Protocol](https://modelcontextprotocol.io)
 language-model agents and the systems around them actually behave when you make
 them do real work.
 
-It is a sibling to my written notes and design essays: where those reason about
-agentic software in prose, this one reasons about it in code you can compile and
-run. There is no product here, no service to sign up for, and nothing to buy.
+It is a sibling to my written notes and design essays — **[sinapsi-design](https://github.com/insalata-fresca/sinapsi-design)** —
+where those reason about agentic software in prose, this one reasons about it in
+code you can compile and run. There is no product here, no service to sign up for, and nothing to buy.
 Just things I am curious about and want to try.
 
 ## What's inside
@@ -46,8 +46,9 @@ NuGet feed; see `nuget.config` for the source list.
 A small Forgejo Actions workflow (`.forgejo/workflows/ci.yml`) restores, builds
 and tests on every pull request, and on a version tag (`v*`) packs the libraries
 and pushes them to the lab's own Forgejo NuGet feed. That feed is internal — the
-home lab consumes from it. Publishing anywhere public is intentionally left out
-for now (see `TODO.md`).
+home lab consumes from it. The source is public (this repository, a curated
+read-only snapshot); publishing the *packages* to a public feed (nuget.org /
+GHCR) is intentionally left out for now (see `TODO.md`).
 
 ## Notes
 
