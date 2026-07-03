@@ -1,4 +1,4 @@
-# Build + push the 12 MCP server OCI images.
+# Build + push the 13 MCP server OCI images (added bridge-mcp in B4b-9).
 #
 # Mirrors the home-server build-push-release pattern: a self-hosted runner shells
 # `podman build --network=host` (the runner LXC has no /dev/net/tun, so rootless
@@ -41,6 +41,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - { server: Bridge.Mcp,       image: bridge-mcp }
           - { server: Forge.Mcp,        image: forge-mcp }
           - { server: Gdrive.Mcp,       image: gdrive-mcp }
           - { server: Gemini.Mcp,       image: gemini-mcp }

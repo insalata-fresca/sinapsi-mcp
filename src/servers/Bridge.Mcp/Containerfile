@@ -1,0 +1,36 @@
+# Bridge.Mcp — OCI image. Two-stage: dotnet SDK 8.0 (build/publish) ->
+# aspnet 8.0 (runtime). Build context is the REPO ROOT so the in-repo
+# ProjectReference to src/libs/ resolves; restore is nuget.org-only
+# (no private feed, no build secret). Build from the repo root:
+#   podman build --network=host -f src/servers/Bridge.Mcp/Containerfile -t <img> .
+#
+# Runtime deps: aspnet + ca-certificates + git.
+#   git: GitOpsService shells out to `git clone/grep/push` for all git-as-DB ops.
+#   ca-certificates: outbound HTTPS to Forgejo + Zitadel JWKS endpoint.
+# No embedding model, no libgomp — the bridge does no ONNX inference.
+# Runs non-root (uid 10029). The Quadlet at deploy may override User=0 if
+# the repo-cache volume needs it, matching the indexer pattern.
+
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+COPY . .
+RUN dotnet publish src/servers/Bridge.Mcp/Bridge.Mcp.csproj \
+        -c Release -o /app /p:UseAppHost=false
+
+FROM mcr.microsoft.com/dotnet/aspnet:8.0
+WORKDIR /app
+# git: GitOpsService shells out to `git`. ca-certificates: outbound HTTPS.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /app .
+# Non-root by default (rootless-podman friendly).
+RUN useradd --system --no-create-home --uid 10029 bridge
+USER bridge
+ENV BRIDGE_HOST=0.0.0.0 \
+    BRIDGE_PORT=8000 \
+    DOTNET_EnableDiagnostics=0
+# Documentation only; the listen address is env-driven (BRIDGE_HOST/PORT)
+# and overridden by the Quadlet at deploy.
+EXPOSE 8000
+ENTRYPOINT ["dotnet", "Bridge.Mcp.dll"]

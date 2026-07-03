@@ -33,7 +33,7 @@ public sealed record ForgeBranch(
     string CommitSha,
     bool? Protected);
 
-public sealed record ForgeCommitAuthor(string? Name, string? Email, DateTimeOffset? Date);
+public sealed record ForgeCommitAuthor(string? Name, string? Email, DateTimeOffset? Date, string? DateRaw = null);
 
 public sealed record ForgeCommit(
     string Sha,
