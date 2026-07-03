@@ -134,12 +134,34 @@ public sealed class PostgresIndexStore : IIndexStore
         await cmd.ExecuteScalarAsync(ct);
     }
 
+    // Secret-denylist path fragments — mirrored from SourceScanner.DenyFragments so that
+    // even if a secret-shaped row somehow reached the store (e.g. a manual INSERT or a
+    // future scanner regression), it can never surface via the search read path.
+    // Defence-in-depth: the scanner guards at ingest; the SQL guard protects the read path.
+    //
+    // NOTE: Document.Path is a REPO-RELATIVE path with NO leading slash (e.g.
+    // "secrets/prod.yml", not "/secrets/prod.yml"). The leading-slash directory
+    // fragments used by SourceScanner.DenyFragments (which prepends "/" before
+    // matching) cannot be reused here verbatim — a LIKE pattern of '%/secrets/%'
+    // misses top-level paths like "secrets/prod.yml" because there is no leading
+    // slash in the stored value. Drop the leading slash from directory fragments so
+    // '%secrets/%' matches both the top-level case ("secrets/prod.yml") and any
+    // nested case ("config/secrets/db.md").
+    private static readonly string[] SecretPathFragments =
+        { "secrets/", "secret/", "vault.yml", "vault.yaml", ".git/", "private/" };
+
     public async Task<IReadOnlyList<SearchHit>> SearchAsync(string query, string? source, string? kind, int limit, CancellationToken ct)
     {
         limit = Math.Clamp(limit, 1, 30);
         var filters = "";
         if (!string.IsNullOrWhiteSpace(source)) filters += " AND source = @source";
         if (!string.IsNullOrWhiteSpace(kind)) filters += " AND kind = @kind";
+        // Defence-in-depth: exclude secret-shaped paths IN THE SQL itself so they can
+        // never appear in results even if somehow present in the store (e.g. manual insert
+        // or future scanner regression). Paths are column values, never user-supplied, so
+        // literal LIKE patterns are safe here — they are not parameterised user input.
+        var denyConditions = string.Join("",
+            SecretPathFragments.Select(f => $" AND path NOT LIKE '%{f.Replace("'", "''")}%'"));
         var sql = $"""
             SELECT source, path, kind, title, scope,
                    ts_headline('english'::regconfig, body, websearch_to_tsquery('english'::regconfig, @q),
@@ -147,7 +169,7 @@ public sealed class PostgresIndexStore : IIndexStore
                    ts_rank_cd(tsv, websearch_to_tsquery('english'::regconfig, @q)) AS score
             FROM documents
             WHERE NOT is_deleted
-              AND tsv @@ websearch_to_tsquery('english'::regconfig, @q){filters}
+              AND tsv @@ websearch_to_tsquery('english'::regconfig, @q){filters}{denyConditions}
             ORDER BY score DESC LIMIT @lim
             """;
         await using var c = await OpenAsync(ct);

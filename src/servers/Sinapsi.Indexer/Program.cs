@@ -49,6 +49,38 @@ app.MapGet("/", async (IndexerWorker w, IIndexStore store) =>
     }, statusCode: ok ? 200 : 503);
 });
 
+// HTTP search endpoint — M-B3.
+// GET /search?q=<websearch query>[&limit=<1-30>][&source=<logical source name>]
+// Returns ranked FTS hits (ts_rank_cd, ts_headline snippets).
+// Tombstoned and secret-path rows are excluded IN THE STORE SQL (defence-in-depth).
+app.MapGet("/search", async (
+    HttpContext ctx,
+    IIndexStore store,
+    string? q,
+    string? limit,
+    string? source,
+    CancellationToken cancellationToken) =>
+{
+    var (req, err) = SearchRequest.TryParse(q, limit, source);
+    if (err is not null)
+        return Results.Json(new { error = err }, statusCode: 400);
+
+    try
+    {
+        var hits = await store.SearchAsync(req!.Query, req.Source, kind: null, req.Limit, cancellationToken);
+        var items = hits
+            .Select(h => new SearchResultItem(h.Source, h.Path, h.Kind, h.Title, h.Scope, h.Snippet, h.Score))
+            .ToList();
+        return Results.Json(new SearchResponse(req.Query, items.Count, items));
+    }
+    catch (OperationCanceledException) { throw; }
+    catch (Exception e)
+    {
+        // Surface a scrubbed, capped error — never a raw connection string or token.
+        return Results.Json(new { error = IndexerErrors.FromException(e) }, statusCode: 500);
+    }
+}).WithName("SearchIndex").WithTags("search");
+
 var host = Environment.GetEnvironmentVariable("INDEXER_HEALTH_HOST") ?? "0.0.0.0";
 // Fail-closed: a non-numeric / out-of-range INDEXER_HEALTH_PORT throws here
 // (naming the var) instead of letting Kestrel reject it opaquely at bind time.

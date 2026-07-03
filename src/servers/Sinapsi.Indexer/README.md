@@ -12,6 +12,7 @@ local ONNX model (nothing leaves the host). Everything is env-driven with neutra
 
 - [Overview](#overview)
 - [Tool surface (4)](#tool-surface-4)
+- [HTTP search endpoint](#http-search-endpoint)
 - [Per-tool reference](#per-tool-reference)
 - [Configuration](#configuration)
 - [Run](#run)
@@ -48,6 +49,60 @@ the same store. Rebuild = re-scan the sources, never replay the event log.
 | `semantic_search`  | no  | Hybrid (meaning + keyword) search — local embeddings + pgvector cosine fused with FTS via Reciprocal Rank Fusion. |
 | `get_learning`     | no  | List / search the learnings corpus by scope bucket. |
 | `publish_learning` | **yes** | Persist a durable learning by emitting a learning-published event on NATS (a downstream materializer writes the repo, which the indexer then re-scans + serves). |
+
+## HTTP search endpoint
+
+`GET /search` — M-B3 plain-HTTP full-text search over the index. Backed by the
+same `IIndexStore.SearchAsync` seam as the `search_index` MCP tool; no additional
+filtering layer — tombstoned and secret-path rows are excluded **in the SQL** itself
+(defence-in-depth: the scanner blocks at ingest, the SQL blocks at read).
+
+### Request
+
+```
+GET /search?q=<websearch query>[&limit=<1-30>][&source=<logical-source-name>]
+```
+
+| Parameter | Required | Default | Notes |
+|-----------|:--------:|---------|-------|
+| `q` | **yes** | — | Websearch-syntax query (words, `"phrases"`, `OR`, `-negation`). |
+| `limit` | no | `10` | Max results; must be a positive integer ≤ 30. |
+| `source` | no | — | Restrict results to one logical source name. |
+
+### Response — 200 OK
+
+```json
+{
+  "query": "homelab nats",
+  "resultCount": 2,
+  "results": [
+    {
+      "source": "home-server",
+      "path": "docs/14-nats.md",
+      "kind": "doc",
+      "title": "NATS Event Fabric",
+      "scope": "",
+      "snippet": "...homelab nats configuration...",
+      "score": 0.0759
+    }
+  ]
+}
+```
+
+### Error responses
+
+| Status | Body | When |
+|--------|------|------|
+| 400 | `{ "error": "<reason>" }` | Missing/empty `q`; non-numeric or out-of-range `limit`; overlong/control-char `source`. |
+| 500 | `{ "error": "<scrubbed>" }` | Store failure; error is sanitized (no secrets echoed). |
+
+### Security notes
+
+- Tombstoned rows (`is_deleted = true`) are excluded by the `WHERE NOT is_deleted` SQL clause.
+- Secret-path rows (`/secrets/`, `/secret/`, `vault.yml`, `vault.yaml`, `/.git/`, `/private/`)
+  are excluded by path `NOT LIKE` conditions in the same SQL query — defence-in-depth against
+  a future scanner regression or a manually-inserted row.
+- Store errors route through `IndexerErrors.Sanitize` before surfacing to the caller.
 
 ## Per-tool reference
 
@@ -133,6 +188,7 @@ INDEXER_DB_HOST="127.0.0.1" INDEXER_DB_PASSWORD="<secret>" \
 NATS_URL="nats://127.0.0.1:4222" \
 dotnet run -c Release --project src/servers/Sinapsi.Indexer
 # -> MCP endpoint on http://0.0.0.0:8009/mcp ; health on GET :8009/
+# -> HTTP search on GET :8009/search?q=...
 ```
 
 ## Security notes
@@ -187,6 +243,16 @@ paths actually fire — not just that helpers exist:
   contract (no key-material / credential leak + length cap).
 - **Tool-surface parity** (`ToolSurfaceTests`) — asserts exactly the four tools by
   name across both tool types, each with an `[McpServerTool]` name + `[Description]`.
+- **GET /search route** (`SearchRouteTests`, M-B3) — hermetic `TestServer` tests
+  (no NATS, no Postgres, no ONNX): 400 on missing/empty/invalid params; 200 with
+  correct JSON shape and `resultCount`; `source` + `limit` forwarding to the store;
+  500 with secret-redacted error on store failure; seam-contract proof (clean rows only).
+- **Secret-path denylist contract** (`SearchStoreDenylistTests`) — unit proof that
+  the SQL denylist fragments in `PostgresIndexStore.SearchAsync` are identical to the
+  scanner's ingest-time denylist, the path predicate matches expected paths, and the
+  SQL clause covers all fragments. Live-DB integration tests (tombstone + secret-path
+  SQL exclusion, ranked ordering) are in `SearchStoreIntegrationTests` — skipped
+  hermetically (require `INDEXER_DB_HOST` + `INDEXER_DB_PASSWORD`).
 
 Read-tool / data-layer integration coverage that needs a live pgvector + ONNX model
 (actual FTS ranking, RRF fusion, real embeddings) is intentionally out of scope for
