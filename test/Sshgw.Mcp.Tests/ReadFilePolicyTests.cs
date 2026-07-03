@@ -65,12 +65,54 @@ public sealed class ReadFilePolicyTests
         Assert.Contains("denylist", r);
     }
 
+    [Theory]
+    // The verified live leak (2026-07-03): every per-MCP config JSON under the
+    // mcp-gateway dir embeds an inline upstream token, so the whole tree must be
+    // opaque to the FREE read_file — the *.json configs + their .bak/.pre-s31
+    // variants, the agents/ JWK dir, and *.cred credential files.
+    [InlineData("/etc/mcp-gateway/proxmox-mcp.json")]
+    [InlineData("/etc/mcp-gateway/proxmox-genova-mcp.json")]
+    [InlineData("/etc/mcp-gateway/zitadel.json")]
+    [InlineData("/etc/mcp-gateway/sshgw.json")]
+    [InlineData("/etc/mcp-gateway/proxmox-mcp.json.pre-s31-unwrap")]
+    [InlineData("/etc/mcp-gateway/sshgw.json.bak.2026-05-02")]
+    [InlineData("/etc/mcp-gateway/bw-master.cred")]
+    [InlineData("/etc/mcp-gateway/agents/agent.jwk")]
+    public void Mcp_gateway_config_dir_is_blocked(string path)
+    {
+        var r = Denylist().Evaluate(path, out _);
+        Assert.NotNull(r);
+        Assert.Contains("denylist", r);
+    }
+
+    [Theory]
+    // *.cred (singular) + agent key dirs, independent of the mcp-gateway tree.
+    [InlineData("/opt/svc/master.cred")]
+    [InlineData("/var/lib/app/agent-keys/agent.jwk")]
+    [InlineData("/srv/app/agents/id.jwk")]
+    public void Credential_files_and_agent_key_dirs_are_blocked(string path)
+    {
+        var r = Denylist().Evaluate(path, out _);
+        Assert.NotNull(r);
+        Assert.Contains("denylist", r);
+    }
+
     [Fact]
     public void Ordinary_path_is_allowed_in_denylist_mode()
     {
         var r = Denylist().Evaluate("/var/log/syslog", out var canonical);
         Assert.Null(r);
         Assert.Equal("/var/log/syslog", canonical);
+    }
+
+    [Fact]
+    public void Ordinary_json_outside_secret_trees_is_still_readable()
+    {
+        // The fix must NOT over-block *.json globally — only the mcp-gateway tree
+        // (and the other secret trees) are denied. A plain app config JSON elsewhere
+        // stays readable in denylist mode.
+        Assert.Null(Denylist().Evaluate("/etc/app/appsettings.json", out _));
+        Assert.Null(Denylist().Evaluate("/srv/web/package.json", out _));
     }
 
     [Fact]

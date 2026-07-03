@@ -34,6 +34,19 @@ public sealed class ReadFilePolicy
         "**/secrets/**",
         "**/vaultwarden/**", "**/bitwarden/**", "**/infisical/**",
         "**/*.jwk", "**/*.jwks", "**/jwt/**",
+        // MCP config/state dir (CT121-mcp-gateway) — a dedicated secret tree. Each
+        // per-MCP config JSON embeds an INLINE upstream token (e.g. proxmox-mcp.json
+        // carries the mcp-gateway@pve Proxmox API token), so the whole dir must be
+        // opaque to the FREE read_file — including the *.json registry itself and its
+        // .bak/.pre-s31 variants, the agents/ JWK dir, and *.cred credential files.
+        // Deny the tree by name, extension-independent. Verified leak 2026-07-03:
+        // read_file /etc/mcp-gateway/proxmox-mcp.json returned the token in plaintext.
+        "**/mcp-gateway/**",
+        // Inline-credential files: *.creds (plural) was already denied; *.cred
+        // (singular, e.g. bw-master.cred) was not. Cover both. Agent JWK/key dirs
+        // (defence-in-depth beyond the mcp-gateway tree, per in_scope "agent JWK dirs").
+        "**/*.cred",
+        "**/agent-keys/**", "**/agents/**",
     };
 
     // Explicit re-allow carve-outs that override GlobalDeny in DENYLIST mode (for
