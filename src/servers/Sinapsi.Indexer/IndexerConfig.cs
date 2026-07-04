@@ -97,4 +97,54 @@ internal static class IndexerConfig
 
     internal static int EmbedDim() =>
         ReadInt("EMBED_DIM", DefaultEmbedDim, MinEmbedDim, MaxEmbedDim);
+
+    // -------------------------------------------------------------------
+    // Capability flags (indexer-generalization, docs/architecture/
+    // indexer-generalization.md). Every INDEXER_CAP_* + INDEXER_NATS_MODE
+    // knob defaults to TODAY'S bundled behaviour when unset, so an image
+    // rolled out before a profile/role starts emitting these keys behaves
+    // exactly as before: index=on, search.mcp=on, search.http=on,
+    // learn_publish=on, nats mode=shared-bus. A disabled capability must
+    // wire NOTHING (see Program.cs) — this type only decides on/off.
+    // -------------------------------------------------------------------
+
+    internal const bool DefaultCapIndex = true;
+    internal const bool DefaultCapSearchMcp = true;
+    internal const bool DefaultCapSearchHttp = true;
+    internal const bool DefaultCapLearnPublish = true;
+    internal const string DefaultNatsMode = "shared-bus";
+
+    /// <summary>Read a boolean capability flag. Unset ⇒ <paramref name="dflt"/>
+    /// (back-compat). Truthy: "1"/"true" (case-insensitive). Falsy: "0"/"false".
+    /// Any other non-empty value is rejected (fail-closed, names the var) rather
+    /// than silently defaulting — a typo must not silently re-enable or
+    /// silently disable a capability.</summary>
+    internal static bool ReadCap(string envVar, bool dflt)
+    {
+        var raw = Environment.GetEnvironmentVariable(envVar);
+        if (string.IsNullOrEmpty(raw)) return dflt;
+        if (raw is "1" || string.Equals(raw, "true", StringComparison.OrdinalIgnoreCase)) return true;
+        if (raw is "0" || string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase)) return false;
+        throw new InvalidOperationException(
+            $"{envVar}='{raw}' is invalid: expected true|false|1|0 (default {(dflt ? "true" : "false")}).");
+    }
+
+    internal static bool CapIndex() => ReadCap("INDEXER_CAP_INDEX", DefaultCapIndex);
+    internal static bool CapSearchMcp() => ReadCap("INDEXER_CAP_SEARCH_MCP", DefaultCapSearchMcp);
+    internal static bool CapSearchHttp() => ReadCap("INDEXER_CAP_SEARCH_HTTP", DefaultCapSearchHttp);
+    internal static bool CapLearnPublish() => ReadCap("INDEXER_CAP_LEARN_PUBLISH", DefaultCapLearnPublish);
+
+    /// <summary>True when <c>INDEXER_NATS_MODE=isolated</c> (case-insensitive).
+    /// Any other non-empty value must be exactly "shared-bus" (fail-closed —
+    /// reject an unrecognised mode by name rather than silently treating it as
+    /// shared-bus). Unset ⇒ shared-bus (back-compat).</summary>
+    internal static bool NatsIsolated()
+    {
+        var raw = Environment.GetEnvironmentVariable("INDEXER_NATS_MODE");
+        if (string.IsNullOrEmpty(raw)) return false; // shared-bus default
+        if (string.Equals(raw, "isolated", StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.Equals(raw, "shared-bus", StringComparison.OrdinalIgnoreCase)) return false;
+        throw new InvalidOperationException(
+            $"INDEXER_NATS_MODE='{raw}' is invalid: expected 'shared-bus' or 'isolated' (default {DefaultNatsMode}).");
+    }
 }

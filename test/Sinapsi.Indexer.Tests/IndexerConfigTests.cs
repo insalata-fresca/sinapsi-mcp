@@ -24,6 +24,8 @@ public sealed class IndexerConfigTests : IDisposable
         "INDEXER_RESCAN_INTERVAL_MIN", "INDEXER_DEBOUNCE_SEC",
         "INDEXER_EMBED_IDLE_SEC", "INDEXER_EMBED_THROTTLE_MS",
         "INDEXER_HEALTH_PORT", "EMBED_MAX_TOKENS", "EMBED_DIM",
+        "INDEXER_CAP_INDEX", "INDEXER_CAP_SEARCH_MCP", "INDEXER_CAP_SEARCH_HTTP",
+        "INDEXER_CAP_LEARN_PUBLISH", "INDEXER_NATS_MODE",
     };
 
     public IndexerConfigTests() => ClearAll();
@@ -127,4 +129,60 @@ public sealed class IndexerConfigTests : IDisposable
         "EMBED_DIM" => IndexerConfig.EmbedDim(),
         _ => throw new ArgumentOutOfRangeException(nameof(var)),
     };
+
+    // ── capability flags — back-compat defaults (all-unset = today) ──────────
+
+    [Fact]
+    public void CapFlags_DefaultToTodaysBundledBehaviour_WhenUnset()
+    {
+        Assert.True(IndexerConfig.CapIndex());
+        Assert.True(IndexerConfig.CapSearchMcp());
+        Assert.True(IndexerConfig.CapSearchHttp());
+        Assert.True(IndexerConfig.CapLearnPublish());
+        Assert.False(IndexerConfig.NatsIsolated()); // shared-bus is the default
+    }
+
+    // ── capability flags — explicit true/false parse ──────────────────────────
+
+    [Theory]
+    [InlineData("true", true)]
+    [InlineData("TRUE", true)]
+    [InlineData("1", true)]
+    [InlineData("false", false)]
+    [InlineData("FALSE", false)]
+    [InlineData("0", false)]
+    public void CapFlag_ParsesExplicitValue(string raw, bool expected)
+    {
+        Environment.SetEnvironmentVariable("INDEXER_CAP_LEARN_PUBLISH", raw);
+        Assert.Equal(expected, IndexerConfig.CapLearnPublish());
+    }
+
+    [Fact]
+    public void CapFlag_GarbageValue_Throws_NamingTheVar()
+    {
+        Environment.SetEnvironmentVariable("INDEXER_CAP_INDEX", "yes-please");
+        var ex = Assert.Throws<InvalidOperationException>(() => IndexerConfig.CapIndex());
+        Assert.Contains("INDEXER_CAP_INDEX", ex.Message);
+    }
+
+    // ── NATS mode — explicit parse + fail-closed garbage ──────────────────────
+
+    [Theory]
+    [InlineData("isolated", true)]
+    [InlineData("ISOLATED", true)]
+    [InlineData("shared-bus", false)]
+    [InlineData("SHARED-BUS", false)]
+    public void NatsMode_ParsesExplicitValue(string raw, bool expectedIsolated)
+    {
+        Environment.SetEnvironmentVariable("INDEXER_NATS_MODE", raw);
+        Assert.Equal(expectedIsolated, IndexerConfig.NatsIsolated());
+    }
+
+    [Fact]
+    public void NatsMode_GarbageValue_Throws_NamingTheVar()
+    {
+        Environment.SetEnvironmentVariable("INDEXER_NATS_MODE", "sideways");
+        var ex = Assert.Throws<InvalidOperationException>(() => IndexerConfig.NatsIsolated());
+        Assert.Contains("INDEXER_NATS_MODE", ex.Message);
+    }
 }

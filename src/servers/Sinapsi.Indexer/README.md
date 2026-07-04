@@ -11,6 +11,7 @@ local ONNX model (nothing leaves the host). Everything is env-driven with neutra
 ## Contents
 
 - [Overview](#overview)
+- [Capability flags](#capability-flags)
 - [Tool surface (4)](#tool-surface-4)
 - [HTTP search endpoint](#http-search-endpoint)
 - [Per-tool reference](#per-tool-reference)
@@ -40,6 +41,55 @@ the same store. Rebuild = re-scan the sources, never replay the event log.
 | `PostgresIndexStore.cs` | `IIndexStore` over Postgres: schema, idempotent upsert, tombstone, FTS + hybrid-RRF read queries, embedding backfill. |
 | `OnnxEmbedder.cs` | Local all-MiniLM-L6-v2 embedder (in-process ONNX); CPU-contained; env-driven model paths + dims (fail-closed). |
 | `LearnPublisher.cs` | Lazily-connected NATS publisher for learning-published events; uses a scoped publish-only identity when configured. |
+| `IndexerCapabilities.cs` | Resolves the `INDEXER_CAP_*` + `INDEXER_NATS_MODE` env flags into a plain, unit-testable composition decision (which index-worker shape, which MCP tool types, whether any NATS connection is needed at all). `Program.cs` reads it and acts — no other file branches on the flags. |
+| `IndexerCore.cs` | The reindex/embed engine (scan → upsert → tombstone, background embed backfill) shared by BOTH index-worker shapes below. Holds no NATS state. |
+| `IndexerWorker.cs` | index capability, shared-bus shape (default): the JetStream durable consumer + coalescing re-scan loop + periodic safety rescan, delegating the actual reindex/embed work to `IndexerCore`. |
+| `TimerOnlyIndexWorker.cs` | index capability, isolated shape (`INDEXER_NATS_MODE=isolated`): the SAME `IndexerCore` engine, timer-only (no push signal, no coalesce loop), and **no NATS client of any kind** — see [Capability flags](#capability-flags). |
+
+## Capability flags
+
+**Design:** `docs/architecture/indexer-generalization.md` (home-server repo).
+The image composes at startup from four independently-enable-able capabilities
+plus a NATS-reach mode. **A disabled capability wires nothing** — no route, no
+MCP tool, no NATS connection/consumer/seed, no identity. This is
+defense-in-depth: the capability is *absent from the running process*, not
+merely unreachable behind a firewall.
+
+| Env var | Values | Default (unset) | What it gates |
+|---------|--------|:----------------:|----------------|
+| `INDEXER_CAP_INDEX` | `true`\|`false` | `true` | The re-scan/upsert engine (git-pull → walk → classify → upsert → tombstone). `false` ⇒ neither worker shape is constructed — no scanner loop at all. |
+| `INDEXER_CAP_SEARCH_MCP` | `true`\|`false` | `true` | The MCP read tools (`search_index`, `semantic_search`, `get_learning` — `IndexTools`). `false` ⇒ `IndexTools` is never added to the MCP server's tool-type list. |
+| `INDEXER_CAP_SEARCH_HTTP` | `true`\|`false` | `true` | The `GET /search` route. `false` ⇒ the route is never mapped at all (404 from Kestrel's own "no matching endpoint", same observable shape as today's token-unset 404). |
+| `INDEXER_CAP_LEARN_PUBLISH` | `true`\|`false` | `true` | The **only shared-bus WRITE capability**: the `publish_learning` MCP tool (`LearnTools`) AND the `LearnPublisher` NATS identity. `false` ⇒ `LearnPublisher` is never constructed (so `LEARN_NATS_NKEY`/`LEARN_NATS_SEED_PATH` are never even read) and `LearnTools` is never added to the MCP tool-type list. |
+| `INDEXER_NATS_MODE` | `shared-bus`\|`isolated` | `shared-bus` | Whether the `index` capability (when enabled) is the NATS-consuming `IndexerWorker` (push-coalesced) or the timer-only `TimerOnlyIndexWorker` (**zero NATS client** — no consumer, no admin seed, no `/etc/nats-client` mount at the Ansible-role layer). Does not affect `learn_publish`, which asserts its own identity independently when enabled. |
+
+**Back-compat is the prime directive.** Every flag above defaults to today's
+bundled behaviour when unset (`index=true, search.mcp=true, search.http=true,
+learn_publish=true, nats_mode=shared-bus`), so deploying this image with an
+**unchanged** `config.env` is a behavioural no-op — this is what lets the image
+ship ahead of any role/profile change (design doc §5, step 1).
+
+**Fail-closed parsing.** A boolean flag accepts `true`/`false`/`1`/`0`
+(case-insensitive); `INDEXER_NATS_MODE` accepts `shared-bus`/`isolated`
+(case-insensitive). Any other non-empty value **throws at startup, naming the
+var** — a typo must not silently re-enable or silently disable a capability.
+
+**Composition, not firewalling.** The decision lives in
+`IndexerCapabilities` (a plain class with no ASP.NET/DI/NATS dependency) and
+`Program.cs` acts on it directly:
+- `learn_publish=false` removes `LearnTools` from the MCP tool-TYPE list handed
+  to `WithTools(...)` (a runtime `IEnumerable<Type>`, not the compile-time
+  generic `.WithTools<T>()`) — the tool type never reaches the MCP server, so
+  there is no code path by which it could be invoked, gated or not.
+- `nats_mode=isolated` selects `TimerOnlyIndexWorker` instead of
+  `IndexerWorker` — a type that derives from `BackgroundService` directly
+  (NOT `Sinapsi.Nats.JetStreamWorker`) and never references a
+  `Sinapsi.Nats.*` type anywhere in its declared members (proven by a
+  reflection test, `TimerOnlyIndexWorkerTests`). No `NatsConnectionOptions` is
+  even constructed for it.
+- Health (`GET /`) reports only the capabilities that are actually enabled —
+  e.g. `nats_ready` is omitted (not `false`) when the index worker is the
+  isolated, NATS-free shape.
 
 ## Tool surface (4)
 
@@ -178,6 +228,11 @@ site- or instance-specific wiring; the per-server config directory convention is
 | `EMBED_DIM` | no | `384` | Embedding dimension (fail-closed 1..65536). |
 | `INDEXER_HEALTH_HOST` | no | `0.0.0.0` | Health + `/mcp` listen host. |
 | `INDEXER_HEALTH_PORT` | no | `8009` | Health + `/mcp` listen port (fail-closed 1..65535). |
+| `INDEXER_CAP_INDEX` | no | `true` | Enable the re-scan/upsert engine. See [Capability flags](#capability-flags). |
+| `INDEXER_CAP_SEARCH_MCP` | no | `true` | Enable the MCP read tools (`IndexTools`). |
+| `INDEXER_CAP_SEARCH_HTTP` | no | `true` | Enable the `GET /search` route. |
+| `INDEXER_CAP_LEARN_PUBLISH` | no | `true` | Enable `publish_learning` + the `LearnPublisher` NATS identity (the only shared-bus write capability). |
+| `INDEXER_NATS_MODE` | no | `shared-bus` | `shared-bus` (push-coalesced `IndexerWorker`) or `isolated` (timer-only `TimerOnlyIndexWorker`, zero NATS client for indexing). |
 
 ## Run
 
@@ -253,6 +308,23 @@ paths actually fire — not just that helpers exist:
   SQL clause covers all fragments. Live-DB integration tests (tombstone + secret-path
   SQL exclusion, ranked ordering) are in `SearchStoreIntegrationTests` — skipped
   hermetically (require `INDEXER_DB_HOST` + `INDEXER_DB_PASSWORD`).
+- **Capability-flag fail-closed parsing** (`IndexerConfigTests`) — every
+  `INDEXER_CAP_*` + `INDEXER_NATS_MODE` knob: default-when-unset (matches
+  today's bundled behaviour), accepts `true`/`false`/`1`/`0` /
+  `shared-bus`/`isolated`, and THROWS naming the var on any other value.
+- **Composition decision** (`IndexerCapabilitiesTests`) — pins the exact
+  worker-shape / MCP-tool-type-list / NATS-connection-need decision for every
+  capability combination: all-unset reproduces today's bundle;
+  `learn_publish=false` excludes `LearnTools` from the MCP tool-type list
+  (independent of `search.mcp`); `nats_mode=isolated` selects `TimerOnly`
+  (never `SharedBusConsumer`) while search/index still compose; every
+  capability off ⇒ empty tool list + no worker + no NATS connection needed.
+- **Isolated-mode NATS-free proof** (`TimerOnlyIndexWorkerTests`) — structural
+  reflection tests assert `TimerOnlyIndexWorker` derives from
+  `BackgroundService` (not `JetStreamWorker`) and that NO field, property,
+  method parameter, or return type anywhere on the type is a `Sinapsi.Nats.*`
+  type; a functional test then runs the worker to `Ready=true` through fakes
+  only, proving the startup re-scan completes with zero NATS involvement.
 
 Read-tool / data-layer integration coverage that needs a live pgvector + ONNX model
 (actual FTS ranking, RRF fusion, real embeddings) is intentionally out of scope for

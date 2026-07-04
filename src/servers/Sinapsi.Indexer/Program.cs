@@ -5,81 +5,173 @@ using Sinapsi.Nats;
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.AddSimpleConsole(o => o.SingleLine = true);
 
-builder.Services.AddSingleton(NatsConnectionOptions.FromEnvironment() with { ClientName = "sinapsi-indexer" });
+// -----------------------------------------------------------------------
+// Capability composition (indexer-generalization,
+// docs/architecture/indexer-generalization.md). Every INDEXER_CAP_* +
+// INDEXER_NATS_MODE knob defaults to today's bundled behaviour when unset
+// (index+search.mcp+search.http+learn_publish=on, shared-bus) — so deploying
+// THIS image with an unchanged config.env is a behavioural no-op.
+//
+// The load-bearing rule: a DISABLED capability is constructed NOTHING —
+// no route, no MCP tool, no NATS connection/consumer/seed, no identity.
+// IndexerCapabilities resolves the flags into a plain, unit-testable
+// composition decision; everything below just acts on it.
+// -----------------------------------------------------------------------
+var caps = IndexerCapabilities.FromEnvironment();
+
 builder.Services.AddSingleton<IIndexStore, PostgresIndexStore>();
 builder.Services.AddSingleton<IEmbedder, OnnxEmbedder>();
 builder.Services.AddSingleton(sp => new SourceScanner(
     SourceScanner.ReposFromEnv(),
     Environment.GetEnvironmentVariable("FORGE_REPO_TOKEN"),
     sp.GetRequiredService<ILoggerFactory>().CreateLogger<SourceScanner>()));
-builder.Services.AddSingleton<IndexerWorker>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<IndexerWorker>());
-builder.Services.AddSingleton<LearnPublisher>();
 
-// MCP surface, served at /mcp on the same Kestrel as the health endpoint.
-//   read:  search_index + semantic_search + get_learning (IndexTools)
-//   write: publish_learning (LearnTools) — emits a learning-published event.
-builder.Services
+// --- index capability ---
+// SharedBusConsumer: the NATS-consuming IndexerWorker (push-coalesced +
+// periodic rescan) — the only shape that needs a NatsConnectionOptions for
+// indexing. TimerOnly: TimerOnlyIndexWorker — SAME reindex engine, but no
+// NatsConnectionOptions is ever constructed for it, so the process opens no
+// NATS connection for indexing. None: neither type is registered — no
+// scanner loop, no git-pull, no upsert path, nothing.
+switch (caps.WorkerShape)
+{
+    case IndexWorkerShape.SharedBusConsumer:
+        builder.Services.AddSingleton(NatsConnectionOptions.FromEnvironment() with { ClientName = "sinapsi-indexer" });
+        builder.Services.AddSingleton<IndexerWorker>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<IndexerWorker>());
+        break;
+    case IndexWorkerShape.TimerOnly:
+        builder.Services.AddSingleton<TimerOnlyIndexWorker>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<TimerOnlyIndexWorker>());
+        break;
+    case IndexWorkerShape.None:
+        break;
+}
+
+// --- learn-publish capability (the ONLY shared-bus WRITE capability) ---
+// Disabled: LearnPublisher is never constructed, so LEARN_NATS_NKEY /
+// LEARN_NATS_SEED_PATH are never read and no publish connection is ever
+// opened. The publish_learning tool is likewise never registered (below).
+if (caps.LearnPublish)
+    builder.Services.AddSingleton<LearnPublisher>();
+
+// --- MCP surface, served at /mcp on the same Kestrel as the health endpoint ---
+// Tool types come from caps.McpToolTypes() (a runtime type LIST, not the
+// compile-time generic .WithTools<T>()) so a disabled capability contributes
+// NO type to the MCP server at all — not merely an unreachable one.
+var mcpToolTypes = caps.McpToolTypes();
+var mcpBuilder = builder.Services
     .AddMcpServer(o => o.ServerInfo = new() { Name = "sinapsi-indexer", Version = "1.0.0" })
     // Stateless transport strips a forwarded Mcp-Session-Id so a fronting proxy can't 400 it.
-    .WithHttpTransport(o => o.Stateless = true)
-    .WithTools<IndexTools>()
-    .WithTools<LearnTools>();
+    .WithHttpTransport(o => o.Stateless = true);
+if (mcpToolTypes.Count > 0)
+    mcpBuilder.WithTools(mcpToolTypes);
 
 var app = builder.Build();
 
 app.MapMcp("/mcp");
 
-// Health endpoint (liveness probe). Also proves Postgres reachability.
-app.MapGet("/", async (IndexerWorker w, IIndexStore store) =>
+// Health endpoint (liveness probe). Reports ONLY the capabilities that are
+// actually enabled — e.g. an isolated search-only tenant's health must not
+// fail on nats_ready (there is no NATS connection to be ready).
+app.MapGet("/", async (IServiceProvider sp, IIndexStore store) =>
 {
     var dbOk = false;
     try { await store.PingAsync(CancellationToken.None); dbOk = true; } catch { /* report below */ }
-    var ok = w.Ready && w.SchemaReady && dbOk;
+
+    bool? natsReady = null;
+    bool? schemaReady = null;
+    long? docsUpserted = null;
+    long? docsEmbedded = null;
+    DateTimeOffset? lastReindex = null;
+
+    switch (caps.WorkerShape)
+    {
+        case IndexWorkerShape.SharedBusConsumer:
+        {
+            var w = sp.GetRequiredService<IndexerWorker>();
+            natsReady = w.Ready;
+            schemaReady = w.SchemaReady;
+            docsUpserted = w.DocsUpserted;
+            docsEmbedded = w.DocsEmbedded;
+            lastReindex = w.LastReindex;
+            break;
+        }
+        case IndexWorkerShape.TimerOnly:
+        {
+            var w = sp.GetRequiredService<TimerOnlyIndexWorker>();
+            // No NATS connection exists in isolated mode — nats_ready is
+            // intentionally omitted (null) rather than reported false/true.
+            schemaReady = w.SchemaReady;
+            docsUpserted = w.DocsUpserted;
+            docsEmbedded = w.DocsEmbedded;
+            lastReindex = w.LastReindex;
+            break;
+        }
+        case IndexWorkerShape.None:
+            break;
+    }
+
+    // Overall "ok": dbOk always required; schemaReady/natsReady only gate
+    // readiness for the capabilities that are actually enabled.
+    var ok = dbOk && (schemaReady ?? true) && (natsReady ?? true);
     return Results.Json(new
     {
         status = ok ? "ok" : "starting",
         service = "sinapsi-indexer",
-        nats_ready = w.Ready,
-        schema_ready = w.SchemaReady,
+        capabilities = new
+        {
+            index = caps.Index,
+            search_mcp = caps.SearchMcp,
+            search_http = caps.SearchHttp,
+            learn_publish = caps.LearnPublish,
+            nats_mode = caps.NatsIsolated ? "isolated" : "shared-bus",
+        },
+        nats_ready = natsReady,
+        schema_ready = schemaReady,
         db_ok = dbOk,
-        docs_upserted = w.DocsUpserted,
-        docs_embedded = w.DocsEmbedded,
-        last_reindex = w.LastReindex,
+        docs_upserted = docsUpserted,
+        docs_embedded = docsEmbedded,
+        last_reindex = lastReindex,
     }, statusCode: ok ? 200 : 503);
 });
 
-// HTTP search endpoint — M-B3.
+// HTTP search endpoint — M-B3. Mounted ONLY when the search.http capability
+// is enabled; disabled ⇒ the route is never registered at all (404, same as
+// today's INDEXER_SEARCH_TOKEN-unset behaviour, but now capability-gated).
 // GET /search?q=<websearch query>[&limit=<1-30>][&source=<logical source name>]
 // Returns ranked FTS hits (ts_rank_cd, ts_headline snippets).
 // Tombstoned and secret-path rows are excluded IN THE STORE SQL (defence-in-depth).
-app.MapGet("/search", async (
-    HttpContext ctx,
-    IIndexStore store,
-    string? q,
-    string? limit,
-    string? source,
-    CancellationToken cancellationToken) =>
+if (caps.SearchHttp)
 {
-    var (req, err) = SearchRequest.TryParse(q, limit, source);
-    if (err is not null)
-        return Results.Json(new { error = err }, statusCode: 400);
+    app.MapGet("/search", async (
+        HttpContext ctx,
+        IIndexStore store,
+        string? q,
+        string? limit,
+        string? source,
+        CancellationToken cancellationToken) =>
+    {
+        var (req, err) = SearchRequest.TryParse(q, limit, source);
+        if (err is not null)
+            return Results.Json(new { error = err }, statusCode: 400);
 
-    try
-    {
-        var hits = await store.SearchAsync(req!.Query, req.Source, kind: null, req.Limit, cancellationToken);
-        var items = hits
-            .Select(h => new SearchResultItem(h.Source, h.Path, h.Kind, h.Title, h.Scope, h.Snippet, h.Score))
-            .ToList();
-        return Results.Json(new SearchResponse(req.Query, items.Count, items));
-    }
-    catch (OperationCanceledException) { throw; }
-    catch (Exception e)
-    {
-        // Surface a scrubbed, capped error — never a raw connection string or token.
-        return Results.Json(new { error = IndexerErrors.FromException(e) }, statusCode: 500);
-    }
-}).WithName("SearchIndex").WithTags("search");
+        try
+        {
+            var hits = await store.SearchAsync(req!.Query, req.Source, kind: null, req.Limit, cancellationToken);
+            var items = hits
+                .Select(h => new SearchResultItem(h.Source, h.Path, h.Kind, h.Title, h.Scope, h.Snippet, h.Score))
+                .ToList();
+            return Results.Json(new SearchResponse(req.Query, items.Count, items));
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception e)
+        {
+            // Surface a scrubbed, capped error — never a raw connection string or token.
+            return Results.Json(new { error = IndexerErrors.FromException(e) }, statusCode: 500);
+        }
+    }).WithName("SearchIndex").WithTags("search");
+}
 
 var host = Environment.GetEnvironmentVariable("INDEXER_HEALTH_HOST") ?? "0.0.0.0";
 // Fail-closed: a non-numeric / out-of-range INDEXER_HEALTH_PORT throws here
