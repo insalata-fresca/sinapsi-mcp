@@ -59,13 +59,11 @@ if (caps.LearnPublish)
 // Tool types come from caps.McpToolTypes() (a runtime type LIST, not the
 // compile-time generic .WithTools<T>()) so a disabled capability contributes
 // NO type to the MCP server at all — not merely an unreachable one.
-var mcpToolTypes = caps.McpToolTypes();
-var mcpBuilder = builder.Services
-    .AddMcpServer(o => o.ServerInfo = new() { Name = "sinapsi-indexer", Version = "1.0.0" })
-    // Stateless transport strips a forwarded Mcp-Session-Id so a fronting proxy can't 400 it.
-    .WithHttpTransport(o => o.Stateless = true);
-if (mcpToolTypes.Count > 0)
-    mcpBuilder.WithTools(mcpToolTypes);
+// The tool-registration overload here is a KNOWN footgun (passing a concrete
+// list type positionally binds the wrong WithTools overload and registers ZERO
+// tools at runtime). It is factored into McpComposition.AddIndexerMcp so the
+// runtime boot smoke (McpBootSmokeTests) exercises THIS EXACT registration path.
+builder.Services.AddIndexerMcp(caps);
 
 var app = builder.Build();
 
