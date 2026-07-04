@@ -56,10 +56,10 @@ builder.Services.AddHttpClient("forge-raw", http =>
 builder.Services.AddSingleton<AuditService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AuditService>());
 
-// MCP server (stateless transport).
+// MCP server (stateful transport — session affinity required by claude.ai).
 builder
     .AddSinapsiMcpServer("bridge-mcp", BridgeConfig.Version)
-    .WithHttpTransport(o => o.Stateless = true)
+    .WithHttpTransport(o => o.Stateless = false)
     // B4b-3: Read tools (list_workspaces, list_files, read_file, check_inbox).
     .WithTools<BridgeReadTools>()
     // B4b-4: Grep tools (search_documents, lookup_fact).
