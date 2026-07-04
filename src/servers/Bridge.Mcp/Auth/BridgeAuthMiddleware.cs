@@ -1,7 +1,5 @@
 using System.Security.Cryptography;
 using System.Text;
-using Microsoft.IdentityModel.Protocols;
-using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 
@@ -37,9 +35,12 @@ public sealed class BridgeAuthMiddleware(
         "/.well-known/oauth-protected-resource",
     };
 
-    // JWKS cache — refresh once per hour (matches Python's _JwksCache)
+    // JWKS cache — refresh once per hour (matches Python's PyJWKClient lifespan).
+    // The bridge targets a single Zitadel host, so a shared static HttpClient is
+    // appropriate here and avoids per-request socket exhaustion.
+    private static readonly HttpClient JwksHttpClient = new();
     private readonly SemaphoreSlim _jwksLock = new(1, 1);
-    private ConfigurationManager<OpenIdConnectConfiguration>? _jwksManager;
+    private IEnumerable<SecurityKey>? _cachedSigningKeys;
     private DateTimeOffset _jwksLoadedAt = DateTimeOffset.MinValue;
     private static readonly TimeSpan JwksRefreshInterval = TimeSpan.FromHours(1);
 
@@ -233,23 +234,32 @@ public sealed class BridgeAuthMiddleware(
         await _jwksLock.WaitAsync(ct);
         try
         {
-            if (_jwksManager is null || DateTimeOffset.UtcNow - _jwksLoadedAt > JwksRefreshInterval)
+            // Refresh only when the cache is empty or older than the refresh interval.
+            if (_cachedSigningKeys is null || DateTimeOffset.UtcNow - _jwksLoadedAt > JwksRefreshInterval)
             {
-                _jwksManager = new ConfigurationManager<OpenIdConnectConfiguration>(
-                    config.JwksUrl,
-                    new OpenIdConnectConfigurationRetriever(),
-                    new HttpDocumentRetriever());
+                // config.JwksUrl is the RAW JWK Set endpoint ({"keys":[...]}), matching the
+                // Python bridge's PyJWKClient(jwks_url) semantics. Fetch it directly and parse
+                // as a JsonWebKeySet — NOT via OpenIdConnectConfigurationRetriever, which expects
+                // an OIDC discovery document and returns EMPTY SigningKeys for a raw JWKS
+                // (the bug this replaces: empty keys → every JWT failed IDX10500 signature check).
+                //
+                // GetStringAsync throws HttpRequestException on fetch failure and the
+                // JsonWebKeySet ctor throws (ArgumentException/InvalidOperationException) on
+                // malformed JSON. We do NOT swallow these — an empty key set must never be
+                // cached, because empty keys masquerade as a signature failure (invalid_token)
+                // instead of the true "JWKS unavailable" condition. The caller (InvokeAsync)
+                // catches any non-SecurityTokenException and returns 401 server_error, NOT 500.
+                var json = await JwksHttpClient.GetStringAsync(config.JwksUrl, ct);
+                _cachedSigningKeys = new JsonWebKeySet(json).GetSigningKeys();
                 _jwksLoadedAt = DateTimeOffset.UtcNow;
             }
+
+            return _cachedSigningKeys;
         }
         finally
         {
             _jwksLock.Release();
         }
-        // This may throw HttpRequestException / InvalidOperationException on JWKS fetch failure.
-        // The caller (InvokeAsync) catches any non-SecurityTokenException and returns 401.
-        var oidcConfig = await _jwksManager.GetConfigurationAsync(ct);
-        return oidcConfig.SigningKeys;
     }
 
     // ── Response helpers (all awaited — no fire-and-forget) ──────────────────
