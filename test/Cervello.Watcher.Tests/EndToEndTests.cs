@@ -1,0 +1,113 @@
+using Cervello.Watcher;
+using Cervello.Watcher.Domain;
+using Cervello.Watcher.Ingest;
+using Xunit;
+
+namespace Cervello.Watcher.Tests;
+
+/// <summary>
+/// End-to-end WATCH → NORMALIZE over the FakeDriveClient (tasks.md 10.1 / design
+/// "Testing Approach"). Seed Foo.m4a + Foo.txt → one cycle → exactly one manifest
+/// entry with matching checksums, state: normalized. A SECOND full cycle is a
+/// byte-unchanged no-op.
+/// </summary>
+public sealed class EndToEndTests
+{
+    private const string FolderId = "folder-recordings";
+
+    [Fact]
+    public async Task Seed_pair_one_cycle_produces_one_entry_second_cycle_is_noop()
+    {
+        using var ws = new TempWorkspace();
+
+        var audioBytes = System.Text.Encoding.UTF8.GetBytes("the audio bytes of Foo");
+        var txtBytes = System.Text.Encoding.UTF8.GetBytes("Foo's raw google transcript");
+        var expectedAudioSha = BlobStore.Sha256Hex(audioBytes);
+
+        // ---- cycle 1 ----
+        var h1 = new WorkerHarness(ws, FolderId);
+        h1.Drive.SeedFile("A", "Foo.m4a", "audio/mp4", audioBytes,
+            createdTime: DateTimeOffset.Parse("2026-07-05T09:30:00Z"), parents: new[] { FolderId });
+        h1.Drive.SeedFile("T", "Foo.txt", "text/plain", txtBytes,
+            createdTime: DateTimeOffset.Parse("2026-07-05T09:30:00Z"), parents: new[] { FolderId });
+        h1.Drive.QueuePage(new[]
+        {
+            h1.Drive.Meta("A"),
+            h1.Drive.Meta("T"),
+        });
+
+        await h1.Worker.RunCycleAsync(default);
+
+        // Exactly one manifest entry, matching checksums + drive ids, state normalized.
+        var text = File.ReadAllText(ws.ManifestPath);
+        var entryLines = text.Split('\n').Where(l => l.TrimStart().StartsWith("- id:")).ToArray();
+        Assert.Single(entryLines);
+        Assert.Contains("- id: 20260705-foo", text);
+        Assert.Contains($"audio_sha256: {expectedAudioSha}", text);
+        Assert.Contains("source_drive_id: A", text);
+        Assert.Contains("google_txt: T", text);
+        Assert.Contains("attribution: pending", text);
+        Assert.Contains("recorded_at: 2026-07-05T09:30", text);
+        Assert.Contains("state: normalized", text);
+        // No audio bytes leaked into the manifest.
+        Assert.DoesNotContain("the audio bytes of Foo", text);
+        // Local ready marker exists.
+        Assert.True(h1.Ready.IsMarked("20260705-foo"));
+
+        var bytesAfterCycle1 = File.ReadAllBytes(ws.ManifestPath);
+
+        // ---- cycle 2: a second full WATCH → NORMALIZE over the same pair ----
+        // Re-drive with a fresh worker but the SAME state store + manifest file, so
+        // the idempotency ledger + recording dedupe + manifest id-dedupe all engage.
+        var h2 = new WorkerHarness(ws, FolderId);
+        // Share the durable state + manifest + blobs from the first run.
+        var worker2 = new WatchWorker(h1.Config, h2.Drive, h1.State, // <- reuse h1.State
+            new Downloader(h2.Drive, h1.Blobs, h1.Ledger,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<Downloader>.Instance),
+            h1.Normalizer, h1.Manifest, h1.Ready,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<WatchWorker>.Instance);
+        worker2.SetFolderId(FolderId);
+        h2.Drive.SeedFile("A", "Foo.m4a", "audio/mp4", audioBytes,
+            createdTime: DateTimeOffset.Parse("2026-07-05T09:30:00Z"), parents: new[] { FolderId });
+        h2.Drive.SeedFile("T", "Foo.txt", "text/plain", txtBytes,
+            createdTime: DateTimeOffset.Parse("2026-07-05T09:30:00Z"), parents: new[] { FolderId });
+        h2.Drive.QueuePage(new[]
+        {
+            h2.Drive.Meta("A"),
+            h2.Drive.Meta("T"),
+        });
+
+        await worker2.RunCycleAsync(default);
+
+        var bytesAfterCycle2 = File.ReadAllBytes(ws.ManifestPath);
+        Assert.Equal(bytesAfterCycle1, bytesAfterCycle2); // BYTE-unchanged no-op
+    }
+
+    [Fact]
+    public async Task Lone_audio_produces_no_manifest_entry_until_transcript_arrives()
+    {
+        using var ws = new TempWorkspace();
+        var h = new WorkerHarness(ws, FolderId);
+        var audioBytes = System.Text.Encoding.UTF8.GetBytes("audio only");
+        h.Drive.SeedFile("A", "Foo.m4a", "audio/mp4", audioBytes,
+            createdTime: DateTimeOffset.Parse("2026-07-05T09:30:00Z"), parents: new[] { FolderId });
+        // cycle 1: only the audio arrives.
+        h.Drive.QueuePage(new[] { h.Drive.Meta("A") });
+        await h.Worker.RunCycleAsync(default);
+
+        // No manifest entry yet — the recording is pending.
+        var text1 = File.Exists(ws.ManifestPath) ? File.ReadAllText(ws.ManifestPath) : "";
+        Assert.DoesNotContain("- id:", text1);
+        Assert.Equal(0, h.Worker.RecordingsNormalized);
+
+        // cycle 2: the transcript arrives and completes the pair.
+        h.Drive.SeedFile("T", "Foo.txt", "text/plain", System.Text.Encoding.UTF8.GetBytes("t"),
+            createdTime: DateTimeOffset.Parse("2026-07-05T09:30:00Z"), parents: new[] { FolderId });
+        h.Drive.QueuePage(new[] { h.Drive.Meta("T") });
+        await h.Worker.RunCycleAsync(default);
+
+        var text2 = File.ReadAllText(ws.ManifestPath);
+        Assert.Contains("- id: 20260705-foo", text2);
+        Assert.Equal(1, h.Worker.RecordingsNormalized);
+    }
+}

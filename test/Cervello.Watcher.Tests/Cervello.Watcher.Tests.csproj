@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Cervello.Watcher.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Unlocks ASP.NET Core types (the health endpoint host) referenced by the
+         Sdk.Web server project so it can be referenced from a non-Web test SDK. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Reference the server project so tests exercise the real seams (config,
+         stores, pairer, normalizer, worker, blob custody). Builds nuget.org-only. -->
+    <ProjectReference Include="../../src/servers/Cervello.Watcher/Cervello.Watcher.csproj" />
+  </ItemGroup>
+
+</Project>
