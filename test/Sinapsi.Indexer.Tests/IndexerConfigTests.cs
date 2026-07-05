@@ -185,4 +185,76 @@ public sealed class IndexerConfigTests : IDisposable
         var ex = Assert.Throws<InvalidOperationException>(() => IndexerConfig.NatsIsolated());
         Assert.Contains("INDEXER_NATS_MODE", ex.Message);
     }
+
+    // ── NATS mode — the third value, "private" (cervello-private-events.md OPTION-1) ──
+
+    [Fact]
+    public void NatsMode_Unset_DefaultsToSharedBus()
+    {
+        Assert.Equal(IndexerNatsMode.SharedBus, IndexerConfig.NatsMode());
+        Assert.False(IndexerConfig.NatsPrivate());
+        Assert.False(IndexerConfig.NatsIsolated());
+    }
+
+    [Theory]
+    [InlineData("private", IndexerNatsMode.Private)]
+    [InlineData("PRIVATE", IndexerNatsMode.Private)]
+    [InlineData("isolated", IndexerNatsMode.Isolated)]
+    [InlineData("shared-bus", IndexerNatsMode.SharedBus)]
+    public void NatsMode_ParsesAllThreeValues(string raw, IndexerNatsMode expected)
+    {
+        Environment.SetEnvironmentVariable("INDEXER_NATS_MODE", raw);
+        Assert.Equal(expected, IndexerConfig.NatsMode());
+    }
+
+    [Fact]
+    public void NatsMode_Private_SetsNatsPrivate_NotNatsIsolated()
+    {
+        Environment.SetEnvironmentVariable("INDEXER_NATS_MODE", "private");
+        Assert.True(IndexerConfig.NatsPrivate());
+        Assert.False(IndexerConfig.NatsIsolated());
+    }
+
+    // ── private-mode fail-closed subject/stream validation (§4.2.4 config layer) ──
+
+    [Fact]
+    public void ValidatePrivateSubjectAndStream_AcceptsTheConfiguredCervelloPair()
+    {
+        // No throw = pass.
+        IndexerConfig.ValidatePrivateSubjectAndStream(
+            "homelab.cervello.git.>", "CERVELLO_AUDIT", "homelab.cervello.", "CERVELLO_AUDIT");
+    }
+
+    [Fact]
+    public void ValidatePrivateSubjectAndStream_RejectsASharedSubject_NamingTheVar()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            IndexerConfig.ValidatePrivateSubjectAndStream(
+                "homelab.git.>", "CERVELLO_AUDIT", "homelab.cervello.", "CERVELLO_AUDIT"));
+        Assert.Contains("INDEXER_WATCH_SUBJECT", ex.Message);
+    }
+
+    [Fact]
+    public void ValidatePrivateSubjectAndStream_RejectsTheSharedStream_NamingTheVar()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            IndexerConfig.ValidatePrivateSubjectAndStream(
+                "homelab.cervello.git.>", "HOMELAB_AUDIT", "homelab.cervello.", "CERVELLO_AUDIT"));
+        Assert.Contains("INDEXER_STREAM", ex.Message);
+    }
+
+    // ── FromEnvironment(private) composition — kept in this serialized/cleaned
+    // collection (see IndexerCapabilitiesTests.cs comment) to avoid racing the
+    // theory cases above that also mutate INDEXER_NATS_MODE. ─────────────────
+
+    [Fact]
+    public void IndexerCapabilities_FromEnvironment_WithNatsModePrivate_SelectsPrivateSubjectConsumer()
+    {
+        Environment.SetEnvironmentVariable("INDEXER_NATS_MODE", "private");
+
+        var caps = IndexerCapabilities.FromEnvironment();
+
+        Assert.Equal(IndexerNatsMode.Private, caps.NatsMode);
+        Assert.Equal(IndexWorkerShape.PrivateSubjectConsumer, caps.WorkerShape);
+    }
 }

@@ -40,6 +40,24 @@ switch (caps.WorkerShape)
         builder.Services.AddSingleton<IndexerWorker>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<IndexerWorker>());
         break;
+    case IndexWorkerShape.PrivateSubjectConsumer:
+        // cervello-private-events.md OPTION-1 §4.2.4 — config-layer (secondary)
+        // belt-and-braces bar: fail closed at startup if the configured subject/
+        // stream is not the cervello private tree/stream. The PRIMARY bar is the
+        // auth layer (the scoped cervello-indexer nkey's subscribe set refuses
+        // anything outside homelab.cervello.> at the server) — this just stops a
+        // fat-fingered config from even attempting the subscribe. Reuses the exact
+        // same IndexerWorker/FetchAsync engine as shared-bus; only the env-driven
+        // subject/stream/identity differ (already fully parameterized).
+        IndexerConfig.ValidatePrivateSubjectAndStream(
+            watchSubject: Environment.GetEnvironmentVariable("INDEXER_WATCH_SUBJECT") ?? "events.git.>",
+            stream: Environment.GetEnvironmentVariable("INDEXER_STREAM") ?? "EVENTS",
+            allowedSubjectPrefix: "homelab.cervello.",
+            allowedStream: "CERVELLO_AUDIT");
+        builder.Services.AddSingleton(NatsConnectionOptions.FromEnvironment() with { ClientName = "sinapsi-indexer-cervello" });
+        builder.Services.AddSingleton<IndexerWorker>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<IndexerWorker>());
+        break;
     case IndexWorkerShape.TimerOnly:
         builder.Services.AddSingleton<TimerOnlyIndexWorker>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<TimerOnlyIndexWorker>());
@@ -86,6 +104,7 @@ app.MapGet("/", async (IServiceProvider sp, IIndexStore store) =>
     switch (caps.WorkerShape)
     {
         case IndexWorkerShape.SharedBusConsumer:
+        case IndexWorkerShape.PrivateSubjectConsumer:
         {
             var w = sp.GetRequiredService<IndexerWorker>();
             natsReady = w.Ready;
@@ -123,7 +142,12 @@ app.MapGet("/", async (IServiceProvider sp, IIndexStore store) =>
             search_mcp = caps.SearchMcp,
             search_http = caps.SearchHttp,
             learn_publish = caps.LearnPublish,
-            nats_mode = caps.NatsIsolated ? "isolated" : "shared-bus",
+            nats_mode = caps.NatsMode switch
+            {
+                IndexerNatsMode.Isolated => "isolated",
+                IndexerNatsMode.Private => "private",
+                _ => "shared-bus",
+            },
         },
         nats_ready = natsReady,
         schema_ready = schemaReady,
