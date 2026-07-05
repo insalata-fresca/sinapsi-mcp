@@ -1,0 +1,35 @@
+# Cervello.Watcher — OCI image. Two-stage: dotnet SDK 8.0 (build/publish) ->
+# aspnet 8.0 (runtime). Build context is the REPO ROOT (parity with the other
+# servers); restore is nuget.org-only (no private feed, no build secret). Build
+# from the repo root:
+#   podman build --network=host -f src/servers/Cervello.Watcher/Containerfile -t <img> .
+#
+# Runtime deps: aspnet + ca-certificates (outbound HTTPS to Drive via the proxy)
+# + git (the manifest adapter commits recordings/manifest.yaml into a CT-local
+# working tree of ste/cervello). Runs non-root (uid 10046). This binary opens NO
+# NATS connection (invariant 3 / D8) and needs no NATS seed.
+
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+COPY . .
+RUN dotnet publish src/servers/Cervello.Watcher/Cervello.Watcher.csproj \
+        -c Release -o /app /p:UseAppHost=false
+
+FROM mcr.microsoft.com/dotnet/aspnet:8.0
+WORKDIR /app
+# git: the manifest adapter shells out to `git` to commit/push the watcher branch.
+# ca-certificates: outbound HTTPS to Google (through the CT egress proxy).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /app .
+# Non-root by default (rootless-podman friendly). The Quadlet may override the
+# user at deploy so the process can read the 0600 SA key + the staging volume.
+RUN useradd --system --no-create-home --uid 10046 cervello
+USER cervello
+ENV CERVELLO_WATCHER_HEALTH_HOST=0.0.0.0 \
+    CERVELLO_WATCHER_HEALTH_PORT=8146 \
+    DOTNET_EnableDiagnostics=0
+# Documentation only; the listen address is env-driven and overridden at deploy.
+EXPOSE 8146
+ENTRYPOINT ["dotnet", "Cervello.Watcher.dll"]
