@@ -7,10 +7,11 @@ public sealed record ChangePage(IReadOnlyList<DriveChange> Changes, string? Next
 
 /// <summary>
 /// The seam over Google Drive that WATCH/NORMALIZE depend on. A FakeDriveClient
-/// implements this for all core unit tests; GoogleDriveClient is the real
-/// (proxy-routed, read-only SA) implementation, exercised only under a gated live
-/// test. Keeping the surface this small is what makes the acceptance logic
-/// (pairing + idempotency) fully testable with no Google.
+/// implements this for all core unit tests; McpGdriveClient (M6-refine) is the
+/// real implementation, calling the existing homelab `gdrive` MCP through the
+/// CT121 agentgateway as a scoped machine identity — no Google credential in
+/// this process. Keeping the surface this small is what makes the acceptance
+/// logic (pairing + idempotency) fully testable with no Google/no gateway.
 /// </summary>
 public interface IDriveClient
 {

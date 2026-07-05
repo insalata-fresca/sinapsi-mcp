@@ -1,12 +1,11 @@
-using System.Net;
 using Cervello.Watcher;
-using Cervello.Watcher.Drive;
 using Xunit;
 
 namespace Cervello.Watcher.Tests;
 
 /// <summary>
-/// drive-watch — config half + "All Drive access goes through the egress proxy".
+/// drive-watch — config half (M6-refine: gateway URL + watcher agent identity
+/// replace the Google-SA / egress-proxy config this superseded).
 /// </summary>
 public sealed class ConfigAndProxyTests
 {
@@ -22,18 +21,33 @@ public sealed class ConfigAndProxyTests
     }
 
     [Fact]
-    public void Default_proxy_is_the_ct_tinyproxy_address()
+    public void Default_gateway_url_is_the_local_agentgateway_mcp_endpoint()
     {
         var cfg = WatcherConfig.From(Env()); // empty map ⇒ all defaults
-        Assert.Equal("http://127.0.0.1:13130", cfg.HttpProxyUrl);
+        Assert.Equal("http://127.0.0.1:8443/mcp", cfg.GatewayUrl);
     }
 
     [Fact]
-    public void Bad_proxy_url_throws_naming_the_var()
+    public void Bad_gateway_url_throws_naming_the_var()
     {
-        var env = Env(("CERVELLO_WATCHER_HTTP_PROXY", "not-a-url"));
+        var env = Env(("GATEWAY_URL", "not-a-url"));
         var ex = Assert.Throws<InvalidOperationException>(() => WatcherConfig.From(env));
-        Assert.Contains("CERVELLO_WATCHER_HTTP_PROXY", ex.Message);
+        Assert.Contains("GATEWAY_URL", ex.Message);
+    }
+
+    [Fact]
+    public void Default_watcher_agent_is_agent_cervello_watcher()
+    {
+        var cfg = WatcherConfig.From(Env());
+        Assert.Equal("agent-cervello-watcher", cfg.WatcherAgent);
+    }
+
+    [Fact]
+    public void Watcher_agent_is_overridable()
+    {
+        var env = Env(("CERVELLO_WATCHER_AGENT", "agent-cervello-watcher-staging"));
+        var cfg = WatcherConfig.From(env);
+        Assert.Equal("agent-cervello-watcher-staging", cfg.WatcherAgent);
     }
 
     [Fact]
@@ -59,28 +73,14 @@ public sealed class ConfigAndProxyTests
         Assert.Equal("cervello/recordings", cfg.FolderPath);
     }
 
-    // ---- Scenario: All Drive access goes through the egress proxy ----
-
     [Fact]
-    public void ProxyHttpClientFactory_sets_webproxy_to_the_ct_proxy()
+    public void Folder_id_is_unset_by_default_and_settable()
     {
-        var factory = new ProxyHttpClientFactory("http://127.0.0.1:13130");
-        Assert.NotNull(factory.WebProxy);
-        Assert.Equal(new Uri("http://127.0.0.1:13130"), factory.WebProxy.Address);
-        Assert.Equal("http://127.0.0.1:13130/", factory.ProxyAddress.ToString());
-    }
+        var defaultCfg = WatcherConfig.From(Env());
+        Assert.Null(defaultCfg.FolderId);
 
-    [Fact]
-    public void ProxyHttpClientFactory_proxy_is_applied_to_created_handlers()
-    {
-        // The base HttpClientFactory applies its Proxy to every client it creates —
-        // proving the routing is a property of the client, not luck.
-        var factory = new ProxyHttpClientFactory("http://127.0.0.1:13130");
-        var args = new Google.Apis.Http.CreateHttpClientArgs();
-        using var client = factory.CreateHttpClient(args);
-        Assert.NotNull(client);
-        // The inherited Proxy is the exact WebProxy we constructed.
-        IWebProxy proxy = factory.WebProxy;
-        Assert.Equal(new Uri("http://127.0.0.1:13130"), ((WebProxy)proxy).Address);
+        var env = Env(("CERVELLO_WATCHER_FOLDER_ID", "folder-abc123"));
+        var cfg = WatcherConfig.From(env);
+        Assert.Equal("folder-abc123", cfg.FolderId);
     }
 }

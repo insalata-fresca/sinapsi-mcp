@@ -1,4 +1,5 @@
 using Cervello.Watcher.Domain;
+using Cervello.Watcher.Drive;
 using Cervello.Watcher.Ingest;
 using Cervello.Watcher.State;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -95,8 +96,7 @@ public sealed class IngestTests
         var h = new WorkerHarness(ws);
         var bytes = System.Text.Encoding.UTF8.GetBytes("x");
         h.Drive.SeedFile("F", "Foo.m4a", "audio/mp4", bytes, parents: new[] { FolderId });
-        h.Drive.DownloadFaults["F"] = new Google.GoogleApiException("drive", "503")
-        { HttpStatusCode = System.Net.HttpStatusCode.ServiceUnavailable };
+        h.Drive.DownloadFaults["F"] = new DriveMediaException("503", transient: true);
         var change = Change("F", "Foo.m4a", bytes);
 
         var outcome = await h.Downloader.StageAsync(change, default);

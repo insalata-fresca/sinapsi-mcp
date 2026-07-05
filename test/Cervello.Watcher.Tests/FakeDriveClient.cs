@@ -80,7 +80,7 @@ public sealed class FakeDriveClient : IDriveClient
         if (DownloadFaults.TryGetValue(fileId, out var fault))
             throw fault;
         if (!_bytes.TryGetValue(fileId, out var b))
-            throw new Google.GoogleApiException("drive", $"404 {fileId}") { HttpStatusCode = System.Net.HttpStatusCode.NotFound };
+            throw new DriveMediaException($"404 {fileId}", transient: false);
         destination.Write(b, 0, b.Length);
         return Task.CompletedTask;
     }

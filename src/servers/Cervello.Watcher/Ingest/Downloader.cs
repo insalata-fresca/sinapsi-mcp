@@ -92,8 +92,11 @@ public sealed class Downloader
     }
 
     /// <summary>
-    /// Transient = worth retrying under the same key: 5xx, request timeout, or a
-    /// raw transport error. Everything else (404, malformed) is terminal.
+    /// Transient = worth retrying under the same key: 5xx, request timeout, a raw
+    /// transport error, or an <see cref="DriveMediaException"/> the IDriveClient
+    /// itself flagged transient (M6-refine: McpGdriveClient's gdrive-MCP tool
+    /// errors carry no HTTP status to re-derive this from, so the throwing client
+    /// classifies it directly). Everything else (404, malformed) is terminal.
     /// </summary>
     internal static bool IsTransient(Exception e)
     {
@@ -106,9 +109,8 @@ public sealed class Downloader
                 if (hre.StatusCode is HttpStatusCode s)
                     return (int)s >= 500 && (int)s <= 599;
                 return true; // no status ⇒ transport-level ⇒ retry
-            case Google.GoogleApiException gae:
-                var code = (int)gae.HttpStatusCode;
-                return code >= 500 && code <= 599;
+            case DriveMediaException dme:
+                return dme.Transient;
         }
         return false;
     }

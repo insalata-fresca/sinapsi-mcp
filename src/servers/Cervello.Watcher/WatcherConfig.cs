@@ -9,23 +9,31 @@ namespace Cervello.Watcher;
 /// source — every value defaults to a neutral local placeholder and is overridden
 /// by the matching environment variable.
 ///
-/// DIVERGENCE from GdriveConfig (D1): auth is a read-only ServiceAccountCredential
-/// (SA JSON key at <see cref="ServiceAccountKeyPath"/>), NOT an OAuth refresh token.
-/// All Drive egress is via the CT proxy (D2, default <c>http://127.0.0.1:13130</c>).
+/// M6-refine DIVERGENCE (supersedes the original D1/D2 Google-SA design): Drive
+/// access goes through the existing homelab <c>gdrive</c> MCP via the CT121
+/// agentgateway, authenticated as a scoped agentgateway machine identity
+/// (<see cref="WatcherAgent"/>, minted by Sinapsi.AgentJwt — agent-free, JWK
+/// provisioned by the deploy-controller/Infisical pattern), NOT a Google service
+/// account. CT146-cervello already has CT121-mcp-gateway as a fixed allowlisted
+/// LAN egress peer (cervello_egress_lan_allow, ports 443/8443) — no proxy hop
+/// needed for this call.
 /// </summary>
 public sealed record WatcherConfig
 {
-    /// <summary>HTTP(S) forward proxy for ALL Drive egress (tinyproxy-cervello). D2.</summary>
-    public required string HttpProxyUrl { get; init; }
+    /// <summary>The CT121-mcp-gateway MCP endpoint the watcher calls gdrive_* tools through.</summary>
+    public required string GatewayUrl { get; init; }
 
-    /// <summary>Poll interval (seconds) for the Changes feed. Default ~60 s.</summary>
+    /// <summary>The watcher's scoped agentgateway machine identity (JWK file <c>&lt;AGENT_KEY_DIR&gt;/&lt;agent&gt;.json</c>).</summary>
+    public required string WatcherAgent { get; init; }
+
+    /// <summary>Poll interval (seconds) for the recordings folder listing. Default ~60 s.</summary>
     public required int PollIntervalSeconds { get; init; }
 
     /// <summary>Drive folder path whose changes we keep (client-side scope filter). D3.</summary>
     public required string FolderPath { get; init; }
 
-    /// <summary>Path to the read-only service-account JSON key (0600, from Infisical). D1.</summary>
-    public required string ServiceAccountKeyPath { get; init; }
+    /// <summary>Drive folder id for FolderPath (resolved once via gdrive_search_files, or set directly). D3.</summary>
+    public string? FolderId { get; init; }
 
     /// <summary>CT-local staging dir for downloaded blobs. MUST be under /var/lib/cervello. Custody.</summary>
     public required string StagingDir { get; init; }
@@ -42,14 +50,15 @@ public sealed record WatcherConfig
     /// <summary>Bind port for the opaque health endpoint (fail-closed 1..65535).</summary>
     public required int HealthPort { get; init; }
 
-    /// <summary>Per-request ceiling (seconds) applied to the Drive HttpClient.Timeout.</summary>
+    /// <summary>Per-request ceiling (seconds) applied to the gateway HttpClient.Timeout.</summary>
     public required int HttpTimeoutSeconds { get; init; }
 
-    /// <summary>ApplicationName reported to the Drive API.</summary>
+    /// <summary>Identity string for logs/diagnostics (was reported to the Drive API pre-M6-refine).</summary>
     public required string ApplicationName { get; init; }
 
     // ---- bounds (fail-closed) ----
-    internal const string DefaultProxyUrl = "http://127.0.0.1:13130";
+    internal const string DefaultGatewayUrl = "http://127.0.0.1:8443/mcp";
+    internal const string DefaultWatcherAgent = "agent-cervello-watcher";
     internal const string DefaultFolderPath = "cervello/recordings";
     internal const string DefaultStagingDir = "/var/lib/cervello/staging";
     internal const string DefaultRepoWorkingTree = "/var/lib/cervello/repo";
@@ -79,12 +88,13 @@ public sealed record WatcherConfig
 
         return new WatcherConfig
         {
-            HttpProxyUrl = ReadProxyUrl(getEnv),
+            GatewayUrl = ReadGatewayUrl(getEnv),
+            WatcherAgent = Env("CERVELLO_WATCHER_AGENT", DefaultWatcherAgent),
             PollIntervalSeconds = ReadBoundedInt(getEnv,
                 "CERVELLO_WATCHER_POLL_INTERVAL_SECONDS", DefaultPollIntervalSeconds,
                 MinPollIntervalSeconds, MaxPollIntervalSeconds),
             FolderPath = Env("CERVELLO_WATCHER_FOLDER_PATH", DefaultFolderPath),
-            ServiceAccountKeyPath = Env("CERVELLO_WATCHER_SA_KEY_PATH", "/run/secrets/cervello-sa.json"),
+            FolderId = getEnv("CERVELLO_WATCHER_FOLDER_ID"),
             StagingDir = Env("CERVELLO_WATCHER_STAGING_DIR", DefaultStagingDir),
             PostgresDsn = ReadPostgresDsn(getEnv),
             RepoWorkingTree = Env("CERVELLO_WATCHER_REPO_WORKTREE", DefaultRepoWorkingTree),
@@ -101,20 +111,21 @@ public sealed record WatcherConfig
         From(k => env.TryGetValue(k, out var v) ? v : null);
 
     /// <summary>
-    /// Proxy url is fail-closed: an unparseable / non-http(s) value throws naming the
-    /// env var, so a typo cannot silently disable proxying and leak direct Google egress.
+    /// Gateway url is fail-closed: an unparseable / non-http(s) value throws naming
+    /// the env var, so a typo cannot silently point the watcher at an unintended
+    /// endpoint (mirrors the old proxy-url validation this replaces).
     /// </summary>
-    private static string ReadProxyUrl(Func<string, string?> getEnv)
+    private static string ReadGatewayUrl(Func<string, string?> getEnv)
     {
-        const string envVar = "CERVELLO_WATCHER_HTTP_PROXY";
+        const string envVar = "GATEWAY_URL";
         var raw = getEnv(envVar);
         if (string.IsNullOrEmpty(raw))
-            return DefaultProxyUrl;
+            return DefaultGatewayUrl;
         if (!Uri.TryCreate(raw, UriKind.Absolute, out var uri) ||
             (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
             throw new InvalidOperationException(
-                $"{envVar}='{raw}' is invalid: expected an absolute http(s) proxy URL " +
-                $"(default {DefaultProxyUrl}).");
+                $"{envVar}='{raw}' is invalid: expected an absolute http(s) gateway URL " +
+                $"(default {DefaultGatewayUrl}).");
         return raw;
     }
 

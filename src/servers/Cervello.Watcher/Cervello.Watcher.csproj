@@ -17,13 +17,19 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Read-only Drive access (ServiceAccountCredential + Changes API) is the
-         official Google client; Npgsql is the on-CT Postgres data tier. Both are
-         public nuget.org packages — no private feed, no NATS client (invariant 3 /
-         D8: this binary references NEITHER Sinapsi.Nats NOR any NATS package).
-         The manifest YAML is hand-rolled (no YamlDotNet) for a deterministic,
-         byte-stable append. -->
-    <PackageReference Include="Google.Apis.Drive.v3" Version="1.74.0.4135" />
+    <!-- Drive access is now via the existing homelab `gdrive` MCP, called through
+         the CT121 agentgateway (M6-refine: supersedes the read-only Google
+         service-account path — D1). The MCP-client (GatewayMcpClient) and the
+         per-agent machine-identity minter (AgentJwtMinter) come from the in-repo
+         Sinapsi.Mcp / Sinapsi.AgentJwt libraries via ProjectReference, mirroring
+         SageCouncil.Mcp's gemini/chatgpt members — so this server builds with no
+         private NuGet feed (only nuget.org) and NO Google.Apis.Drive dependency.
+         Npgsql is the on-CT Postgres data tier (public nuget.org package) — no
+         NATS client (invariant 3 / D8: this binary references NEITHER Sinapsi.Nats
+         NOR any NATS package). The manifest YAML is hand-rolled (no YamlDotNet)
+         for a deterministic, byte-stable append. -->
+    <ProjectReference Include="../../libs/Sinapsi.Mcp/Sinapsi.Mcp.csproj" />
+    <ProjectReference Include="../../libs/Sinapsi.AgentJwt/Sinapsi.AgentJwt.csproj" />
     <PackageReference Include="Npgsql" Version="8.0.3" />
   </ItemGroup>
 

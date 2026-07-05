@@ -4,10 +4,14 @@
 # from the repo root:
 #   podman build --network=host -f src/servers/Cervello.Watcher/Containerfile -t <img> .
 #
-# Runtime deps: aspnet + ca-certificates (outbound HTTPS to Drive via the proxy)
-# + git (the manifest adapter commits recordings/manifest.yaml into a CT-local
-# working tree of ste/cervello). Runs non-root (uid 10046). This binary opens NO
-# NATS connection (invariant 3 / D8) and needs no NATS seed.
+# Runtime deps: aspnet + ca-certificates (outbound HTTPS to the CT121 agentgateway
+# — M6-refine: Drive access is the gdrive MCP via the gateway, not direct Google
+# egress) + git (the manifest adapter commits recordings/manifest.yaml into a
+# CT-local working tree of ste/cervello). Runs non-root (uid 10046). This binary
+# opens NO NATS connection (invariant 3 / D8) and needs no NATS seed. No Google
+# service-account key is mounted (M6-refine) — only the agent-cervello-watcher
+# JWK (agentgateway machine identity) + the Postgres password, both agent-free
+# from Infisical.
 
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
@@ -18,13 +22,14 @@ RUN dotnet publish src/servers/Cervello.Watcher/Cervello.Watcher.csproj \
 FROM mcr.microsoft.com/dotnet/aspnet:8.0
 WORKDIR /app
 # git: the manifest adapter shells out to `git` to commit/push the watcher branch.
-# ca-certificates: outbound HTTPS to Google (through the CT egress proxy).
+# ca-certificates: outbound HTTPS to the CT121 agentgateway.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app .
 # Non-root by default (rootless-podman friendly). The Quadlet may override the
-# user at deploy so the process can read the 0600 SA key + the staging volume.
+# user at deploy so the process can read the 0600 agent-cervello-watcher JWK +
+# the staging volume.
 RUN useradd --system --no-create-home --uid 10046 cervello
 USER cervello
 ENV CERVELLO_WATCHER_HEALTH_HOST=0.0.0.0 \
