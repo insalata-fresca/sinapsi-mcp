@@ -220,9 +220,11 @@ public sealed class IndexerConfigTests : IDisposable
     [Fact]
     public void ValidatePrivateSubjectAndStream_AcceptsTheConfiguredCervelloPair()
     {
-        // No throw = pass.
+        // No throw = pass. CLEAN top-level namespace: the shipped prefix is
+        // "cervello." (NOT "homelab.cervello.") so the tree is never under
+        // homelab.> and HOMELAB_AUDIT never captures it (Program.cs call site).
         IndexerConfig.ValidatePrivateSubjectAndStream(
-            "homelab.cervello.git.>", "CERVELLO_AUDIT", "homelab.cervello.", "CERVELLO_AUDIT");
+            "cervello.git.>", "CERVELLO_AUDIT", "cervello.", "CERVELLO_AUDIT");
     }
 
     [Fact]
@@ -230,7 +232,19 @@ public sealed class IndexerConfigTests : IDisposable
     {
         var ex = Assert.Throws<InvalidOperationException>(() =>
             IndexerConfig.ValidatePrivateSubjectAndStream(
-                "homelab.git.>", "CERVELLO_AUDIT", "homelab.cervello.", "CERVELLO_AUDIT"));
+                "homelab.git.>", "CERVELLO_AUDIT", "cervello.", "CERVELLO_AUDIT"));
+        Assert.Contains("INDEXER_WATCH_SUBJECT", ex.Message);
+    }
+
+    [Fact]
+    public void ValidatePrivateSubjectAndStream_RejectsAHomelabPrefixedCervelloSubject_NamingTheVar()
+    {
+        // Belt-and-braces for the CLEAN design: a homelab.cervello.* subject (the
+        // OLD naive framing) is now ALSO rejected — the shipped prefix is the
+        // top-level "cervello." only, so anything under homelab.> fails closed.
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            IndexerConfig.ValidatePrivateSubjectAndStream(
+                "homelab.cervello.git.>", "CERVELLO_AUDIT", "cervello.", "CERVELLO_AUDIT"));
         Assert.Contains("INDEXER_WATCH_SUBJECT", ex.Message);
     }
 
@@ -239,7 +253,7 @@ public sealed class IndexerConfigTests : IDisposable
     {
         var ex = Assert.Throws<InvalidOperationException>(() =>
             IndexerConfig.ValidatePrivateSubjectAndStream(
-                "homelab.cervello.git.>", "HOMELAB_AUDIT", "homelab.cervello.", "CERVELLO_AUDIT"));
+                "cervello.git.>", "HOMELAB_AUDIT", "cervello.", "CERVELLO_AUDIT"));
         Assert.Contains("INDEXER_STREAM", ex.Message);
     }
 

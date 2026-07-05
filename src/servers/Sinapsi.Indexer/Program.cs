@@ -41,18 +41,24 @@ switch (caps.WorkerShape)
         builder.Services.AddHostedService(sp => sp.GetRequiredService<IndexerWorker>());
         break;
     case IndexWorkerShape.PrivateSubjectConsumer:
-        // cervello-private-events.md OPTION-1 §4.2.4 — config-layer (secondary)
-        // belt-and-braces bar: fail closed at startup if the configured subject/
-        // stream is not the cervello private tree/stream. The PRIMARY bar is the
-        // auth layer (the scoped cervello-indexer nkey's subscribe set refuses
-        // anything outside homelab.cervello.> at the server) — this just stops a
+        // cervello-private-events.md OPTION-1 (CLEAN top-level namespace) §4.2.4 —
+        // config-layer (secondary) belt-and-braces bar: fail closed at startup if the
+        // configured subject/stream is not the cervello private tree/stream. The
+        // PRIMARY bar is the auth layer (the scoped cervello-indexer nkey's subscribe
+        // set refuses anything outside cervello.> at the server) — this just stops a
         // fat-fingered config from even attempting the subscribe. Reuses the exact
         // same IndexerWorker/FetchAsync engine as shared-bus; only the env-driven
         // subject/stream/identity differ (already fully parameterized).
+        //
+        // The allowed prefix is the TOP-LEVEL `cervello.` tree, NOT `homelab.cervello.`:
+        // HOMELAB_AUDIT subscribes `homelab.>`, so a top-level `cervello.>` tree is
+        // never captured by the shared audit stream and needs NO HOMELAB_AUDIT
+        // narrowing (the Red-class step is eliminated) — CERVELLO_AUDIT (subjects
+        // cervello.>) is non-overlapping by construction, purely additive.
         IndexerConfig.ValidatePrivateSubjectAndStream(
             watchSubject: Environment.GetEnvironmentVariable("INDEXER_WATCH_SUBJECT") ?? "events.git.>",
             stream: Environment.GetEnvironmentVariable("INDEXER_STREAM") ?? "EVENTS",
-            allowedSubjectPrefix: "homelab.cervello.",
+            allowedSubjectPrefix: "cervello.",
             allowedStream: "CERVELLO_AUDIT");
         builder.Services.AddSingleton(NatsConnectionOptions.FromEnvironment() with { ClientName = "sinapsi-indexer-cervello" });
         builder.Services.AddSingleton<IndexerWorker>();
