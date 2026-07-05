@@ -147,4 +147,20 @@ internal static class IndexerConfig
         throw new InvalidOperationException(
             $"INDEXER_NATS_MODE='{raw}' is invalid: expected 'shared-bus' or 'isolated' (default {DefaultNatsMode}).");
     }
+
+    /// <summary>
+    /// The <c>GET /search</c> bearer token (M5-secure fix). Returns <c>null</c>
+    /// when <c>INDEXER_SEARCH_TOKEN</c> is unset/empty — the route's caller must
+    /// treat that as "no token configured" (today's documented behaviour: the
+    /// route itself is disabled/404 for such tenants via <c>search.http=false</c>,
+    /// per docs/architecture/indexer-generalization.md). When the token IS set,
+    /// every request to the route MUST present a matching
+    /// <c>Authorization: Bearer &lt;token&gt;</c> header — this was previously
+    /// asserted only in comments and never enforced in code.
+    /// </summary>
+    internal static string? SearchToken()
+    {
+        var raw = Environment.GetEnvironmentVariable("INDEXER_SEARCH_TOKEN");
+        return string.IsNullOrEmpty(raw) ? null : raw;
+    }
 }

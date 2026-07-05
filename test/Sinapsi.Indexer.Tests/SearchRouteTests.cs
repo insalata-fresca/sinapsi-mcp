@@ -14,6 +14,10 @@
 //   5. 500 with redacted error when the store throws with a secret in the message.
 //   6. Seam contract: the route trusts the store to never return tombstoned or
 //      secret-path rows (documented via a controlled fake).
+//   7. M5-secure: the Bearer-token gate — missing/wrong token => 401 BEFORE the
+//      store is ever touched; correct token => 200. This is the missing
+//      enforcement the mission fixed (INDEXER_SEARCH_TOKEN was previously read
+//      nowhere in the service).
 //
 // Plain-ASCII banner so this source diffs as TEXT, never binary.
 // ---------------------------------------------------------------------------
@@ -77,8 +81,13 @@ internal sealed class ControllableIndexStore : IIndexStore
 /// </summary>
 internal static class SearchRouteHost
 {
-    /// <summary>Build a TestServer hosting only GET /search with the given store.</summary>
-    public static TestServer Build(IIndexStore store)
+    /// <summary>Build a TestServer hosting only GET /search with the given store.
+    /// When <paramref name="searchToken"/> is non-null, the route enforces the
+    /// Bearer-token gate (mirrors Program.cs exactly, including the M5-secure
+    /// fix); when null, callers get the pre-fix / "no capability" behaviour is
+    /// NOT exercised by this host — every test below passes a token so the gate
+    /// is always live, matching the fixed production route.</summary>
+    public static TestServer Build(IIndexStore store, string? searchToken = "test-search-token")
     {
         var builder = new WebHostBuilder()
             .ConfigureServices(services =>
@@ -91,7 +100,8 @@ internal static class SearchRouteHost
                 app.UseRouting();
                 app.UseEndpoints(endpoints =>
                 {
-                    // Mirror the GET /search route from Program.cs exactly.
+                    // Mirror the GET /search route from Program.cs exactly,
+                    // including the M5-secure Bearer-token gate.
                     endpoints.MapGet("/search", async (
                         HttpContext ctx,
                         IIndexStore s,
@@ -100,9 +110,19 @@ internal static class SearchRouteHost
                         string? source,
                         CancellationToken cancellationToken) =>
                     {
+                        var authHeader = ctx.Request.Headers.Authorization.FirstOrDefault();
+                        if (!SearchAuth.IsAuthorized(authHeader, searchToken))
+                        {
+                            await SearchAuth.WriteUnauthorizedAsync(ctx);
+                            return;
+                        }
+
                         var (req, err) = SearchRequest.TryParse(q, limit, source);
                         if (err is not null)
-                            return Results.Json(new { error = err }, statusCode: 400);
+                        {
+                            await Results.Json(new { error = err }, statusCode: 400).ExecuteAsync(ctx);
+                            return;
+                        }
 
                         try
                         {
@@ -110,12 +130,12 @@ internal static class SearchRouteHost
                             var items = hits
                                 .Select(h => new SearchResultItem(h.Source, h.Path, h.Kind, h.Title, h.Scope, h.Snippet, h.Score))
                                 .ToList();
-                            return Results.Json(new SearchResponse(req.Query, items.Count, items));
+                            await Results.Json(new SearchResponse(req.Query, items.Count, items)).ExecuteAsync(ctx);
                         }
                         catch (OperationCanceledException) { throw; }
                         catch (Exception e)
                         {
-                            return Results.Json(new { error = IndexerErrors.FromException(e) }, statusCode: 500);
+                            await Results.Json(new { error = IndexerErrors.FromException(e) }, statusCode: 500).ExecuteAsync(ctx);
                         }
                     });
                 });
@@ -123,6 +143,10 @@ internal static class SearchRouteHost
 
         return new TestServer(builder);
     }
+
+    /// <summary>Convenience: attach "Authorization: Bearer &lt;token&gt;" to a request.</summary>
+    public static void SetBearer(HttpClient client, string token) =>
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
 }
 
 // ---------------------------------------------------------------------------
@@ -140,6 +164,7 @@ public sealed class SearchRouteTests
     {
         using var server = SearchRouteHost.Build(new ThrowingIndexStore());
         var client = server.CreateClient();
+        SearchRouteHost.SetBearer(client, "test-search-token");
 
         var resp = await client.GetAsync($"/search?q={Uri.EscapeDataString(q)}");
 
@@ -155,6 +180,7 @@ public sealed class SearchRouteTests
     {
         using var server = SearchRouteHost.Build(new ThrowingIndexStore());
         var client = server.CreateClient();
+        SearchRouteHost.SetBearer(client, "test-search-token");
 
         var resp = await client.GetAsync("/search");
 
@@ -166,6 +192,7 @@ public sealed class SearchRouteTests
     {
         using var server = SearchRouteHost.Build(new ThrowingIndexStore());
         var client = server.CreateClient();
+        SearchRouteHost.SetBearer(client, "test-search-token");
 
         var resp = await client.GetAsync("/search?q=test&limit=0");
 
@@ -180,6 +207,7 @@ public sealed class SearchRouteTests
     {
         using var server = SearchRouteHost.Build(new ThrowingIndexStore());
         var client = server.CreateClient();
+        SearchRouteHost.SetBearer(client, "test-search-token");
 
         var resp = await client.GetAsync("/search?q=test&limit=999");
 
@@ -191,6 +219,7 @@ public sealed class SearchRouteTests
     {
         using var server = SearchRouteHost.Build(new ThrowingIndexStore());
         var client = server.CreateClient();
+        SearchRouteHost.SetBearer(client, "test-search-token");
 
         var resp = await client.GetAsync("/search?q=test&limit=abc");
 
@@ -211,6 +240,7 @@ public sealed class SearchRouteTests
         using var server = SearchRouteHost.Build(new ControllableIndexStore(
             (q, src, kind, lim, ct) => Task.FromResult<IReadOnlyList<SearchHit>>(expectedHits)));
         var client = server.CreateClient();
+        SearchRouteHost.SetBearer(client, "test-search-token");
 
         var resp = await client.GetAsync("/search?q=foo+bar");
 
@@ -240,6 +270,7 @@ public sealed class SearchRouteTests
         using var server = SearchRouteHost.Build(new ControllableIndexStore(
             (q, src, kind, lim, ct) => Task.FromResult<IReadOnlyList<SearchHit>>(Array.Empty<SearchHit>())));
         var client = server.CreateClient();
+        SearchRouteHost.SetBearer(client, "test-search-token");
 
         var resp = await client.GetAsync("/search?q=nonexistent+query+term");
 
@@ -264,6 +295,7 @@ public sealed class SearchRouteTests
                 return Task.FromResult<IReadOnlyList<SearchHit>>(Array.Empty<SearchHit>());
             }));
         var client = server.CreateClient();
+        SearchRouteHost.SetBearer(client, "test-search-token");
 
         await client.GetAsync("/search?q=anything&source=home-server");
 
@@ -283,6 +315,7 @@ public sealed class SearchRouteTests
                 return Task.FromResult<IReadOnlyList<SearchHit>>(Array.Empty<SearchHit>());
             }));
         var client = server.CreateClient();
+        SearchRouteHost.SetBearer(client, "test-search-token");
 
         await client.GetAsync("/search?q=test&limit=5");
 
@@ -296,6 +329,7 @@ public sealed class SearchRouteTests
     {
         using var server = SearchRouteHost.Build(new LeakingIndexStore());
         var client = server.CreateClient();
+        SearchRouteHost.SetBearer(client, "test-search-token");
 
         var resp = await client.GetAsync("/search?q=anything");
 
@@ -322,6 +356,7 @@ public sealed class SearchRouteTests
             (q, src, kind, lim, ct) =>
                 Task.FromResult<IReadOnlyList<SearchHit>>(new[] { cleanHit })));
         var client = server.CreateClient();
+        SearchRouteHost.SetBearer(client, "test-search-token");
 
         var resp = await client.GetAsync("/search?q=good");
 
@@ -333,5 +368,90 @@ public sealed class SearchRouteTests
         var path = doc.RootElement.GetProperty("results")[0].GetProperty("path").GetString();
         Assert.DoesNotContain("secrets", path ?? "");
         Assert.DoesNotContain("vault", path ?? "");
+    }
+
+    // ── M5-secure: the Bearer-token gate ──────────────────────────────────────
+    //
+    // Root cause: INDEXER_SEARCH_TOKEN was read NOWHERE in the service; the
+    // route was gated only by whether it was mounted at all. These tests pin
+    // the fix: no/wrong token => 401 BEFORE the store is ever touched (proven
+    // via a store that throws if invoked); correct token => 200.
+
+    [Fact]
+    public async Task Search_NoAuthorizationHeader_Returns401_StoreNeverInvoked()
+    {
+        using var server = SearchRouteHost.Build(new ThrowingIndexStore());
+        var client = server.CreateClient(); // no Authorization header at all
+
+        var resp = await client.GetAsync("/search?q=anything");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, resp.StatusCode);
+        var body = await resp.Content.ReadAsStringAsync();
+        var doc = JsonDocument.Parse(body);
+        Assert.Equal("unauthorized", doc.RootElement.GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task Search_WrongToken_Returns401_StoreNeverInvoked()
+    {
+        using var server = SearchRouteHost.Build(new ThrowingIndexStore());
+        var client = server.CreateClient();
+        SearchRouteHost.SetBearer(client, "totally-wrong-token");
+
+        var resp = await client.GetAsync("/search?q=anything");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task Search_MalformedAuthorizationHeader_Returns401()
+    {
+        using var server = SearchRouteHost.Build(new ThrowingIndexStore());
+        var client = server.CreateClient();
+        client.DefaultRequestHeaders.Add("Authorization", "test-search-token"); // missing "Bearer " scheme
+
+        var resp = await client.GetAsync("/search?q=anything");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task Search_CorrectToken_Returns200_WithHits()
+    {
+        var expectedHits = new List<SearchHit>
+        {
+            new("home-server", "docs/foo.md", "doc", "Foo Title", "", "...foo snippet...", 0.9),
+        };
+        using var server = SearchRouteHost.Build(new ControllableIndexStore(
+            (q, src, kind, lim, ct) => Task.FromResult<IReadOnlyList<SearchHit>>(expectedHits)));
+        var client = server.CreateClient();
+        SearchRouteHost.SetBearer(client, "test-search-token");
+
+        var resp = await client.GetAsync("/search?q=foo");
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        var body = await resp.Content.ReadAsStringAsync();
+        var doc = JsonDocument.Parse(body);
+        Assert.Equal(1, doc.RootElement.GetProperty("resultCount").GetInt32());
+    }
+
+    [Fact]
+    public void SearchAuth_IsAuthorized_UnitTests()
+    {
+        // No configured token => fail closed (never silently open), regardless of header.
+        Assert.False(SearchAuth.IsAuthorized(null, null));
+        Assert.False(SearchAuth.IsAuthorized("Bearer anything", null));
+        Assert.False(SearchAuth.IsAuthorized("Bearer anything", ""));
+
+        // Configured token, no/garbage header => unauthorized.
+        Assert.False(SearchAuth.IsAuthorized(null, "secret"));
+        Assert.False(SearchAuth.IsAuthorized("", "secret"));
+        Assert.False(SearchAuth.IsAuthorized("secret", "secret"));           // missing "Bearer " scheme
+        Assert.False(SearchAuth.IsAuthorized("Basic secret", "secret"));     // wrong scheme
+        Assert.False(SearchAuth.IsAuthorized("Bearer wrong", "secret"));     // mismatched token
+
+        // Configured token, correct header => authorized.
+        Assert.True(SearchAuth.IsAuthorized("Bearer secret", "secret"));
+        Assert.True(SearchAuth.IsAuthorized("bearer secret", "secret"));     // case-insensitive scheme
     }
 }

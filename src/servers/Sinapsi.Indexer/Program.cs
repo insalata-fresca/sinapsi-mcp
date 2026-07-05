@@ -134,14 +134,23 @@ app.MapGet("/", async (IServiceProvider sp, IIndexStore store) =>
     }, statusCode: ok ? 200 : 503);
 });
 
-// HTTP search endpoint — M-B3. Mounted ONLY when the search.http capability
-// is enabled; disabled ⇒ the route is never registered at all (404, same as
-// today's INDEXER_SEARCH_TOKEN-unset behaviour, but now capability-gated).
+// HTTP search endpoint — M-B3, token-gated (M5-secure fix). Mounted ONLY when
+// the search.http capability is enabled; disabled ⇒ the route is never
+// registered at all (404, same as today's INDEXER_SEARCH_TOKEN-unset
+// behaviour, but now capability-gated).
+//
+// M5-secure: INDEXER_SEARCH_TOKEN was previously read NOWHERE — the route was
+// wide open to any caller once mounted. Every request now MUST present
+// "Authorization: Bearer <INDEXER_SEARCH_TOKEN>" (constant-time compare via
+// SearchAuth); missing/mismatched => 401 BEFORE the store is ever touched.
+//
 // GET /search?q=<websearch query>[&limit=<1-30>][&source=<logical source name>]
 // Returns ranked FTS hits (ts_rank_cd, ts_headline snippets).
 // Tombstoned and secret-path rows are excluded IN THE STORE SQL (defence-in-depth).
 if (caps.SearchHttp)
 {
+    var searchToken = IndexerConfig.SearchToken();
+
     app.MapGet("/search", async (
         HttpContext ctx,
         IIndexStore store,
@@ -150,9 +159,19 @@ if (caps.SearchHttp)
         string? source,
         CancellationToken cancellationToken) =>
     {
+        var authHeader = ctx.Request.Headers.Authorization.FirstOrDefault();
+        if (!SearchAuth.IsAuthorized(authHeader, searchToken))
+        {
+            await SearchAuth.WriteUnauthorizedAsync(ctx);
+            return;
+        }
+
         var (req, err) = SearchRequest.TryParse(q, limit, source);
         if (err is not null)
-            return Results.Json(new { error = err }, statusCode: 400);
+        {
+            await Results.Json(new { error = err }, statusCode: 400).ExecuteAsync(ctx);
+            return;
+        }
 
         try
         {
@@ -160,13 +179,13 @@ if (caps.SearchHttp)
             var items = hits
                 .Select(h => new SearchResultItem(h.Source, h.Path, h.Kind, h.Title, h.Scope, h.Snippet, h.Score))
                 .ToList();
-            return Results.Json(new SearchResponse(req.Query, items.Count, items));
+            await Results.Json(new SearchResponse(req.Query, items.Count, items)).ExecuteAsync(ctx);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception e)
         {
             // Surface a scrubbed, capped error — never a raw connection string or token.
-            return Results.Json(new { error = IndexerErrors.FromException(e) }, statusCode: 500);
+            await Results.Json(new { error = IndexerErrors.FromException(e) }, statusCode: 500).ExecuteAsync(ctx);
         }
     }).WithName("SearchIndex").WithTags("search");
 }
