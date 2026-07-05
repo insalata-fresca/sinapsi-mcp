@@ -164,4 +164,58 @@ public sealed class IndexerCapabilitiesTests
         Assert.False(caps.NeedsAnyNatsConnection);
         Assert.False(caps.SearchHttp);
     }
+
+    // ── (d) nats.mode=private (cervello-private-events.md OPTION-1) ──────────────
+
+    [Fact]
+    public void NatsPrivate_WithIndexOn_SelectsPrivateSubjectConsumerShape()
+    {
+        var caps = new IndexerCapabilities(
+            index: true, searchMcp: true, searchHttp: true, learnPublish: false, natsMode: IndexerNatsMode.Private);
+
+        Assert.Equal(IndexWorkerShape.PrivateSubjectConsumer, caps.WorkerShape);
+        Assert.NotEqual(IndexWorkerShape.SharedBusConsumer, caps.WorkerShape);
+        Assert.NotEqual(IndexWorkerShape.TimerOnly, caps.WorkerShape);
+    }
+
+    [Fact]
+    public void NatsPrivate_NeedsANatsConnection_ForTheScopedIndexerIdentity()
+    {
+        var caps = new IndexerCapabilities(
+            index: true, searchMcp: true, searchHttp: true, learnPublish: false, natsMode: IndexerNatsMode.Private);
+
+        Assert.True(caps.NeedsAnyNatsConnection);
+    }
+
+    [Fact]
+    public void NatsPrivate_IsNeitherLegacyIsolatedNorSharedBus()
+    {
+        var caps = new IndexerCapabilities(
+            index: true, searchMcp: true, searchHttp: true, learnPublish: false, natsMode: IndexerNatsMode.Private);
+
+        // Back-compat bool must not misreport private as isolated.
+        Assert.False(caps.NatsIsolated);
+        Assert.Equal(IndexerNatsMode.Private, caps.NatsMode);
+    }
+
+    // FromEnvironment_WithNatsModePrivate_SelectsPrivateSubjectConsumer lives in
+    // IndexerConfigTests (the [Collection("indexer-env")] class) instead of here —
+    // this class is NOT collection-guarded (see FromEnvironment_WithNoCapVarsSet_
+    // MatchesBundledDefaults above, a pre-existing env-mutating test in this same
+    // un-guarded class), so a test here that sets process env can race against
+    // IndexerConfigTests's env-mutating tests under parallel xUnit execution.
+    // Keeping the env-mutating FromEnvironment(private) proof inside the already
+    // serialized indexer-env collection avoids adding a NEW instance of that
+    // pre-existing race rather than fixing it.
+
+    // ── back-compat: the bool-natsIsolated constructor still cannot express private ──
+
+    [Fact]
+    public void BoolConstructor_NatsIsolatedTrue_IsIsolated_NotPrivate()
+    {
+        var caps = new IndexerCapabilities(index: true, searchMcp: true, searchHttp: true, learnPublish: false, natsIsolated: true);
+
+        Assert.Equal(IndexerNatsMode.Isolated, caps.NatsMode);
+        Assert.Equal(IndexWorkerShape.TimerOnly, caps.WorkerShape);
+    }
 }

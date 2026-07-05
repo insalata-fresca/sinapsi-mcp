@@ -135,17 +135,54 @@ internal static class IndexerConfig
     internal static bool CapLearnPublish() => ReadCap("INDEXER_CAP_LEARN_PUBLISH", DefaultCapLearnPublish);
 
     /// <summary>True when <c>INDEXER_NATS_MODE=isolated</c> (case-insensitive).
-    /// Any other non-empty value must be exactly "shared-bus" (fail-closed —
-    /// reject an unrecognised mode by name rather than silently treating it as
-    /// shared-bus). Unset ⇒ shared-bus (back-compat).</summary>
-    internal static bool NatsIsolated()
+    /// Any other non-empty value must be exactly "shared-bus" or "private"
+    /// (fail-closed — reject an unrecognised mode by name rather than silently
+    /// treating it as shared-bus). Unset ⇒ shared-bus (back-compat). Kept for
+    /// back-compat call sites; prefer <see cref="NatsMode"/> for the full
+    /// three-way switch (cervello-private-events.md, OPTION-1).</summary>
+    internal static bool NatsIsolated() => NatsMode() == IndexerNatsMode.Isolated;
+
+    /// <summary>True when <c>INDEXER_NATS_MODE=private</c> (case-insensitive) — the
+    /// event-driven-on-a-scoped-nkey-and-private-subject-tree mode
+    /// (docs/architecture/cervello-private-events.md, OPTION-1). See
+    /// <see cref="NatsMode"/> for the full three-way switch.</summary>
+    internal static bool NatsPrivate() => NatsMode() == IndexerNatsMode.Private;
+
+    /// <summary>Read + validate <c>INDEXER_NATS_MODE</c>: <c>shared-bus</c> (default,
+    /// unset ⇒ back-compat), <c>isolated</c> (no NATS, timer-only), or <c>private</c>
+    /// (scoped nkey, private subject/stream, event-driven — cervello-private-events.md
+    /// OPTION-1). Any other value is rejected (fail-closed), naming the var.</summary>
+    internal static IndexerNatsMode NatsMode()
     {
         var raw = Environment.GetEnvironmentVariable("INDEXER_NATS_MODE");
-        if (string.IsNullOrEmpty(raw)) return false; // shared-bus default
-        if (string.Equals(raw, "isolated", StringComparison.OrdinalIgnoreCase)) return true;
-        if (string.Equals(raw, "shared-bus", StringComparison.OrdinalIgnoreCase)) return false;
+        if (string.IsNullOrEmpty(raw)) return IndexerNatsMode.SharedBus; // back-compat default
+        if (string.Equals(raw, "shared-bus", StringComparison.OrdinalIgnoreCase)) return IndexerNatsMode.SharedBus;
+        if (string.Equals(raw, "isolated", StringComparison.OrdinalIgnoreCase)) return IndexerNatsMode.Isolated;
+        if (string.Equals(raw, "private", StringComparison.OrdinalIgnoreCase)) return IndexerNatsMode.Private;
         throw new InvalidOperationException(
-            $"INDEXER_NATS_MODE='{raw}' is invalid: expected 'shared-bus' or 'isolated' (default {DefaultNatsMode}).");
+            $"INDEXER_NATS_MODE='{raw}' is invalid: expected 'shared-bus', 'isolated', or 'private' (default {DefaultNatsMode}).");
+    }
+
+    /// <summary>Config-layer (secondary) belt-and-braces bar for <c>private</c> mode
+    /// (cervello-private-events.md §4.2.4): the configured watch subject MUST be
+    /// under <paramref name="allowedSubjectPrefix"/> (e.g. <c>homelab.cervello.</c>)
+    /// and the configured stream must equal <paramref name="allowedStream"/> (e.g.
+    /// <c>CERVELLO_AUDIT</c>). A mismatch is a fail-closed startup error naming the
+    /// offending var — the auth-layer nkey scope is the PRIMARY bar (the server
+    /// itself refuses a subscribe outside the nkey's scope); this is the secondary,
+    /// defence-in-depth check so a fat-fingered config never even attempts the
+    /// subscribe. Never called for shared-bus/isolated modes.</summary>
+    internal static void ValidatePrivateSubjectAndStream(
+        string watchSubject, string stream, string allowedSubjectPrefix, string allowedStream)
+    {
+        if (!watchSubject.StartsWith(allowedSubjectPrefix, StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                $"INDEXER_WATCH_SUBJECT='{watchSubject}' is invalid for INDEXER_NATS_MODE=private: " +
+                $"must start with '{allowedSubjectPrefix}' (the private cervello subject tree only).");
+        if (!string.Equals(stream, allowedStream, StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                $"INDEXER_STREAM='{stream}' is invalid for INDEXER_NATS_MODE=private: " +
+                $"must be '{allowedStream}' (the dedicated private stream only).");
     }
 
     /// <summary>
