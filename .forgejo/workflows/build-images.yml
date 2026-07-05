@@ -1,4 +1,4 @@
-# Build + push the 13 MCP server OCI images (added bridge-mcp in B4b-9).
+# Build + push the MCP server OCI images + the cervello-watcher worker (14 images).
 #
 # Mirrors the home-server build-push-release pattern: a self-hosted runner shells
 # `podman build --network=host` (the runner LXC has no /dev/net/tun, so rootless
@@ -41,6 +41,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # S50 M6 — the CT146-cervello recordings watcher (no-NATS WATCH→NORMALIZE
+          # worker; not an MCP server, but rides the same image plane).
+          - { server: Cervello.Watcher,  image: cervello-watcher }
           - { server: Bridge.Mcp,       image: bridge-mcp }
           - { server: Forge.Mcp,        image: forge-mcp }
           - { server: Gdrive.Mcp,       image: gdrive-mcp }
