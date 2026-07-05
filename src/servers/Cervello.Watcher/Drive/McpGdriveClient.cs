@@ -90,7 +90,7 @@ public sealed class McpGdriveClient : IDriveClient
 
         var jwt = await MintAsync(ct).ConfigureAwait(false);
         var raw = await _gateway.CallToolAsync(
-            _gatewayUri, jwt, "search_files", new { query, pageSize = 10 }, ct).ConfigureAwait(false);
+            _gatewayUri, jwt, "gdrive_search_files", new { query, pageSize = 10 }, ct).ConfigureAwait(false);
 
         using var doc = JsonDocument.Parse(raw);
         var root = doc.RootElement;
@@ -143,7 +143,7 @@ public sealed class McpGdriveClient : IDriveClient
 
         var jwt = await MintAsync(ct).ConfigureAwait(false);
         var raw = await _gateway.CallToolAsync(
-            _gatewayUri, jwt, "list_files",
+            _gatewayUri, jwt, "gdrive_list_files",
             new { folderId, pageSize = 1000, includeTrashed = false }, ct).ConfigureAwait(false);
 
         var files = ParseFileList(raw);
@@ -179,7 +179,7 @@ public sealed class McpGdriveClient : IDriveClient
     {
         var jwt = await MintAsync(ct).ConfigureAwait(false);
         var raw = await _gateway.CallToolAsync(
-            _gatewayUri, jwt, "get_file_metadata", new { fileId }, ct).ConfigureAwait(false);
+            _gatewayUri, jwt, "gdrive_get_file_metadata", new { fileId }, ct).ConfigureAwait(false);
 
         using var doc = JsonDocument.Parse(raw);
         var root = doc.RootElement;
@@ -208,7 +208,7 @@ public sealed class McpGdriveClient : IDriveClient
             try
             {
                 raw = await _gateway.CallToolAsync(
-                    _gatewayUri, jwt, "download_file_base64",
+                    _gatewayUri, jwt, "gdrive_download_file_base64",
                     new { fileId, offset, maxBytes = chunkBytes }, ct).ConfigureAwait(false);
             }
             catch (InvalidOperationException e)
