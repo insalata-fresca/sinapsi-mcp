@@ -18,6 +18,10 @@ public sealed class AuthService(BridgeConfig config, BridgeRateLimiter limiter)
     public const string ReadFactsScope            = "bridge:read:facts";
     public const string ReadFactsSensitiveScope   = "bridge:read:facts_sensitive";
     public const string ContextPackScope          = "bridge:context_pack";
+    // Cervello Surface A (S50 L3): a cervello-scoped credential distinct from the shared bridge
+    // token (ACCESS.md §2). read = list the pending open-points; deposit = answer (write-back).
+    public const string CervelloReadScope         = "bridge:cervello:read";
+    public const string CervelloDepositScope      = "bridge:cervello:deposit";
 
     // ── Bucket names ──────────────────────────────────────────────────────────
     public const string DepositBucket   = "deposit";

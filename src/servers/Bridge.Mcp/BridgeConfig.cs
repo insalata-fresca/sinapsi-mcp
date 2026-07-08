@@ -59,10 +59,35 @@ public sealed class BridgeConfig
     /// </summary>
     public string CareerSearchToken { get; init; } = "";
 
+    // ----- Cervello open-points (S50 L3 exposure) -----
+    /// <summary>
+    /// Base URL for the token-gated cervello open-points HTTP surface on CT146-cervello
+    /// (CERVELLO_OPEN_POINTS_URL). C# target: the enrichment host on :8147. The bridge calls
+    /// GET {url}/open-points and POST {url}/open-points/{id}/answer.
+    /// </summary>
+    public string CervelloOpenPointsUrl { get; init; } = "http://cervello.internal:8147";
+
+    /// <summary>
+    /// Bearer token for the cervello open-points surface (CERVELLO_OPEN_POINTS_TOKEN) — the SAME
+    /// operator bearer the CT146 TokenOpenPointsAuthGate expects. Empty string means the tools
+    /// return not_configured before any I/O.
+    /// </summary>
+    public string CervelloOpenPointsToken { get; init; } = "";
+
+    /// <summary>
+    /// Emergency-disable master switch for the cervello Surface A tools (ACCESS.md §7).
+    /// CERVELLO_EXPOSED=false (default true) immediately severs the open-points tools at the bridge
+    /// edge — they return {status:"disabled"} before any I/O — without a redeploy.
+    /// </summary>
+    public bool CervelloExposed { get; init; } = true;
+
     // ----- OAuth scopes (informational — advertised in RFC 9728 metadata) -----
     /// <summary>
     /// Scopes declared in /.well-known/oauth-protected-resource.
     /// Includes bridge:read:emails even though no tool enforces it (preserve for OAuth discovery).
+    /// The bridge:cervello:* scopes gate the Surface A cervello tools (ACCESS.md §2 — a
+    /// cervello-scoped credential distinct from the shared bridge token; read vs deposit split so a
+    /// read-only Project binding is possible).
     /// </summary>
     public static readonly string[] ScopesSupported =
     [
@@ -72,6 +97,8 @@ public sealed class BridgeConfig
         "bridge:read:facts_sensitive",
         "bridge:read:emails",
         "bridge:context_pack",
+        "bridge:cervello:read",
+        "bridge:cervello:deposit",
     ];
 
     // ----- Rate limits (requests per minute) -----
@@ -95,6 +122,12 @@ public sealed class BridgeConfig
             Environment.GetEnvironmentVariable(name) is { Length: > 0 } v ? v : fallback;
         static int EnvInt(string name, int fallback) =>
             int.TryParse(Environment.GetEnvironmentVariable(name), out var v) ? v : fallback;
+        // CERVELLO_EXPOSED defaults TRUE; only an explicit false/0/no disables (fail-OPEN on a typo
+        // is acceptable here because the CT146 token gate is the real fail-closed control).
+        static bool EnvBool(string name, bool fallback) =>
+            Environment.GetEnvironmentVariable(name) is { Length: > 0 } v
+                ? v.Trim().ToLowerInvariant() is not ("false" or "0" or "no" or "off")
+                : fallback;
 
         return new BridgeConfig
         {
@@ -110,6 +143,9 @@ public sealed class BridgeConfig
             AuditRepo           = Env("AUDIT_REPO", ""),
             CareerSearchUrl     = Env("CAREER_SEARCH_URL", "http://indexer.internal:8009"),
             CareerSearchToken   = Env("CAREER_SEARCH_TOKEN", ""),
+            CervelloOpenPointsUrl   = Env("CERVELLO_OPEN_POINTS_URL", "http://cervello.internal:8147"),
+            CervelloOpenPointsToken = Env("CERVELLO_OPEN_POINTS_TOKEN", ""),
+            CervelloExposed         = EnvBool("CERVELLO_EXPOSED", true),
 
             RateLimitDepositPerMin   = EnvInt("BRIDGE_RATE_LIMIT_DEPOSIT_PER_MIN",   30),
             RateLimitReadPerMin      = EnvInt("BRIDGE_RATE_LIMIT_READ_PER_MIN",       60),

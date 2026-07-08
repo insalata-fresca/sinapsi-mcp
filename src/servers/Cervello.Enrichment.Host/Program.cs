@@ -111,6 +111,15 @@ app.MapGet("/healthz", (DrainWorker w) =>
         ? Results.Json(new { status = "ok" }, statusCode: 200)
         : Results.Json(new { status = "starting" }, statusCode: 503));
 
+// ── open-points HTTP surface (S50 L3 exposure) ──────────────────────────────────────────────
+//    Token-gated GET /open-points + POST /open-points/{id}/answer, fronting OpenPointsService so
+//    the operator's claude.ai app (Surface A via the CT145 bridge) can list + answer open-points.
+//    LIVE mode only: the service + its write-back seams are wired by AddCervelloEnrichment's live
+//    branch; in fake mode OpenPointsService is unresolvable (no graph-writer / enrollment source),
+//    so the routes are mapped only when live. The bearer gate fails CLOSED on an empty token.
+if (engineCfg.UseLiveAdapters)
+    app.MapOpenPoints();
+
 app.Urls.Add($"http://{hostCfg.HealthHost}:{hostCfg.HealthPort}");
 app.Run();
 
