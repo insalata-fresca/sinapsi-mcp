@@ -55,6 +55,12 @@ public sealed class McpGdriveClientTests : IDisposable
         // When set, the NEXT tools/call returns this HTTP status (transport-layer failure)
         // instead of a scripted tool result — simulates a 5xx from the gateway itself.
         public HttpStatusCode? FailNextCallWithStatus;
+        // When > 0, the next N tools/call attempts return this status before a scripted
+        // result is served — simulates a transient gateway failure that recovers (M6-finish
+        // bounded-retry test). Each consumed failure decrements the counter.
+        public int FailFirstNCallsWithStatusCount;
+        public HttpStatusCode FailFirstNCallsWithStatus = HttpStatusCode.ServiceUnavailable;
+        public int ToolCallAttempts; // every tools/call attempt, including failed ones
         private int _seq;
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -73,10 +79,16 @@ public sealed class McpGdriveClientTests : IDisposable
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{}") };
 
             // tools/call
+            ToolCallAttempts++;
             if (FailNextCallWithStatus is { } status)
             {
                 FailNextCallWithStatus = null;
                 return new HttpResponseMessage(status) { Content = new StringContent("upstream unavailable") };
+            }
+            if (FailFirstNCallsWithStatusCount > 0)
+            {
+                FailFirstNCallsWithStatusCount--;
+                return new HttpResponseMessage(FailFirstNCallsWithStatus) { Content = new StringContent("upstream transiently unavailable") };
             }
             ToolCalls.Add(doc.RootElement.GetProperty("params").Clone());
             var payload = toolResults.Count > 0 ? toolResults.Dequeue() : new { ok = false, error = "no scripted result" };
@@ -137,7 +149,12 @@ public sealed class McpGdriveClientTests : IDisposable
         Assert.Contains("folder-recordings", page.Changes[0].Parents);
 
         Assert.Single(gw.ToolCalls);
-        Assert.Equal("list_files", ToolName(gw.ToolCalls[0]));
+        // WIRE name is gdrive_-prefixed: the agentgateway federates the gdrive backend and
+        // splits the tool name on the FIRST underscore into target="gdrive" + bare tool
+        // "list_files". The PEP CEL rule matches the BARE name (mcp.tool.name in [...]); the
+        // CLIENT must send the prefixed federated name. Asserting the bare name here (the M6
+        // pre-refine assumption) is what made this red — the production prefix is correct.
+        Assert.Equal("gdrive_list_files", ToolName(gw.ToolCalls[0]));
         Assert.Equal("folder-recordings", Args(gw.ToolCalls[0]).GetProperty("folderId").GetString());
     }
 
@@ -219,7 +236,7 @@ public sealed class McpGdriveClientTests : IDisposable
         Assert.NotNull(change);
         Assert.Equal("A", change!.FileId);
         Assert.Equal("Foo.m4a", change.Name);
-        Assert.Equal("get_file_metadata", ToolName(gw.ToolCalls[0]));
+        Assert.Equal("gdrive_get_file_metadata", ToolName(gw.ToolCalls[0])); // federated wire name (PEP splits on first _)
         Assert.Equal("A", Args(gw.ToolCalls[0]).GetProperty("fileId").GetString());
     }
 
@@ -245,7 +262,7 @@ public sealed class McpGdriveClientTests : IDisposable
 
         Assert.Equal(bytes, ms.ToArray());
         Assert.Single(gw.ToolCalls);
-        Assert.Equal("download_file_base64", ToolName(gw.ToolCalls[0]));
+        Assert.Equal("gdrive_download_file_base64", ToolName(gw.ToolCalls[0])); // federated wire name (PEP splits on first _)
         Assert.Equal(0, Args(gw.ToolCalls[0]).GetProperty("offset").GetInt64());
     }
 
@@ -280,11 +297,77 @@ public sealed class McpGdriveClientTests : IDisposable
     [Fact]
     public async Task DownloadMedia_throws_a_transient_DriveMediaException_on_gateway_5xx()
     {
-        var (client, gw, _) = Build(null);
+        // No in-call retry (GdriveMaxRetries=0) — the single 5xx surfaces immediately as transient.
+        var cfg = NoRetryCfg();
+        var (client, gw, _) = Build(cfg);
         gw.FailNextCallWithStatus = HttpStatusCode.ServiceUnavailable;
         using var ms = new MemoryStream();
         var ex = await Assert.ThrowsAsync<DriveMediaException>(() => client.DownloadMediaAsync("A", ms, default));
         Assert.True(ex.Transient); // a gateway-level 5xx is worth retrying under the same key
+    }
+
+    // ---- M6-finish: bounded retry + timeout on TRANSIENT gdrive failures ----
+
+    /// <summary>Config with retries but zero backoff — fast deterministic retry tests.</summary>
+    private static WatcherConfig FastRetryCfg(int maxRetries) =>
+        WatcherConfig.From(new Dictionary<string, string?>())
+            with { GatewayUrl = Gateway.ToString(), FolderId = "folder-recordings", GdriveMaxRetries = maxRetries, GdriveRetryBackoffMs = 0 };
+
+    /// <summary>Config with retries disabled — a transient failure surfaces on the first try.</summary>
+    private static WatcherConfig NoRetryCfg() =>
+        WatcherConfig.From(new Dictionary<string, string?>())
+            with { GatewayUrl = Gateway.ToString(), FolderId = "folder-recordings", GdriveMaxRetries = 0, GdriveRetryBackoffMs = 0 };
+
+    [Fact]
+    public async Task ListChanges_retries_a_transient_5xx_then_succeeds()
+    {
+        var (client, gw, _) = Build(FastRetryCfg(3),
+            new { count = 0, files = Array.Empty<object>() });
+        gw.FailFirstNCallsWithStatusCount = 2; // two 5xx, then the scripted success
+
+        var start = await client.GetStartPageTokenAsync(default);
+        var page = await client.ListChangesAsync(start, default);
+
+        Assert.Empty(page.Changes);
+        Assert.Equal(3, gw.ToolCallAttempts); // 2 failed + 1 success — retried under the bound
+        Assert.Single(gw.ToolCalls);          // only the successful attempt was recorded/parsed
+    }
+
+    [Fact]
+    public async Task ListChanges_transient_5xx_exhausting_retries_propagates()
+    {
+        var (client, gw, _) = Build(FastRetryCfg(2)); // 2 retries => 3 attempts, all fail
+        gw.FailFirstNCallsWithStatusCount = 99;
+
+        var start = await client.GetStartPageTokenAsync(default);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.ListChangesAsync(start, default));
+        Assert.Equal(3, gw.ToolCallAttempts); // bounded at maxRetries+1 — does NOT spin forever
+    }
+
+    [Fact]
+    public async Task DownloadMedia_retries_a_transient_5xx_then_reassembles_bytes()
+    {
+        var bytes = Encoding.UTF8.GetBytes("recovered audio");
+        var (client, gw, _) = Build(FastRetryCfg(3),
+            new { fileId = "A", offset = 0, returnedBytes = bytes.Length, totalSize = bytes.Length, encoding = "base64", content = Convert.ToBase64String(bytes), eof = true });
+        gw.FailFirstNCallsWithStatusCount = 1; // one 5xx, then success
+
+        using var ms = new MemoryStream();
+        await client.DownloadMediaAsync("A", ms, default);
+
+        Assert.Equal(bytes, ms.ToArray());
+        Assert.Equal(2, gw.ToolCallAttempts); // 1 failed + 1 success
+    }
+
+    [Fact]
+    public async Task DownloadMedia_terminal_gdrive_envelope_is_not_retried()
+    {
+        // {ok:false} is a 200 with an error envelope — terminal, must NOT consume retries.
+        var (client, gw, _) = Build(FastRetryCfg(5), new { ok = false, error = "404 not found" });
+        using var ms = new MemoryStream();
+        var ex = await Assert.ThrowsAsync<DriveMediaException>(() => client.DownloadMediaAsync("gone", ms, default));
+        Assert.False(ex.Transient);
+        Assert.Equal(1, gw.ToolCallAttempts); // exactly one attempt — no retry on a terminal envelope
     }
 
     // ---- ResolveFolderIdAsync ----
@@ -308,7 +391,7 @@ public sealed class McpGdriveClientTests : IDisposable
         var id = await client.ResolveFolderIdAsync(default);
 
         Assert.Equal("resolved-folder-id", id);
-        Assert.Equal("search_files", ToolName(gw.ToolCalls[0]));
+        Assert.Equal("gdrive_search_files", ToolName(gw.ToolCalls[0])); // federated wire name (PEP splits on first _)
         Assert.Contains("recordings", Args(gw.ToolCalls[0]).GetProperty("query").GetString());
     }
 

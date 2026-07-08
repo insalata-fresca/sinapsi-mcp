@@ -28,8 +28,12 @@ builder.Services.AddSingleton(cfg);
 
 // --- Drive seam (gdrive MCP via the agentgateway, M6-refine) ---
 builder.Services.AddSingleton(AgentJwtOptions.FromEnvironment());
-builder.Services.AddHttpClient<AgentJwtMinter>();
-builder.Services.AddHttpClient<GatewayMcpClient>(c => c.Timeout = Timeout.InfiniteTimeSpan);
+builder.Services.AddHttpClient<AgentJwtMinter>(c => c.Timeout = TimeSpan.FromSeconds(cfg.HttpTimeoutSeconds));
+// Bounded per-request ceiling on the gdrive-MCP round-trip (M6-finish stall guard).
+// Previously Timeout.InfiniteTimeSpan — a hung gdrive-mcp call would stall the watcher
+// forever (the M6 stall residual). A timeout now surfaces as TaskCanceledException,
+// which McpGdriveClient's bounded retry + Downloader.IsTransient both treat as retryable.
+builder.Services.AddHttpClient<GatewayMcpClient>(c => c.Timeout = TimeSpan.FromSeconds(cfg.HttpTimeoutSeconds));
 builder.Services.AddSingleton<IDriveClient, McpGdriveClient>();
 
 // --- durable state (on-CT Postgres, D4) ---

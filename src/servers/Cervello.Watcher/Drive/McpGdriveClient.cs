@@ -70,6 +70,61 @@ public sealed class McpGdriveClient : IDriveClient
         await _jwtMinter.MintAsync(_cfg.WatcherAgent, ct).ConfigureAwait(false);
 
     /// <summary>
+    /// One gdrive-MCP tool call through the gateway, with a bounded retry on a
+    /// TRANSIENT failure (M6-finish stall guard). A fresh JWT is minted per attempt
+    /// (the previous one may have expired mid-backoff). Retries only:
+    /// <list type="bullet">
+    /// <item>an HttpClient timeout — <see cref="TaskCanceledException"/> / <see cref="TimeoutException"/>
+    /// (never the caller's own <paramref name="ct"/> cancellation, which rethrows immediately);</item>
+    /// <item>a gateway 5xx / transport-level error — <see cref="GatewayMcpClient"/> embeds the
+    /// status in an <see cref="InvalidOperationException"/> message (<see cref="IsRetryableStatus"/>).</item>
+    /// </list>
+    /// A gdrive <c>{ok:false}</c> envelope is NOT an exception here (the tool returned 200);
+    /// each caller inspects it and decides terminal-vs-null itself. Attempts are bounded by
+    /// <see cref="WatcherConfig.GdriveMaxRetries"/> with exponential backoff
+    /// (<see cref="WatcherConfig.GdriveRetryBackoffMs"/> * 2^attempt); after the last attempt
+    /// the exception propagates to the cycle-level poll retry (cursor unchanged).
+    /// </summary>
+    private async Task<string> CallToolWithRetryAsync(string toolName, object toolArgs, CancellationToken ct)
+    {
+        var maxAttempts = _cfg.GdriveMaxRetries + 1; // retries + the initial try
+        for (var attempt = 0; ; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var jwt = await MintAsync(ct).ConfigureAwait(false);
+                return await _gateway.CallToolAsync(_gatewayUri, jwt, toolName, toolArgs, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw; // caller cancellation — never retried, never swallowed
+            }
+            catch (Exception e) when (attempt < maxAttempts - 1 && IsTransientCall(e))
+            {
+                var delayMs = _cfg.GdriveRetryBackoffMs * (1 << Math.Min(attempt, 20));
+                if (delayMs > 0)
+                    await Task.Delay(delayMs, ct).ConfigureAwait(false);
+                // fall through to the next attempt
+            }
+        }
+    }
+
+    /// <summary>
+    /// True if a gdrive-MCP call failure is worth retrying under the same key: an
+    /// HttpClient timeout, or a gateway 5xx / transport-level error whose status is
+    /// embedded in the <see cref="GatewayMcpClient"/> exception message. Terminal
+    /// (4xx, unparseable, validation) failures return false and propagate straight through.
+    /// </summary>
+    private static bool IsTransientCall(Exception e) => e switch
+    {
+        TaskCanceledException => true,  // HttpClient.Timeout elapsed
+        TimeoutException => true,
+        InvalidOperationException ioe => IsRetryableStatus(ioe.Message),
+        _ => false,
+    };
+
+    /// <summary>
     /// Startup-only helper (NOT part of <see cref="IDriveClient"/>): resolve
     /// <see cref="WatcherConfig.FolderPath"/> (e.g. <c>cervello/recordings</c>) to
     /// its Drive folder id via <c>gdrive_search_files</c>, when
@@ -88,9 +143,8 @@ public sealed class McpGdriveClient : IDriveClient
         var escaped = leafName.Replace("\\", "\\\\").Replace("'", "\\'");
         var query = $"name = '{escaped}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false";
 
-        var jwt = await MintAsync(ct).ConfigureAwait(false);
-        var raw = await _gateway.CallToolAsync(
-            _gatewayUri, jwt, "gdrive_search_files", new { query, pageSize = 10 }, ct).ConfigureAwait(false);
+        var raw = await CallToolWithRetryAsync(
+            "gdrive_search_files", new { query, pageSize = 10 }, ct).ConfigureAwait(false);
 
         using var doc = JsonDocument.Parse(raw);
         var root = doc.RootElement;
@@ -141,9 +195,8 @@ public sealed class McpGdriveClient : IDriveClient
                 "McpGdriveClient requires a resolved FolderId (WatcherConfig.FolderId) — " +
                 "resolve cfg.FolderPath via gdrive_search_files at startup before polling.");
 
-        var jwt = await MintAsync(ct).ConfigureAwait(false);
-        var raw = await _gateway.CallToolAsync(
-            _gatewayUri, jwt, "gdrive_list_files",
+        var raw = await CallToolWithRetryAsync(
+            "gdrive_list_files",
             new { folderId, pageSize = 1000, includeTrashed = false }, ct).ConfigureAwait(false);
 
         var files = ParseFileList(raw);
@@ -177,9 +230,8 @@ public sealed class McpGdriveClient : IDriveClient
 
     public async Task<DriveChange?> GetMetadataAsync(string fileId, CancellationToken ct)
     {
-        var jwt = await MintAsync(ct).ConfigureAwait(false);
-        var raw = await _gateway.CallToolAsync(
-            _gatewayUri, jwt, "gdrive_get_file_metadata", new { fileId }, ct).ConfigureAwait(false);
+        var raw = await CallToolWithRetryAsync(
+            "gdrive_get_file_metadata", new { fileId }, ct).ConfigureAwait(false);
 
         using var doc = JsonDocument.Parse(raw);
         var root = doc.RootElement;
@@ -203,13 +255,24 @@ public sealed class McpGdriveClient : IDriveClient
         long offset = 0;
         while (true)
         {
-            var jwt = await MintAsync(ct).ConfigureAwait(false);
             string raw;
             try
             {
-                raw = await _gateway.CallToolAsync(
-                    _gatewayUri, jwt, "gdrive_download_file_base64",
+                // Bounded in-call retry on a transient gateway 5xx / timeout (M6-finish);
+                // after the retries are exhausted the original exception propagates here
+                // and is re-wrapped as a DriveMediaException for the cycle-level retry.
+                raw = await CallToolWithRetryAsync(
+                    "gdrive_download_file_base64",
                     new { fileId, offset, maxBytes = chunkBytes }, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw; // caller cancellation — not a media failure
+            }
+            catch (TaskCanceledException e)
+            {
+                // HttpClient.Timeout elapsed (not caller cancellation) — transient.
+                throw new DriveMediaException($"gdrive download timed out: {e.Message}", transient: true);
             }
             catch (InvalidOperationException e)
             {
