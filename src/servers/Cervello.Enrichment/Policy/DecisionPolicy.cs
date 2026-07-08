@@ -126,8 +126,17 @@ public sealed class DecisionPolicy(
         var best = c.BestMatchCosine;
         var person = c.BestMatchPerson;
 
+        // Reject band or no match → NEVER auto-apply. Reaching here with a below-reject cosine means
+        // the omit guard was skipped ONLY because a prior AGREES (step 1). A prior is a *confirming*
+        // signal, never a standalone identity basis (DESIGN §5.1: auto requires cosine ≥ auto band) —
+        // so a below-reject match + agreeing prior ESCALATES to the operator, it does not assert an
+        // identity at ~0 voice confidence. This is the no-guess floor holding at the policy seam.
+        if (person is null || _bands.IsReject(best))
+            return AttributionVerdict.OpenPoint(c.MergedSpeaker, best,
+                $"below-reject voice match {Describe(c)} with only a prior → operator confirmation required (a prior never auto-applies alone)");
+
         // Review band → escalate (a low-confidence match is never auto-applied).
-        if (person is null || _bands.IsReview(best))
+        if (_bands.IsReview(best))
             return AttributionVerdict.OpenPoint(c.MergedSpeaker, best,
                 $"review-band match {Describe(c)} → operator confirmation required");
 
