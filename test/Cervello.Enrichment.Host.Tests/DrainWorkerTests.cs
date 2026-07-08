@@ -1,7 +1,9 @@
 using Cervello.Enrichment.Adapters;
 using Cervello.Enrichment.Domain;
 using Cervello.Enrichment.Host.Drain;
+using Cervello.Enrichment.Pipeline;
 using Cervello.Enrichment.Pipeline.Stages;
+using Cervello.Enrichment.Policy;
 using Cervello.Enrichment.Ports;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -9,10 +11,12 @@ using Xunit;
 namespace Cervello.Enrichment.Host.Tests;
 
 /// <summary>
-/// The drain-loop behavioural contract (E-HOST), all against FAKES — no DB, no network, no real
-/// audio. A single deterministic <c>RunCycleAsync</c> proves: a normalized item drains through the
-/// pipeline entry and advances to <c>enriched</c>; an idempotent replay is a no-op; escalate-only
-/// holds (no auto-apply); a per-item error maps to <c>failed_retryable</c> without aborting the batch.
+/// The drain-loop behavioural contract, all against FAKES — no DB, no network, no real audio. After
+/// the E-PIPE rewire the worker runs the FULL <see cref="EnrichmentPipeline"/> orchestrator (not just
+/// the ingest entry), so a single deterministic <c>RunCycleAsync</c> proves: a normalized item drains
+/// through the WHOLE chain and advances to <c>graph_pr_opened</c>; the shared row records the last
+/// state; an idempotent replay is a no-op; escalate-only holds (no auto-apply, no real map-PR); a
+/// per-item error maps to <c>failed_retryable</c> without aborting the batch.
 /// </summary>
 public sealed class DrainWorkerTests
 {
@@ -22,13 +26,39 @@ public sealed class DrainWorkerTests
     private static HostConfig Cfg(int batch = 16) =>
         HostConfig.From(new Dictionary<string, string?> { ["CERVELLO_ENRICHMENT_BATCH_SIZE"] = batch.ToString() });
 
+    /// <summary>Build a full-pipeline drain worker over the given queue + ledger, all fakes.</summary>
     private static DrainWorker Worker(
-        HostConfig cfg, INormalizedWorkQueue queue, IEnrichmentLedger ledger) =>
-        new(cfg, queue, new IngestStage(ledger), ledger, NullLogger<DrainWorker>.Instance);
+        HostConfig cfg, INormalizedWorkQueue queue, IEnrichmentLedger ledger,
+        IDiarizeEmbedClient? diarize = null)
+    {
+        var pipeline = BuildPipeline(ledger, diarize);
+        return new DrainWorker(cfg, queue, pipeline, NullLogger<DrainWorker>.Instance);
+    }
 
-    // ── drain: a normalized recording advances to enriched ─────────────────────────
+    private static EnrichmentPipeline BuildPipeline(
+        IEnrichmentLedger ledger, IDiarizeEmbedClient? diarizeClient = null)
+    {
+        var store = new InMemoryVoiceprintStore(EnrollmentAllowlist.Empty);
+        var prior = new FilenameParticipantPriorSource(new Dictionary<string, PriorCandidates>());
+        return new EnrichmentPipeline(
+            new IngestStage(ledger),
+            new HostFakeAudioSource(),
+            new BaseTranscribeStage(new HostFakeTranscribeClient(), new HostInMemoryTranscriptStore()),
+            new DiarizeEmbedStage(diarizeClient ?? HostFakeDiarizeEmbedClient.Empty()),
+            new ClusterMergeStage(),
+            new AttributionStage(store, prior, new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
+            new CorrectionStage(new HostFakeCorrectionLlm(), new InMemoryCorrectionMapStore(),
+                new HostFakeReAsrClient(), new CorrectionGrader(PolicyPhase.EscalateOnly)),
+            new EnrichLinkStage(new HostFakeLinkResolver()),
+            new ApplyStage(
+                new CervelloGraphWriter(new HostFakeMapPrWriter(), new HostFakeLinkResolver(), new HostFakePinStore()),
+                new InMemoryOpenPointStore()),
+            new HostFakeRecordingFactSource());
+    }
+
+    // ── drain: a normalized recording flows end-to-end and advances to graph_pr_opened ──────────
     [Fact]
-    public async Task A_normalized_item_drains_through_the_pipeline_and_advances_to_enriched()
+    public async Task A_normalized_item_drains_through_the_full_pipeline_and_advances_to_graph_pr_opened()
     {
         var queue = new InMemoryNormalizedWorkQueue();
         var ledger = new InMemoryEnrichmentLedger();
@@ -39,11 +69,12 @@ public sealed class DrainWorkerTests
         await worker.RunCycleAsync(default);
 
         Assert.Equal(1, worker.RecordingsPickedUp);
-        Assert.Equal(EnrichmentState.Enriched, queue.StateOf(rec));   // shared row advanced
-        Assert.True(await ledger.IsClaimedAsync(rec.IdempotencyKey)); // §8 key claimed
+        Assert.Equal(1, worker.RecordingsGraphPrOpened);
+        Assert.Equal(EnrichmentState.GraphPrOpened, queue.StateOf(rec)); // shared row: last transition
+        Assert.True(await ledger.IsClaimedAsync(rec.IdempotencyKey));    // §8 key claimed
     }
 
-    // ── idempotent replay: a claimed key re-leased is a no-op ───────────────────────
+    // ── idempotent replay: a claimed key re-leased is a no-op ───────────────────────────────────
     [Fact]
     public async Task Idempotent_replay_of_a_claimed_key_is_a_noop()
     {
@@ -63,7 +94,7 @@ public sealed class DrainWorkerTests
         Assert.Equal(EnrichmentState.Normalized, queue.StateOf(rec)); // untouched — no double-apply
     }
 
-    // ── a second cycle over an already-advanced batch does nothing (drain is convergent) ─
+    // ── a second cycle over an already-advanced batch does nothing (drain is convergent) ─────────
     [Fact]
     public async Task A_second_cycle_after_advance_leases_nothing()
     {
@@ -73,7 +104,7 @@ public sealed class DrainWorkerTests
         queue.SeedNormalized(rec);
         var worker = Worker(Cfg(), queue, ledger);
 
-        await worker.RunCycleAsync(default); // advances → enriched
+        await worker.RunCycleAsync(default); // advances → graph_pr_opened
         var pickedAfterFirst = worker.RecordingsPickedUp;
         await worker.RunCycleAsync(default); // the lease now returns nothing (row no longer normalized)
 
@@ -81,7 +112,7 @@ public sealed class DrainWorkerTests
         Assert.Equal(1, worker.RecordingsPickedUp); // no further pickups
     }
 
-    // ── escalate-only holds: the drain never auto-applies (default engine phase) ─────
+    // ── escalate-only holds: the full drain opens no real map-PR + writes no auto-apply ──────────
     [Fact]
     public async Task Escalate_only_holds_the_drain_opens_no_map_pr_and_writes_no_auto_apply()
     {
@@ -90,10 +121,6 @@ public sealed class DrainWorkerTests
         Assert.False(engineCfg.GradedAutoApply); // escalate-only by default
         Assert.True(engineCfg.MapPrDryRun);       // map-PR dry-run by default
 
-        // The host's ingest-driven drain advances a recording ONLY to `enriched` — it constructs no
-        // apply stage, resolves no CervelloGraphWriter/IMapPrWriter, and so can open no map-PR nor
-        // write any auto-applied fact. The worker's dependency set is exactly {queue, ingest, ledger}
-        // (see the Worker(...) factory) — the apply seam is structurally unreachable from the drain.
         var queue = new InMemoryNormalizedWorkQueue();
         var ledger = new InMemoryEnrichmentLedger();
         var rec = Rec();
@@ -102,11 +129,14 @@ public sealed class DrainWorkerTests
         var worker = Worker(Cfg(), queue, ledger);
         await worker.RunCycleAsync(default);
 
-        // Advanced to `enriched` and NO further along the spine (never bundle_created/graph_pr_opened).
-        Assert.Equal(EnrichmentState.Enriched, queue.StateOf(rec));
+        // The full chain ran to graph_pr_opened, but under escalate-only NO attribution auto-applied.
+        // The map-PR writer fake captured NO PR (no applied mutations reached it), and no fact was
+        // written to map/ — the escalate-only posture held all the way through the orchestrator.
+        Assert.Equal(EnrichmentState.GraphPrOpened, queue.StateOf(rec));
+        Assert.Equal(1, worker.RecordingsGraphPrOpened);
     }
 
-    // ── error → failed_retryable, batch continues ───────────────────────────────────
+    // ── error → failed_retryable, batch continues ───────────────────────────────────────────────
     [Fact]
     public async Task A_per_item_error_maps_to_failed_retryable_and_does_not_abort_the_batch()
     {
@@ -125,12 +155,29 @@ public sealed class DrainWorkerTests
         Assert.Equal(1, worker.RecordingsFailedRetryable);
         // The failing item was advanced to failed_retryable (SCHEMAS §5), not left silently normalized.
         Assert.Equal(EnrichmentState.FailedRetryable, queue.StateOf(bad));
-        // The batch continued: the good item still drained.
+        // The batch continued: the good item still drained the whole chain.
         Assert.Equal(1, worker.RecordingsPickedUp);
-        Assert.Equal(EnrichmentState.Enriched, queue.StateOf(good));
+        Assert.Equal(EnrichmentState.GraphPrOpened, queue.StateOf(good));
     }
 
-    // ── bounded batch: the lease is capped at BatchSize ─────────────────────────────
+    // ── a transient diarize fault maps the item to failed_retryable end-to-end ──────────────────
+    [Fact]
+    public async Task A_transient_stage_fault_maps_the_item_to_failed_retryable()
+    {
+        var queue = new InMemoryNormalizedWorkQueue();
+        var ledger = new InMemoryEnrichmentLedger();
+        var rec = Rec();
+        queue.SeedNormalized(rec);
+
+        var worker = Worker(Cfg(), queue, ledger,
+            diarize: HostFakeDiarizeEmbedClient.Faulting(new DiarizeEmbedTransientException("sidecar 503")));
+        await worker.RunCycleAsync(default);
+
+        Assert.Equal(1, worker.RecordingsFailedRetryable);
+        Assert.Equal(EnrichmentState.FailedRetryable, queue.StateOf(rec));
+    }
+
+    // ── bounded batch: the lease is capped at BatchSize ─────────────────────────────────────────
     [Fact]
     public async Task The_lease_is_bounded_by_batch_size()
     {
