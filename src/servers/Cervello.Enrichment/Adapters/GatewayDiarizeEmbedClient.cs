@@ -16,8 +16,13 @@ namespace Cervello.Enrichment.Adapters;
 /// (CT146) side of the CT146→CT121→CT139 egress. Bearer-gated: the token is minted at runtime via
 /// <see cref="IBearerProvider"/> (agent-free), never from agent context.
 ///
-/// <para><b>Wire contract (byte-for-byte with the spec + E2a server):</b> request body is JSON
-/// <c>{ audio: base64, format, min_segment_ms?, window_ms? }</c>; the 200 response is
+/// <para><b>Wire contract (byte-for-byte with the spec + E2a server):</b> the request body is the
+/// <b>RAW recording audio bytes</b> with <c>Content-Type: audio/&lt;format&gt;</c> — NOT a JSON
+/// envelope and NOT base64. The sidecar reads the whole request body (<c>await request.body()</c>)
+/// and hands it straight to ffmpeg, so any wrapping (JSON, multipart, base64) makes ffmpeg reject it
+/// with <c>Invalid data found when processing input</c>. The optional tuning params
+/// (<c>min_segment_ms</c>, <c>window_ms</c>) go on the <b>query string</b>, which is where the sidecar
+/// reads them. The 200 response is
 /// <c>{ segments:[{speaker,start,end}], embeddings:[{speaker,vector[192]}], model:{vad,embed,dim} }</c>.
 /// The engine maps this onto the strongly-typed <see cref="DiarizeEmbedResponse"/> (which enforces
 /// the 192-d invariant in <see cref="SpeakerEmbedding"/>'s ctor).</para>
@@ -56,15 +61,17 @@ public sealed class GatewayDiarizeEmbedClient : IDiarizeEmbedClient
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var body = new WireRequest(
-            Audio: Convert.ToBase64String(request.Audio.Span),
-            Format: request.Format,
-            MinSegmentMs: request.MinSegmentMs,
-            WindowMs: request.WindowMs);
+        // WIRE FORMAT: the sidecar does `body = await request.body()` and feeds the raw bytes to
+        // ffmpeg. So the body MUST be the raw audio bytes with `Content-Type: audio/<format>` — never
+        // a JSON/base64/multipart envelope (any of those write the wrapper to the temp file and ffmpeg
+        // rejects it with "Invalid data found when processing input"). The tuning params ride the query
+        // string, where the sidecar reads them (min_segment_ms / window_ms).
+        var content = new ByteArrayContent(request.Audio.ToArray());
+        content.Headers.ContentType = new MediaTypeHeaderValue($"audio/{request.Format}");
 
-        using var httpReq = new HttpRequestMessage(HttpMethod.Post, RoutePath)
+        using var httpReq = new HttpRequestMessage(HttpMethod.Post, BuildRoute(request))
         {
-            Content = JsonContent.Create(body, options: _json),
+            Content = content,
         };
         httpReq.Headers.Authorization = new AuthenticationHeaderValue(
             "Bearer", await _bearer.GetBearerAsync(Audience, ct).ConfigureAwait(false));
@@ -100,6 +107,20 @@ public sealed class GatewayDiarizeEmbedClient : IDiarizeEmbedClient
             // Any other 4xx is a terminal contract violation (invalid/undecodable audio, bad request).
             throw new DiarizeEmbedTerminalException($"diarize-embed {code}: {reason}");
         }
+    }
+
+    /// <summary>
+    /// Build the route with the optional tuning params on the query string (where the sidecar reads
+    /// them via <c>request.query_params</c>). Only present params are appended.
+    /// </summary>
+    private static string BuildRoute(DiarizeEmbedRequest request)
+    {
+        var query = new List<string>(2);
+        if (request.MinSegmentMs is { } minMs)
+            query.Add($"min_segment_ms={minMs}");
+        if (request.WindowMs is { } winMs)
+            query.Add($"window_ms={winMs}");
+        return query.Count == 0 ? RoutePath : $"{RoutePath}?{string.Join("&", query)}";
     }
 
     private static async Task<WireResponse> ReadWireAsync(HttpResponseMessage res, CancellationToken ct)
@@ -156,13 +177,8 @@ public sealed class GatewayDiarizeEmbedClient : IDiarizeEmbedClient
 
     private static string Truncate(string s) => s.Length <= 300 ? s : s[..300];
 
-    // ── wire DTOs (mirror the spec's JSON shape exactly) ────────────────────────
-    private sealed record WireRequest(
-        [property: JsonPropertyName("audio")] string Audio,
-        [property: JsonPropertyName("format")] string Format,
-        [property: JsonPropertyName("min_segment_ms")] int? MinSegmentMs,
-        [property: JsonPropertyName("window_ms")] int? WindowMs);
-
+    // ── response wire DTOs (mirror the spec's JSON shape exactly) ───────────────
+    // NOTE: the REQUEST carries no JSON DTO — the body is the raw audio bytes (see DiarizeEmbedAsync).
     private sealed record WireResponse(
         [property: JsonPropertyName("segments")] List<WireSegment>? Segments,
         [property: JsonPropertyName("embeddings")] List<WireEmbedding>? Embeddings,
