@@ -53,6 +53,14 @@ builder.Services.AddCervelloEnrichment(engineCfg);
 //    NOT stub-faked (a fake would silently pin garbage). See CompositionCompletenessTests.
 builder.Services.AddCervelloPipeline();
 
+// ── the DIALOGUE-INTERACTION backend (S50 §5): the context-pack assembler + map-read + capture/goal
+//    services the NEW bridge tools call (cervello_context_pack / _search / _get / _timeline_walk /
+//    _capture_fact / _set_goal / _link_evidence). Wired AFTER AddCervelloEnrichment so it can reuse
+//    the engine's IOpenPointStore (pack open-points piggyback) + CervelloGraphWriter (goal/evidence
+//    review-PR). Live = indexer(:8009) + repo map graph + Pg delta cursor + repo deposit; fake =
+//    in-memory (the test harness wires the index/graph fakes). ─────────────────────────────────────
+builder.Services.AddCervelloContextPack(engineCfg);
+
 // ── L2 seam: IExternalBlobFetcher — the ONE port AddCervelloEnrichment leaves for the
 //    deploy to register (the drive://gmail:// evidence fetcher CtPinStore needs for
 //    pin://-on-cite). The RECORDINGS drain path never cites external evidence, so this is
@@ -119,6 +127,18 @@ app.MapGet("/healthz", (DrainWorker w) =>
 //    so the routes are mapped only when live. The bearer gate fails CLOSED on an empty token.
 if (engineCfg.UseLiveAdapters)
     app.MapOpenPoints();
+
+// ── context-pack + map-read + capture/goal HTTP surfaces (S50 §5 exposure) ──────────────────────────
+//    Token-gated (the SAME cervello operator bearer as open-points, via IOpenPointsAuthGate — fail-
+//    closed on an empty token). LIVE mode only: the assembler + capture/goal services + their live
+//    seams (indexer, repo map graph, graph-writer, delta cursor) are wired by the live branches; in
+//    fake mode the graph/index seams are unresolvable (a fake-mode host wires its own), so the routes
+//    map only when live. The bridge (CT145) is the only caller, via the CT146 ingress allow.
+if (engineCfg.UseLiveAdapters)
+{
+    app.MapContextPack(engineCfg.PackBudgetDefault);
+    app.MapCapture();
+}
 
 app.Urls.Add($"http://{hostCfg.HealthHost}:{hostCfg.HealthPort}");
 app.Run();

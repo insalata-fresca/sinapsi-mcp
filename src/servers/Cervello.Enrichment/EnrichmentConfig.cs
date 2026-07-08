@@ -113,6 +113,20 @@ public sealed record EnrichmentConfig
     /// <summary>Whether the open-points auth gate is enabled (always true in prod; a test may disable).</summary>
     public required bool OpenPointsAuthEnabled { get; init; }
 
+    // ── cervello indexer (:8009 hybrid FTS+semantic search — the pack + cervello_search reuse) ─────
+    /// <summary>Base URL of the cervello indexer's hybrid <c>GET /search</c> (design §2.2/§5.2). CT146 :8009.</summary>
+    public required string IndexerBaseUrl { get; init; }
+
+    /// <summary>
+    /// The STATIC indexer search bearer (<c>CERVELLO_INDEXER_SEARCH_TOKEN</c> == the indexer's
+    /// <c>INDEXER_SEARCH_TOKEN</c>). Injected agent-free at deploy, never committed. Empty in fake mode
+    /// (no live search); the pack assembler degrades gracefully (coverage.gaps) if search is unavailable.
+    /// </summary>
+    public required string IndexerSearchToken { get; init; }
+
+    /// <summary>Default context-pack char budget (design §5.1: 30000; MC Q7: a sane bounded default, tunable).</summary>
+    public required int PackBudgetDefault { get; init; }
+
     // ── HTTP ceilings ────────────────────────────────────────────────────────────
     /// <summary>Per-request ceiling (seconds) applied to the outbound HttpClients.</summary>
     public required int HttpTimeoutSeconds { get; init; }
@@ -125,9 +139,13 @@ public sealed record EnrichmentConfig
     internal const string DefaultForgejoBaseUrl = "https://forgejo.insalata-fresca.ch";
     internal const string DefaultForgejoRepo = "ste/cervello";
     internal const string DefaultForgejoBaseBranch = "main";
+    internal const string DefaultIndexerBaseUrl = "http://127.0.0.1:8009";
 
     internal const int DefaultHttpTimeoutSeconds = 100;
     internal const int MaxHttpTimeoutSeconds = 3_600;
+    internal const int DefaultPackBudget = 30_000;
+    internal const int MinPackBudget = 2_000;
+    internal const int MaxPackBudget = 200_000;
 
     /// <summary>Read config from the process environment (production path).</summary>
     public static EnrichmentConfig FromEnvironment() => From(Environment.GetEnvironmentVariable);
@@ -160,6 +178,9 @@ public sealed record EnrichmentConfig
             ForgejoBaseBranch = Env("CERVELLO_FORGEJO_BASE_BRANCH", DefaultForgejoBaseBranch),
             MapPrDryRun = ReadBool(getEnv, "CERVELLO_MAP_PR_DRY_RUN", true),
             OpenPointsAuthEnabled = ReadBool(getEnv, "CERVELLO_OPEN_POINTS_AUTH_ENABLED", true),
+            IndexerBaseUrl = ReadHttpUrl(getEnv, "CERVELLO_INDEXER_BASE_URL", DefaultIndexerBaseUrl),
+            IndexerSearchToken = getEnv("CERVELLO_INDEXER_SEARCH_TOKEN") ?? "",
+            PackBudgetDefault = ReadBoundedInt(getEnv, "CERVELLO_PACK_BUDGET_DEFAULT", DefaultPackBudget, MinPackBudget, MaxPackBudget),
             HttpTimeoutSeconds = ReadBoundedInt(getEnv,
                 "CERVELLO_ENRICHMENT_HTTP_TIMEOUT_SECONDS", DefaultHttpTimeoutSeconds, 1, MaxHttpTimeoutSeconds),
         };
