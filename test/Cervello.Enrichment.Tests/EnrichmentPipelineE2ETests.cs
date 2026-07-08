@@ -78,8 +78,9 @@ public sealed class EnrichmentPipelineE2ETests
         var ingest = new IngestStage(ledger);
 
         var audio = new FakeAudioSource(SynthAudio);
+        // Ratified base: the Google .txt IS the base (no CT126 in the drain path).
         var transcribe = new BaseTranscribeStage(
-            new FakeTranscribeClient(new BaseTranscript("standup transcript", "fr")),
+            new FakeBaseTranscriptSource(new BaseTranscript("standup transcript", "fr")),
             new InMemoryTranscriptStore());
 
         var diarize = new DiarizeEmbedStage(
@@ -164,6 +165,50 @@ public sealed class EnrichmentPipelineE2ETests
         Assert.Equal(3, (await points.ListPendingAsync()).Count);
     }
 
+    // ── RATIFIED: a Google-base recording drains FULLY to graph_pr_opened with NO CT126 anywhere ────
+    [Fact]
+    public async Task A_google_base_recording_drains_to_graph_pr_opened_without_ct126()
+    {
+        // Build the pipeline with NO CT126 transcribe client and NO re-ASR client wired at all — the
+        // Google .txt is the base, re-ASR is disabled. This proves a full drain never depends on CT126.
+        var ledger = new InMemoryEnrichmentLedger();
+        var store = await EnrolledStore();
+        var pr = new FakeMapPrWriter();
+        var points = new InMemoryOpenPointStore();
+
+        var pipeline = new EnrichmentPipeline(
+            new IngestStage(ledger),
+            new FakeAudioSource(SynthAudio),
+            // Google .txt IS the base; NO ITranscribeClient supplied (CT126 truly absent).
+            new BaseTranscribeStage(
+                new FakeBaseTranscriptSource(new BaseTranscript("google base transcript", "fr")),
+                new InMemoryTranscriptStore()),
+            new DiarizeEmbedStage(FakeDiarizeEmbedClient.Returning(DiarizeResponse())),
+            new ClusterMergeStage(),
+            new AttributionStage(store,
+                new FilenameParticipantPriorSource(new Dictionary<string, PriorCandidates> { [RecId] = new PriorCandidates(["guilhem"], true) }),
+                new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
+            // A garbled span is present, but re-ASR is DISABLED and NO IReAsrClient is wired → the
+            // span is left as-is (omitted), and the drain completes without CT126.
+            new CorrectionStage(
+                new FakeCorrectionLlm([new CorrectionCandidate(new TextSpan(0, 6), "google", ["Google"], CorrectionKind.Garbled, 0.7)]),
+                new InMemoryCorrectionMapStore(),
+                reAsr: null,                                  // CT126 re-ASR truly absent
+                new CorrectionGrader(PolicyPhase.EscalateOnly)),
+            new EnrichLinkStage(new FakeLinkResolver("guilhem", "marco", "mara")),
+            new ApplyStage(new CervelloGraphWriter(pr, new FakeLinkResolver("guilhem", "marco", "mara"), new FakePinStore()), points),
+            new FakeRecordingFactSource(garbledSpans: [new TextSpan(0, 6)]));
+
+        var outcome = await pipeline.RunAsync(Rec(), EnrichmentState.Normalized);
+
+        // Reached graph_pr_opened end-to-end WITHOUT any CT126 call (no client was even constructible).
+        Assert.Equal(PipelineStatus.Completed, outcome.Status);
+        Assert.Equal(EnrichmentState.GraphPrOpened, outcome.State);
+        Assert.Contains(EnrichmentState.GraphPrOpened, outcome.StateTransitions);
+        // Never-guess held: whatever reached map/ is sourced + basis'd.
+        AssertNeverGuessed(pr.LastPr, new HashSet<string>(StringComparer.Ordinal) { "guilhem", "marco", "mara", RecId });
+    }
+
     // ── graded phase: the clean s1 auto-applies with a valid basis; s2/s3 still escalate ────────────
     [Fact]
     public async Task Under_graded_auto_apply_the_clean_match_reaches_map_with_a_valid_basis()
@@ -246,7 +291,7 @@ public sealed class EnrichmentPipelineE2ETests
         var pipeline = new EnrichmentPipeline(
             new IngestStage(ledger),
             new FakeAudioSource(unavailable: true),                    // the blob is gone
-            new BaseTranscribeStage(new FakeTranscribeClient(new BaseTranscript("x", "fr")), new InMemoryTranscriptStore()),
+            new BaseTranscribeStage(new FakeBaseTranscriptSource(new BaseTranscript("x", "fr")), new InMemoryTranscriptStore()),
             new DiarizeEmbedStage(FakeDiarizeEmbedClient.Returning(DiarizeResponse())),
             new ClusterMergeStage(),
             new AttributionStage(store, new FilenameParticipantPriorSource(new Dictionary<string, PriorCandidates>()), new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
@@ -289,7 +334,7 @@ public sealed class EnrichmentPipelineE2ETests
         var pipeline = new EnrichmentPipeline(
             new IngestStage(ledger),
             new FakeAudioSource(SynthAudio),
-            new BaseTranscribeStage(new FakeTranscribeClient(new BaseTranscript("standup transcript", "fr")), new InMemoryTranscriptStore()),
+            new BaseTranscribeStage(new FakeBaseTranscriptSource(new BaseTranscript("standup transcript", "fr")), new InMemoryTranscriptStore()),
             new DiarizeEmbedStage(FakeDiarizeEmbedClient.Returning(DiarizeResponse())),
             new ClusterMergeStage(),
             new AttributionStage(store, new FilenameParticipantPriorSource(new Dictionary<string, PriorCandidates> { [RecId] = new PriorCandidates(["guilhem"], true) }), new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),

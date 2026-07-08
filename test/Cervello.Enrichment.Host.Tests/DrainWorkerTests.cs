@@ -43,7 +43,7 @@ public sealed class DrainWorkerTests
         return new EnrichmentPipeline(
             new IngestStage(ledger),
             new HostFakeAudioSource(),
-            new BaseTranscribeStage(new HostFakeTranscribeClient(), new HostInMemoryTranscriptStore()),
+            new BaseTranscribeStage(new HostFakeBaseTranscriptSource(), new HostInMemoryTranscriptStore()),
             new DiarizeEmbedStage(diarizeClient ?? HostFakeDiarizeEmbedClient.Empty()),
             new ClusterMergeStage(),
             new AttributionStage(store, prior, new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),

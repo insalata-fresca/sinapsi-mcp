@@ -43,3 +43,18 @@ internal sealed class FakeReAsrClient(IReadOnlyDictionary<(int, int), ReAsrResul
         return Task.FromResult(_scripted.GetValueOrDefault((span.Start, span.End), ReAsrResult.Unclear));
     }
 }
+
+/// <summary>
+/// A re-ASR client that always THROWS (CT126 unreachable / transient) — proves the correction stage
+/// GRACEFULLY skips the span (omits it, leaves as-is) instead of failing the drain.
+/// </summary>
+internal sealed class ThrowingReAsrClient : IReAsrClient
+{
+    public int Calls { get; private set; }
+
+    public Task<ReAsrResult> ReAsrAsync(string recordingId, TextSpan span, CancellationToken ct = default)
+    {
+        Calls++;
+        throw new Adapters.TranscribeTransientException("CT126 re-ASR unreachable (synthetic)");
+    }
+}

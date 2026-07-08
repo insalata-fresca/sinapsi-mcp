@@ -24,10 +24,13 @@ public sealed class CorrectionStageTests
         IReadOnlyDictionary<(int, int), ReAsrResult>? reAsr = null,
         PolicyPhase phase = PolicyPhase.GradedAutoApply,
         FakeReAsrClient? reAsrClient = null) =>
+        // These scenarios exercise the re-ASR-ENABLED behaviour (evidence from garbled-span re-ASR).
+        // The default-OFF graceful-degrade behaviour is covered by the dedicated tests below.
         new(new FakeCorrectionLlm(proposals),
             new InMemoryCorrectionMapStore(glossary),
             reAsrClient ?? new FakeReAsrClient(reAsr),
-            new CorrectionGrader(phase));
+            new CorrectionGrader(phase),
+            reAsrEnabled: true);
 
     private static readonly IReadOnlyList<ResolvedParticipant> NoParticipants = Array.Empty<ResolvedParticipant>();
     private static readonly IReadOnlyList<TextSpan> NoGarbled = Array.Empty<TextSpan>();
@@ -127,6 +130,63 @@ public sealed class CorrectionStageTests
         Assert.Equal(1, reAsrClient.Calls);
         Assert.Equal(garbledSpan.Start, Assert.Single(reAsrClient.Seen).Start);
         Assert.Equal(2, result.Diffs.Count); // garbled (re-ASR) + term (glossary) both backed
+    }
+
+    // ── Re-ASR DISABLED (default): a garbled span is left as-is (omitted); CT126 is never called ──
+    [Fact]
+    public async Task ReAsr_disabled_leaves_garbled_spans_as_is_without_calling_ct126()
+    {
+        const string baseText = "the [inaudible] figure and the Total Energies deal";
+        var garbledSpan = SpanOf(baseText, "[inaudible]");
+        var termSpan = SpanOf(baseText, "Total Energies");
+        var reAsrClient = new FakeReAsrClient(new Dictionary<(int, int), ReAsrResult>
+        {
+            [(garbledSpan.Start, garbledSpan.End)] = ReAsrResult.Clear("the Q3", 0.88),
+        });
+        var proposals = new[]
+        {
+            new CorrectionCandidate(garbledSpan, "[inaudible]", ["the Q3"], CorrectionKind.Garbled, 0.7),
+            new CorrectionCandidate(termSpan, "Total Energies", ["TotalEnergies"], CorrectionKind.Term, 0.9),
+        };
+        var glossary = new[] { new GlossaryEntry("Total Energies", "TotalEnergies", CorrectionKind.Term) };
+
+        // Default posture: re-ASR OFF (reAsrEnabled: false is the constructor default).
+        var stage = new CorrectionStage(
+            new FakeCorrectionLlm(proposals), new InMemoryCorrectionMapStore(glossary),
+            reAsrClient, new CorrectionGrader(PolicyPhase.GradedAutoApply));
+
+        var result = await stage.CorrectAsync(Rec, baseText, NoParticipants, [garbledSpan]);
+
+        Assert.Equal(0, reAsrClient.Calls);                 // CT126 NEVER called — not a drain dep
+        Assert.Single(result.Diffs);                        // only the glossary-backed term diff
+        Assert.Equal("TotalEnergies", result.Diffs[0].After);
+        Assert.Single(result.Omitted);                      // the garbled span is left as-is (omitted)
+        Assert.Contains("re-ASR disabled", Assert.Single(result.Omitted).Reason);
+    }
+
+    // ── Re-ASR ENABLED but CT126 unreachable: the span is gracefully skipped, the drain continues ──
+    [Fact]
+    public async Task ReAsr_failure_is_gracefully_skipped_never_failing_the_drain()
+    {
+        const string baseText = "the [inaudible] figure";
+        var garbledSpan = SpanOf(baseText, "[inaudible]");
+        var throwing = new ThrowingReAsrClient();
+        var proposals = new[]
+        {
+            new CorrectionCandidate(garbledSpan, "[inaudible]", ["the Q3"], CorrectionKind.Garbled, 0.7),
+        };
+
+        var stage = new CorrectionStage(
+            new FakeCorrectionLlm(proposals), new InMemoryCorrectionMapStore(),
+            throwing, new CorrectionGrader(PolicyPhase.GradedAutoApply), reAsrEnabled: true);
+
+        // Does NOT throw — the CT126 failure is caught and the span omitted (never fails the drain).
+        var result = await stage.CorrectAsync(Rec, baseText, NoParticipants, [garbledSpan]);
+
+        Assert.Equal(1, throwing.Calls);
+        Assert.Empty(result.Diffs);
+        Assert.Single(result.Omitted);
+        Assert.Contains("re-ASR unavailable", Assert.Single(result.Omitted).Reason);
     }
 
     // ── Scenario: Ambiguous name correction escalates ───────────────────────────────────────────
