@@ -10,12 +10,17 @@ namespace Cervello.Enrichment.Domain;
 /// <see cref="StateNames"/> (the string forms SCHEMAS §5 / §8 use). Legal transitions are
 /// forward-only, plus <c>failed_retryable → queued</c> (retry with the same idempotency key).</para>
 ///
-/// <para>NOTE (spec-divergence flagged for MC — see mission return): the WATCH-side
-/// <c>Cervello.Watcher.Domain.PipelineState</c> enum declares its later stages as
-/// <c>Enriched / Attributed / Graphed</c>, which do NOT match the SCHEMAS §5 string names
-/// (<c>attention_scored / bundle_created / graph_pr_opened / graph_merged</c>). The two enums
-/// are not unified here (separate modules; the Watcher only ever reaches <c>normalized</c>).
-/// The engine follows SCHEMAS §5 verbatim, since §5 is the normative machine-checked grammar.</para>
+/// <para>ENUM RECONCILIATION (E4, done). The WATCH-side
+/// <c>Cervello.Watcher.Domain.PipelineState</c> previously declared its later stages as
+/// <c>Enriched / Attributed / Graphed</c>, which did NOT match the SCHEMAS §5 string names. Those
+/// DEAD members (the Watcher never reaches them) were renamed to the §5 set, and the Watcher now
+/// persists the SAME §5 wire strings (<c>Cervello.Watcher.Domain.PipelineStateWire</c>) that
+/// <see cref="EnrichmentStateMachine.Name"/> emits. The two enums therefore serialize to an
+/// IDENTICAL wire form, so the Watcher and the engine SHARE the <c>recordings</c> state row: the
+/// Watcher writes <c>normalized</c>, <see cref="EnrichmentStateMachine.TryParse"/> reads it, and
+/// the engine drives it forward. The enums are NOT merged into one CLR type (separate assemblies,
+/// no cross-reference — the shared contract is the §5 WIRE STRING, not a shared type), which is the
+/// lowest-risk reconciliation. A round-trip equivalence test asserts the two mappings agree.</para>
 /// </summary>
 public enum EnrichmentState
 {
@@ -61,8 +66,19 @@ public static class EnrichmentStateMachine
         EnrichmentState.GraphMerged,
     ];
 
+    private static readonly IReadOnlyDictionary<string, EnrichmentState> ByName =
+        Names.ToDictionary(kv => kv.Value, kv => kv.Key, StringComparer.Ordinal);
+
     /// <summary>The SCHEMAS §5 / §8 string form of a state.</summary>
     public static string Name(EnrichmentState state) => Names[state];
+
+    /// <summary>
+    /// Parse a SCHEMAS §5 wire string into an <see cref="EnrichmentState"/> — the bridge that lets
+    /// the engine READ the state row the Watcher wrote (both serialize to the identical §5 wire
+    /// name; E4 enum reconciliation). Returns false for an unknown string (never invents a state).
+    /// </summary>
+    public static bool TryParse(string wire, out EnrichmentState state) =>
+        ByName.TryGetValue(wire ?? "", out state);
 
     private static bool IsTerminalFailure(EnrichmentState s) =>
         s is EnrichmentState.Rejected or EnrichmentState.FailedTerminal;
