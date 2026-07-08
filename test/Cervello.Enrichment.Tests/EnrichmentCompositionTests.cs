@@ -94,14 +94,16 @@ public sealed class EnrichmentCompositionTests
     }
 
     [Fact]
-    public void Live_mode_wires_the_live_pg_stores_and_the_agent_jwt_bearer()
+    public void Live_mode_wires_the_live_pg_stores_and_the_audience_routing_bearer()
     {
         // Live wiring must RESOLVE without touching any endpoint (construction only). Provide the
-        // OIDC env the AgentJwt options + the external-blob fetcher seam the pin store needs.
+        // OIDC env the AgentJwt options + the external-blob fetcher seam the pin store needs, plus the
+        // static brain bearer the enrich routes require (composition fails closed on an empty one).
         var env = new Dictionary<string, string?>
         {
             ["CERVELLO_USE_LIVE_ADAPTERS"] = "true",
             ["CERVELLO_DB_PASSWORD"] = "unused-at-construction",
+            ["CERVELLO_BRAIN_BEARER_TOKEN"] = "brain-bearer-under-test",
         };
         Environment.SetEnvironmentVariable("OIDC_ISSUER", "https://id.test");
         Environment.SetEnvironmentVariable("OIDC_AUDIENCE_PROJECT_ID", "proj-1");
@@ -117,7 +119,8 @@ public sealed class EnrichmentCompositionTests
             Assert.IsType<PgOpenPointStore>(sp.GetRequiredService<IOpenPointStore>());
             Assert.IsType<PgCorrectionMapStore>(sp.GetRequiredService<ICorrectionMapStore>());
             Assert.IsType<PgEnrichmentLedger>(sp.GetRequiredService<IEnrichmentLedger>());
-            Assert.IsType<AgentJwtBearerProvider>(sp.GetRequiredService<IBearerProvider>());
+            // The bearer is AUDIENCE-ROUTED: static brain bearer for brain-api, minted JWT elsewhere.
+            Assert.IsType<AudienceRoutingBearerProvider>(sp.GetRequiredService<IBearerProvider>());
             // The typed HTTP clients resolve (constructed, no call made).
             Assert.IsType<GatewayDiarizeEmbedClient>(sp.GetRequiredService<IDiarizeEmbedClient>());
             Assert.IsType<Ct126TranscribeClient>(sp.GetRequiredService<ITranscribeClient>());
@@ -131,6 +134,43 @@ public sealed class EnrichmentCompositionTests
             Environment.SetEnvironmentVariable("OIDC_ISSUER", null);
             Environment.SetEnvironmentVariable("OIDC_AUDIENCE_PROJECT_ID", null);
         }
+    }
+
+    // ── the enrich routes require the static brain bearer: live mode FAILS CLOSED on an empty one ──
+    [Fact]
+    public void Live_mode_fails_closed_when_the_static_brain_bearer_is_empty()
+    {
+        // Live adapters enabled but CERVELLO_BRAIN_BEARER_TOKEN unset — the brain-api /v1/enrich/*
+        // routes validate by string-equality against a static token, so an empty one is never valid.
+        var env = new Dictionary<string, string?>
+        {
+            ["CERVELLO_USE_LIVE_ADAPTERS"] = "true",
+            ["CERVELLO_DB_PASSWORD"] = "unused-at-construction",
+            // CERVELLO_BRAIN_BEARER_TOKEN deliberately absent
+        };
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            new ServiceCollection().AddCervelloEnrichment(EnrichmentConfig.From(env)));
+        Assert.Contains("CERVELLO_BRAIN_BEARER_TOKEN", ex.Message);
+    }
+
+    // ── the audience router: static brain bearer for brain-api, minted JWT for everything else ─────
+    [Fact]
+    public async Task Audience_router_returns_the_static_brain_bearer_only_for_the_brain_api_audience()
+    {
+        var router = new AudienceRoutingBearerProvider(
+            brainApi: new StaticBearerProvider("STATIC-BRAIN"),
+            minted: new StaticBearerProvider("MINTED-JWT"));
+
+        // The three brain-api enrich clients tag "brain-api" → the static token.
+        Assert.Equal("STATIC-BRAIN", await router.GetBearerAsync(AudienceRoutingBearerProvider.BrainApiAudience));
+        Assert.Equal("STATIC-BRAIN", await router.GetBearerAsync(GatewayDiarizeEmbedClient.Audience));
+        Assert.Equal("STATIC-BRAIN", await router.GetBearerAsync(BrainApiCorrectionLlm.Audience));
+        Assert.Equal("STATIC-BRAIN", await router.GetBearerAsync(BrainApiRecordingFactSource.Audience));
+
+        // CT126 + forgejo egress → the minted JWT (unchanged).
+        Assert.Equal("MINTED-JWT", await router.GetBearerAsync(Ct126TranscribeClient.Audience));
+        Assert.Equal("MINTED-JWT", await router.GetBearerAsync(Ct126ReAsrClient.Audience));
+        Assert.Equal("MINTED-JWT", await router.GetBearerAsync(ForgejoMapPrWriter.Audience));
     }
 
     // ── fail-closed config ───────────────────────────────────────────────────────

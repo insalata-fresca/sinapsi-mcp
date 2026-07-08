@@ -24,11 +24,14 @@ namespace Cervello.Enrichment;
 /// (<c>CERVELLO_GRADED_AUTO_APPLY=true</c>), never a code change. This is the "batch auto-apply stays
 /// dark until validated" decision, enforced at the composition seam.</para>
 ///
-/// <para><b>Secrets are agent-free.</b> In live mode the bearer is minted at runtime by
-/// <see cref="AgentJwtMinter"/> (JWK provisioned on-CT via Infisical <c>/ct146/cervello/</c>); the
-/// Postgres password arrives via <c>CERVELLO_DB_PASSWORD</c> at deploy. NEITHER ever enters agent
-/// context or source. In fake mode a <see cref="StaticBearerProvider"/> supplies a placeholder token
-/// (no mint, no network) so the graph resolves offline.</para>
+/// <para><b>Secrets are agent-free.</b> In live mode the CT126 + forgejo bearer is minted at runtime
+/// by <see cref="AgentJwtMinter"/> (JWK provisioned on-CT via Infisical <c>/ct146/cervello/</c>),
+/// while the brain-api <c>/v1/enrich/*</c> routes get the STATIC <see cref="EnrichmentConfig.BrainBearerToken"/>
+/// (== brain-api's <c>BRAIN_BEARER_TOKEN</c>, from Infisical <c>/ct121/homelab-state-mcp</c>) — routed
+/// by <see cref="Adapters.AudienceRoutingBearerProvider"/>; the Postgres password arrives via
+/// <c>CERVELLO_DB_PASSWORD</c> at deploy. NONE ever enters agent context or source. In fake mode a
+/// <see cref="StaticBearerProvider"/> supplies a placeholder token (no mint, no network) so the graph
+/// resolves offline.</para>
 /// </summary>
 public static class EnrichmentComposition
 {
@@ -139,10 +142,29 @@ public static class EnrichmentComposition
     {
         var timeout = TimeSpan.FromSeconds(cfg.HttpTimeoutSeconds);
 
-        // Bearer minting (agent-free) — the SAME pattern the Watcher uses.
+        // ── Outbound bearer (audience-routed) ─────────────────────────────────────────────────────
+        // brain-api's /v1/enrich/* routes validate by plain string-equality against a STATIC
+        // BRAIN_BEARER_TOKEN — they do NOT accept the minted agent-cervello-enrichment JWT (that
+        // audience is wired only to /v1/sessions, whose agent-map excludes this identity). So the
+        // brain-api audience presents the static brain bearer; CT126 + forgejo egress keep the minted
+        // JWT (the SAME agent-free mint the Watcher uses). Fail CLOSED on an empty brain bearer — a
+        // mis-provisioned deploy never presents an empty token (the enrich routes would 401 anyway).
+        if (string.IsNullOrEmpty(cfg.BrainBearerToken))
+            throw new InvalidOperationException(
+                "CERVELLO_BRAIN_BEARER_TOKEN is empty but live adapters are enabled: the brain-api " +
+                "/v1/enrich/* routes require the static brain bearer (== brain-api's BRAIN_BEARER_TOKEN, " +
+                "injected agent-free from Infisical /ct121/homelab-state-mcp at deploy). Provide it, or " +
+                "run with CERVELLO_USE_LIVE_ADAPTERS=false for the offline slice.");
+
+        // The minted-JWT provider (CT126 + forgejo). Kept exactly as before — the Watcher's pattern.
         services.AddSingleton(AgentJwtOptions.FromEnvironment());
         services.AddHttpClient<AgentJwtMinter>();
-        services.AddSingleton<IBearerProvider, AgentJwtBearerProvider>();
+        services.AddSingleton<AgentJwtBearerProvider>();
+
+        // The audience router: static brain bearer for "brain-api", minted JWT for everything else.
+        services.AddSingleton<IBearerProvider>(sp => new AudienceRoutingBearerProvider(
+            new StaticBearerProvider(cfg.BrainBearerToken),
+            sp.GetRequiredService<AgentJwtBearerProvider>()));
 
         // brain-api typed clients (diarize-embed proxy + correction LLM).
         services.AddHttpClient<IDiarizeEmbedClient, GatewayDiarizeEmbedClient>(c =>

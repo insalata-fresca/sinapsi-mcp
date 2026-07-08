@@ -209,6 +209,42 @@ public sealed class EnrichmentPipelineE2ETests
         AssertNeverGuessed(pr.LastPr, new HashSet<string>(StringComparer.Ordinal) { "guilhem", "marco", "mara", RecId });
     }
 
+    // ── ZERO diarize segments (e.g. a silent / synthetic verify WAV) is a VALID EMPTY result ────────
+    // silero-VAD legitimately returns 0 speech spans for silence — the sidecar answers 200 with empty
+    // segments+embeddings. That is NOT a failure: no speakers → no attributions (the never-guess floor),
+    // the drain still advances all the way to graph_pr_opened. This is the graceful-degrade the tmpl-151
+    // verify exercises; a 0-segment recording must never become failed_terminal.
+    [Fact]
+    public async Task Zero_diarize_segments_degrades_gracefully_to_graph_pr_opened_with_no_attributions()
+    {
+        var empty = new DiarizeEmbedResponse(
+            segments: Array.Empty<DiarizedSegment>(),
+            embeddings: Array.Empty<SpeakerEmbedding>(),
+            model: new DiarizeEmbedModel("silero-vad", "ecapa-tdnn", 192));
+
+        var (pipeline, pr, points, _) = await BuildPipelineAsync(
+            diarizeClient: FakeDiarizeEmbedClient.Returning(empty));
+
+        var outcome = await pipeline.RunAsync(Rec(), EnrichmentState.Normalized);
+
+        // Reached graph_pr_opened — a valid empty result, NOT failed_terminal / failed_retryable.
+        Assert.Equal(PipelineStatus.Completed, outcome.Status);
+        Assert.Equal(EnrichmentState.GraphPrOpened, outcome.State);
+        Assert.Contains(EnrichmentState.GraphPrOpened, outcome.StateTransitions);
+        Assert.DoesNotContain(EnrichmentState.FailedTerminal, outcome.StateTransitions);
+        Assert.DoesNotContain(EnrichmentState.FailedRetryable, outcome.StateTransitions);
+
+        // No speakers → NO attributions (never guessed a name) and NO attribution mutations / open-points.
+        var bundle = Assert.IsType<EnrichmentBundle>(outcome.Bundle);
+        Assert.Empty(bundle.Enrichment.Attribution);
+        var apply = Assert.IsType<ApplyResult>(outcome.Apply);
+        Assert.Equal(0, apply.Mutations);       // nothing auto-applied (no clusters at all)
+        Assert.Equal(0, apply.OpenPoints);      // no ambiguous speaker to escalate
+        Assert.Empty(await points.ListPendingAsync());
+        // Never-guess floor still holds over whatever (if anything) reached map/.
+        AssertNeverGuessed(pr.LastPr, new HashSet<string>(StringComparer.Ordinal) { "guilhem", "marco", "mara", RecId });
+    }
+
     // ── graded phase: the clean s1 auto-applies with a valid basis; s2/s3 still escalate ────────────
     [Fact]
     public async Task Under_graded_auto_apply_the_clean_match_reaches_map_with_a_valid_basis()

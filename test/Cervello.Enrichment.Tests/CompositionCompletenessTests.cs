@@ -37,6 +37,8 @@ public sealed class CompositionCompletenessTests
         {
             ["CERVELLO_USE_LIVE_ADAPTERS"] = "true",
             ["CERVELLO_DB_PASSWORD"] = "unused-at-construction",
+            // The static brain bearer the enrich routes require (live mode fails closed on an empty one).
+            ["CERVELLO_BRAIN_BEARER_TOKEN"] = "brain-bearer-under-test",
         };
         Environment.SetEnvironmentVariable("OIDC_ISSUER", "https://id.test");
         Environment.SetEnvironmentVariable("OIDC_AUDIENCE_PROJECT_ID", "proj-1");
