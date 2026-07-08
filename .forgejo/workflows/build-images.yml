@@ -44,6 +44,10 @@ jobs:
           # S50 M6 — the CT146-cervello recordings watcher (no-NATS WATCH→NORMALIZE
           # worker; not an MCP server, but rides the same image plane).
           - { server: Cervello.Watcher,  image: cervello-watcher }
+          # S50 E-HOST — the CT146-cervello enrichment host (no-NATS background worker
+          # that DRAINS the `normalized` recordings the watcher produced; escalate-only
+          # + map-PR dry-run by default. Rides the same image plane; L2 deploys this).
+          - { server: Cervello.Enrichment.Host, image: cervello-enrichment-host }
           - { server: Bridge.Mcp,       image: bridge-mcp }
           - { server: Forge.Mcp,        image: forge-mcp }
           - { server: Gdrive.Mcp,       image: gdrive-mcp }
