@@ -9,12 +9,15 @@ namespace Cervello.Enrichment;
 /// or credential is baked into source — every value defaults to a neutral local placeholder and is
 /// overridden by the matching environment variable.
 ///
-/// <para><b>Secrets are agent-free (L1 boundary).</b> The brain-api / gateway bearer is MINTED at
+/// <para><b>Secrets are agent-free (L1 boundary).</b> The CT126 / forgejo bearer is MINTED at
 /// runtime on-CT by <c>Sinapsi.AgentJwt.AgentJwtMinter</c> from a JWK provisioned by the
-/// deploy-controller / Infisical <c>/ct146/cervello/</c> pattern; the Postgres password is injected
-/// the same way. NEITHER ever appears in source, in this config's defaults, or in agent context —
-/// this type only carries the NON-secret coordinates (endpoints, agent name, DSN parts sans
-/// password). The password arrives only via <c>CERVELLO_DB_PASSWORD</c> at deploy.</para>
+/// deploy-controller / Infisical <c>/ct146/cervello/</c> pattern; the brain-api bearer is the STATIC
+/// <see cref="BrainBearerToken"/> (equal to brain-api's <c>BRAIN_BEARER_TOKEN</c>, fetched agent-free
+/// from Infisical <c>/ct121/homelab-state-mcp</c>); the Postgres password is injected the same way.
+/// NONE ever appears in source, in this config's defaults, or in agent context — this type only
+/// carries the NON-secret coordinates (endpoints, agent name, DSN parts sans password) plus the two
+/// secret slots that arrive only via their env vars at deploy (<c>CERVELLO_BRAIN_BEARER_TOKEN</c> /
+/// <c>CERVELLO_DB_PASSWORD</c>).</para>
 ///
 /// <para><b>Phase gate (escalate-only by default).</b> <see cref="GradedAutoApply"/> defaults to
 /// <c>false</c> — the decision policy stays escalate-only (every band → open-point) until the
@@ -43,8 +46,23 @@ public sealed record EnrichmentConfig
     /// <summary>Base URL of the CT139 brain-api (the diarize-embed proxy + correction routes).</summary>
     public required string BrainApiBaseUrl { get; init; }
 
-    /// <summary>The scoped agentgateway machine identity the engine mints a bearer for (brain-api/CT126/gateway).</summary>
+    /// <summary>The scoped agentgateway machine identity the engine mints a bearer for (CT126 / forgejo egress).</summary>
     public required string EnrichmentAgent { get; init; }
+
+    /// <summary>
+    /// The STATIC brain-api bearer (<c>CERVELLO_BRAIN_BEARER_TOKEN</c>) presented on the three
+    /// <c>/v1/enrich/*</c> routes (diarize-embed / correct / derive-facts). It MUST equal brain-api's
+    /// own <c>BRAIN_BEARER_TOKEN</c> — those routes validate by plain string-equality against that
+    /// static token (the minted <c>agent-cervello-enrichment</c> JWT is NOT accepted there; that
+    /// audience is wired only to <c>/v1/sessions</c>). Injected agent-free at deploy from Infisical
+    /// (<c>/ct121/homelab-state-mcp/BRAIN_BEARER_TOKEN</c>), NEVER committed / in the image / in agent
+    /// context. Empty in fake mode (no live egress); the composition root FAILS CLOSED on an empty
+    /// value in live mode (a mis-provisioned deploy never presents an empty brain bearer). CT126 +
+    /// forgejo egress keep using the minted JWT (see <see cref="EnrichmentAgent"/>).
+    /// <para>Scoped-JWT-for-enrich (per-route audience acceptance on brain-api) is a noted future
+    /// hardening; today the static bearer is the smallest by-the-books fix.</para>
+    /// </summary>
+    public required string BrainBearerToken { get; init; }
 
     // ── CT126 speaches (base transcription + selective re-ASR) ───────────────────
     /// <summary>Base URL of the CT126 speaches service (:8000) for base transcription + re-ASR.</summary>
@@ -129,6 +147,9 @@ public sealed record EnrichmentConfig
             GradedAutoApply = ReadBool(getEnv, "CERVELLO_GRADED_AUTO_APPLY", false),
             BrainApiBaseUrl = ReadHttpUrl(getEnv, "CERVELLO_BRAIN_API_BASE_URL", DefaultBrainApiBaseUrl),
             EnrichmentAgent = Env("CERVELLO_ENRICHMENT_AGENT", DefaultEnrichmentAgent),
+            // The static brain-api bearer. Empty default (fake mode needs none); the composition root
+            // fails closed on an empty value in LIVE mode. Never a baked-in secret.
+            BrainBearerToken = getEnv("CERVELLO_BRAIN_BEARER_TOKEN") ?? "",
             Ct126BaseUrl = ReadHttpUrl(getEnv, "CERVELLO_CT126_BASE_URL", DefaultCt126BaseUrl),
             TranscribeLanguage = Env("CERVELLO_TRANSCRIBE_LANGUAGE", DefaultTranscribeLanguage),
             BaseReTranscribeEnabled = ReadBool(getEnv, "CERVELLO_BASE_RETRANSCRIBE_ENABLED", false),

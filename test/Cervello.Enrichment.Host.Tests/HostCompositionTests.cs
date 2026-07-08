@@ -23,6 +23,7 @@ public sealed class HostCompositionTests
         if (live)
         {
             env["CERVELLO_DB_PASSWORD"] = "unused-at-construction";
+            env["CERVELLO_BRAIN_BEARER_TOKEN"] = "brain-bearer-under-test"; // enrich routes require it
             Environment.SetEnvironmentVariable("OIDC_ISSUER", "https://id.test");
             Environment.SetEnvironmentVariable("OIDC_AUDIENCE_PROJECT_ID", "proj-1");
         }
@@ -110,6 +111,7 @@ public sealed class HostCompositionTests
             {
                 ["CERVELLO_USE_LIVE_ADAPTERS"] = "true",
                 ["CERVELLO_DB_PASSWORD"] = "unused-at-construction",
+                ["CERVELLO_BRAIN_BEARER_TOKEN"] = "brain-bearer-under-test",
             });
 
             var services = new ServiceCollection();
