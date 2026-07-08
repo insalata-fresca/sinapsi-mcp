@@ -53,6 +53,17 @@ public sealed record WatcherConfig
     /// <summary>Per-request ceiling (seconds) applied to the gateway HttpClient.Timeout.</summary>
     public required int HttpTimeoutSeconds { get; init; }
 
+    /// <summary>
+    /// Bounded in-call retry attempts for a TRANSIENT gdrive-MCP failure (gateway 5xx,
+    /// transport error, or an <see cref="HttpTimeoutSeconds"/> timeout). 0 = no retry
+    /// (fail straight through to the cycle-level poll retry). Terminal errors
+    /// ({ok:false} envelopes, 4xx) are never retried. M6-finish stall guard.
+    /// </summary>
+    public required int GdriveMaxRetries { get; init; }
+
+    /// <summary>Base backoff (milliseconds) between gdrive-MCP retry attempts (exponential: base * 2^attempt).</summary>
+    public required int GdriveRetryBackoffMs { get; init; }
+
     /// <summary>Identity string for logs/diagnostics (was reported to the Drive API pre-M6-refine).</summary>
     public required string ApplicationName { get; init; }
 
@@ -69,6 +80,11 @@ public sealed record WatcherConfig
 
     internal const int DefaultHttpTimeoutSeconds = 100;
     internal const int MaxHttpTimeoutSeconds = 3_600;
+
+    internal const int DefaultGdriveMaxRetries = 3;
+    internal const int MaxGdriveMaxRetries = 10;
+    internal const int DefaultGdriveRetryBackoffMs = 500;
+    internal const int MaxGdriveRetryBackoffMs = 60_000;
 
     internal const int DefaultHealthPort = 8146;
 
@@ -102,6 +118,10 @@ public sealed record WatcherConfig
             HealthPort = ReadBoundedInt(getEnv, "CERVELLO_WATCHER_HEALTH_PORT", DefaultHealthPort, 1, 65_535),
             HttpTimeoutSeconds = ReadBoundedInt(getEnv,
                 "CERVELLO_WATCHER_HTTP_TIMEOUT_SECONDS", DefaultHttpTimeoutSeconds, 1, MaxHttpTimeoutSeconds),
+            GdriveMaxRetries = ReadBoundedInt(getEnv,
+                "CERVELLO_WATCHER_GDRIVE_MAX_RETRIES", DefaultGdriveMaxRetries, 0, MaxGdriveMaxRetries),
+            GdriveRetryBackoffMs = ReadBoundedInt(getEnv,
+                "CERVELLO_WATCHER_GDRIVE_RETRY_BACKOFF_MS", DefaultGdriveRetryBackoffMs, 0, MaxGdriveRetryBackoffMs),
             ApplicationName = Env("CERVELLO_WATCHER_APP_NAME", "cervello-watcher"),
         };
     }
