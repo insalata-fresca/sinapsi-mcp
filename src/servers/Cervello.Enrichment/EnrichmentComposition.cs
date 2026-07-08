@@ -212,6 +212,17 @@ public static class EnrichmentComposition
         services.AddSingleton<IOpenPointStore, PgOpenPointStore>();
         services.AddSingleton<IEnrichmentLedger, PgEnrichmentLedger>();
 
+        // Every live Pg store owns table(s) that MUST be created on startup. Register each as an
+        // ISchemaInitializer (resolving the SAME singleton — no double-construction) so the host
+        // ensures ALL adapter schemas, not just enrichment_ledger. (MIGRATE-FIX: the host used to
+        // ensure only the ledger, so correction_map / voiceprints / open_points were never created
+        // on a fresh CT146 and the CorrectionStage failed with 42P01.) The tables are independent
+        // (no cross-adapter FKs), so any order is correct.
+        services.AddSingleton<ISchemaInitializer>(sp => (PgEnrichmentLedger)sp.GetRequiredService<IEnrichmentLedger>());
+        services.AddSingleton<ISchemaInitializer>(sp => (PgCorrectionMapStore)sp.GetRequiredService<ICorrectionMapStore>());
+        services.AddSingleton<ISchemaInitializer>(sp => (PgVoiceprintStore)sp.GetRequiredService<IVoiceprintStore>());
+        services.AddSingleton<ISchemaInitializer>(sp => (PgOpenPointStore)sp.GetRequiredService<IOpenPointStore>());
+
         // CT-side + git-working-tree stores. The repo working tree + pin/log dirs default to the
         // Watcher's custody root; a host overrides via the matching env before calling.
         var repoRoot = Environment.GetEnvironmentVariable("CERVELLO_REPO_WORKTREE")

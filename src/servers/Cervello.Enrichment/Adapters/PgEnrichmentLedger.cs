@@ -15,8 +15,10 @@ namespace Cervello.Enrichment.Adapters;
 /// <para>L2 verification deferred (like PostgresStateStore): compiles + DI-registered; SQL/DDL
 /// asserted by review + the opt-in offline integration test; LIVE behaviour is an L2 step.</para>
 /// </summary>
-public sealed class PgEnrichmentLedger : IEnrichmentLedger
+public sealed class PgEnrichmentLedger : IEnrichmentLedger, ISchemaInitializer
 {
+    public string SchemaName => "enrichment_ledger";
+
     private const string Ddl = """
         CREATE TABLE IF NOT EXISTS enrichment_ledger (
             idempotency_key TEXT PRIMARY KEY,

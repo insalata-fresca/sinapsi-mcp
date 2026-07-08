@@ -19,8 +19,10 @@ namespace Cervello.Enrichment.Adapters;
 /// PostgresStateStore): compiles + DI-registered; SQL/DDL asserted by review + the opt-in offline
 /// integration test; LIVE behaviour is an L2 step.</para>
 /// </summary>
-public sealed class PgOpenPointStore : IOpenPointStore
+public sealed class PgOpenPointStore : IOpenPointStore, ISchemaInitializer
 {
+    public string SchemaName => "open_points";
+
     private const string Ddl = """
         CREATE TABLE IF NOT EXISTS open_points (
             point_id           TEXT PRIMARY KEY,
