@@ -41,6 +41,13 @@ builder.Services.AddHttpClient("career-search", http =>
     http.Timeout = TimeSpan.FromSeconds(10);
 });
 
+// Typed + pooled HttpClient for the cervello open-points Surface A tools (S50 L3).
+// 10s timeout (a list/answer round-trip to CT146 via the CT121 PEP).
+builder.Services.AddHttpClient("cervello-open-points", http =>
+{
+    http.Timeout = TimeSpan.FromSeconds(10);
+});
+
 // Pooled named HttpClient for raw Forgejo API calls in GitOpsService (item 6 fix).
 // Previously GetForgeJsonAsync / GetForgeJsonBytesAsync used `new HttpClient()` per call —
 // socket-exhaustion anti-pattern. Route through the factory instead.
@@ -71,7 +78,9 @@ builder
     // B4b-6: Stateful tools (list_recent_additions, mark_inbox_read).
     .WithTools<BridgeStatefulTools>()
     // B4b-8: Career search (intentionally-changed tool — new indexer contract).
-    .WithTools<BridgeCareerSearchTools>();
+    .WithTools<BridgeCareerSearchTools>()
+    // S50 L3: cervello open-points Surface A (list + answer, cervello-scoped + emergency-disable).
+    .WithTools<BridgeOpenPointsTools>();
 
 var app = builder.Build();
 

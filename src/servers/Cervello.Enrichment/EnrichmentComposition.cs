@@ -274,6 +274,18 @@ public static class EnrichmentComposition
 
         // The graph-writer composes the map review-PR from applied facts + self-lints before OpenPr.
         services.AddSingleton<CervelloGraphWriter>();
+
+        // ── open-points MCP service (S50 L3 exposure) ───────────────────────────────────────────
+        // The engine behind cervello_open_points_list / _answer (the operator's ONLY enrichment UI,
+        // Claude web/mobile via the bridge, Surface A). Constructed here for the LIVE host: every
+        // ctor dep — auth gate (273), IOpenPointStore (212), IAccessLog (238), CervelloGraphWriter
+        // (276), ICorrectionMapStore (211), VoiceprintEnrollment (below), EnrollmentAllowlist (61),
+        // IEnrollmentSourceProvider (269) — is a live registration. VoiceprintEnrollment wraps the
+        // live IVoiceprintStore (210); it was previously only test-constructed. The service opens no
+        // NATS/HTTP itself — the CT146 host maps a token-gated HTTP surface over it (Host/Program.cs);
+        // the bearer gate FAILS CLOSED on an empty token (a mis-provisioned deploy exposes nothing).
+        services.AddSingleton<VoiceprintEnrollment>();
+        services.AddSingleton<OpenPointsService>();
     }
 
     /// <summary>Wire the in-memory FAKES (offline slice / L1 tests). Deterministic, no network, no DB.</summary>
