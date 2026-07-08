@@ -35,12 +35,21 @@ public sealed class PgNormalizedWorkQueue : INormalizedWorkQueue
     // JOIN so a recording with no Google .txt (txt_drive_id NULL, or not yet staged) still leases —
     // it simply has no google_txt_sha and the base source degrades gracefully. Both tables are the
     // Watcher's; this is a READ-ONLY, additive view (no watcher-side change).
-    private const string LeaseSql = """
+    // The Watcher persists the state as the SCHEMAS §5 wire name `normalized` (PipelineState.ToWire,
+    // E4). A PRE-E4 Watcher build persisted the PascalCase Enum.ToString() form `Normalized` instead —
+    // and Postgres string equality is CASE-SENSITIVE, so `WHERE state = 'normalized'` silently skips
+    // those legacy rows forever (incident 2026-07-08: 3 real recordings stuck at `Normalized` while the
+    // drain leased 0, masked by the synthetic verify inserting the lowercase form). The drain MUST be
+    // as TOLERANT of the legacy form as the Watcher's own PipelineStateWire.Parse is, so a stale image
+    // can never strand the backlog. We match BOTH the §5 wire name and the legacy PascalCase.
+    // internal (not private) so the host test can pin the write↔read state contract against the
+    // Watcher's PipelineState.ToWire() without a live DB — the seam a fake previously hid behind.
+    internal const string LeaseSql = """
         SELECT r.recording_id, r.audio_sha256, d.sha256 AS google_txt_sha
         FROM watcher_recording r
         LEFT JOIN watcher_download d
           ON d.file_id = r.txt_drive_id AND d.kind = 'transcript'
-        WHERE r.state = 'normalized'
+        WHERE r.state IN ('normalized', 'Normalized')
         ORDER BY r.ready_at ASC
         LIMIT @max
         """;
