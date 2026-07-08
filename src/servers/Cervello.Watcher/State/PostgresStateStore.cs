@@ -124,7 +124,7 @@ public sealed class PostgresStateStore : IStateStore
             r.GetString(3),
             r.IsDBNull(4) ? null : r.GetString(4),
             r.IsDBNull(5) ? null : r.GetString(5),
-            Enum.Parse<PipelineState>(r.GetString(6)),
+            PipelineStateWire.Parse(r.GetString(6)), // tolerant: §5 wire or legacy PascalCase (E4)
             r.IsDBNull(7) ? null : r.GetString(7));
     }
 
@@ -146,7 +146,7 @@ public sealed class PostgresStateStore : IStateStore
         cmd.Parameters.AddWithValue("kind", record.Kind);
         cmd.Parameters.AddWithValue("path", (object?)record.StagedPath ?? DBNull.Value);
         cmd.Parameters.AddWithValue("sha", (object?)record.Sha256 ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("state", record.State.ToString());
+        cmd.Parameters.AddWithValue("state", record.State.ToWire()); // SCHEMAS §5 wire name (E4)
         cmd.Parameters.AddWithValue("reason", (object?)record.Reason ?? DBNull.Value);
         await cmd.ExecuteNonQueryAsync(ct);
     }
@@ -177,7 +177,7 @@ public sealed class PostgresStateStore : IStateStore
         cmd.Parameters.AddWithValue("adid", recording.AudioDriveId);
         cmd.Parameters.AddWithValue("tdid", (object?)recording.TxtDriveId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("rec", recording.RecordedAt);
-        cmd.Parameters.AddWithValue("state", recording.State.ToString());
+        cmd.Parameters.AddWithValue("state", recording.State.ToWire()); // SCHEMAS §5 wire name (E4)
         await cmd.ExecuteNonQueryAsync(ct);
     }
 }
