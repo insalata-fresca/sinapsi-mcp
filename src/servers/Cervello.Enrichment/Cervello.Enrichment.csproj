@@ -15,13 +15,26 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- E2b slice: the enrichment engine's diarize/embed/base-transcribe/cluster-merge stages,
-         built against port fakes only (no live sidecar, no CT126, no Postgres). Logging
-         abstractions are the sole dependency; like Cervello.Watcher (invariant 3 / D8) this
-         binary references NEITHER Sinapsi.Nats NOR any NATS package. The live adapters
-         (GatewayDiarizeEmbedClient → brain-api, Ct126TranscribeClient, Pg* stores) are E2a/E3
-         and add their own package refs then. -->
+    <!-- L1 (live adapters + DI composition root): the engine gains its live adapters behind
+         the existing port seams (GatewayDiarizeEmbedClient/BrainApiCorrectionLlm → brain-api,
+         Ct126TranscribeClient/Ct126ReAsrClient → CT126, Pg* stores → CT146 pgvector,
+         ForgejoMapPrWriter → ste/cervello). Like Cervello.Watcher (invariant 3 / D8) this
+         binary references NEITHER Sinapsi.Nats NOR any NATS package — the enrichment plane
+         never touches the shared bus.
+
+         Data tier: Npgsql (public nuget.org) — the same 8.0.3 the Watcher + Indexer use;
+         pgvector is spoken as a text literal cast ::vector in SQL (no Pgvector package, the
+         Indexer's established convention). HTTP: Microsoft.Extensions.Http registers the typed
+         GatewayDiarizeEmbedClient / BrainApiCorrectionLlm / CT126 clients with a configured
+         HttpClient. Bearer minting is the in-repo Sinapsi.AgentJwt (agent-free machine
+         identity), same as the Watcher — the bearer is resolved at RUNTIME on-CT, never from
+         agent context. -->
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="8.0.2" />
+    <PackageReference Include="Npgsql" Version="8.0.3" />
+    <ProjectReference Include="../../libs/Sinapsi.AgentJwt/Sinapsi.AgentJwt.csproj" />
   </ItemGroup>
 
 </Project>
