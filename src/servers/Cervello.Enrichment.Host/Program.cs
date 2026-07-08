@@ -80,19 +80,28 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<DrainWorker>());
 var app = builder.Build();
 
 // ── migrations on startup ────────────────────────────────────────────────────
-// The engine's ledger owns the enrichment_ledger table (idempotency, §5/§8). In live
-// mode we ensure its schema before the worker starts draining, so a fresh CT146 boots
-// clean. (The `watcher_recording` table the drain reads is owned + ensured by the
-// Watcher — we never CREATE it here; only its own EnsureSchemaAsync does.) In fake mode
-// the in-memory ledger has no schema, so this is a no-op.
+// Every live Pg adapter owns table(s) that must exist before the worker drains. In live mode
+// we ensure EVERY registered ISchemaInitializer — enrichment_ledger (idempotency, §5/§8),
+// correction_map (glossary), voiceprints + tombstones + enrollment-audio (attribution), and
+// open_points (escalations) — so a fresh CT146 boots clean. (MIGRATE-FIX: the host used to
+// ensure ONLY enrichment_ledger, so a fresh CT146 was missing correction_map / voiceprints /
+// open_points and the CorrectionStage crashed with `42P01 relation "correction_map" does not
+// exist`.) The tables are independent (no cross-adapter FKs), so any order is correct.
+//
+// Fail-closed: EnsureSchemaAsync retries transient connection failures internally; a hard/
+// persistent error propagates out of this await and aborts startup rather than draining against
+// a half-migrated DB. (The `watcher_recording` table the drain reads is owned + ensured by the
+// Watcher — we never CREATE it here.) In fake mode no ISchemaInitializer is registered (the
+// in-memory stores have no schema), so this loop is a no-op.
 if (engineCfg.UseLiveAdapters)
 {
-    var ledger = app.Services.GetRequiredService<IEnrichmentLedger>();
-    if (ledger is PgEnrichmentLedger pg)
+    var initializers = app.Services.GetServices<ISchemaInitializer>().ToList();
+    foreach (var init in initializers)
     {
-        await pg.EnsureSchemaAsync(CancellationToken.None);
-        app.Logger.LogInformation("enrichment_ledger schema ensured on startup");
+        await init.EnsureSchemaAsync(CancellationToken.None);
+        app.Logger.LogInformation("{Schema} schema ensured on startup", init.SchemaName);
     }
+    app.Logger.LogInformation("all {Count} Pg adapter schemas ensured on startup", initializers.Count);
 }
 
 // ── opaque health heartbeat (mirror the Watcher). Carries NO recording data —

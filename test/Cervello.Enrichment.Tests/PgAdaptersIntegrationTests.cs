@@ -129,6 +129,51 @@ public sealed class PgAdaptersIntegrationTests : IAsyncLifetime
         Assert.True(await ledger.IsClaimedAsync("rec:rec-1:sha"));
     }
 
+    /// <summary>
+    /// MIGRATE-FIX regression: ensuring EVERY Pg adapter's schema (as the host startup loop does over
+    /// all ISchemaInitializers) creates ALL expected tables — not just enrichment_ledger. This is the
+    /// exact failure the mission fixes: a fresh CT146 that ensured only the ledger had no
+    /// correction_map, so PgCorrectionMapStore.GetGlossaryAsync threw 42P01. Here we ensure each Pg
+    /// store's schema against a fresh pgvector DB and assert every table now exists.
+    /// </summary>
+    [Fact]
+    public async Task Ensuring_all_pg_adapter_schemas_creates_every_expected_table()
+    {
+        if (!_enabled) return; // opt-in: set CERVELLO_PGVECTOR_IT=1 with a cached pgvector image
+
+        var allow = new EnrollmentAllowlist(["guilhem"]);
+        // Each store is an ISchemaInitializer; the host startup loop ensures all of them.
+        var initializers = new ISchemaInitializer[]
+        {
+            new PgEnrichmentLedger(_cfg),
+            new PgCorrectionMapStore(_cfg),
+            new PgVoiceprintStore(_cfg, allow),
+            new PgOpenPointStore(_cfg),
+        };
+        foreach (var init in initializers)
+            await init.EnsureSchemaAsync();
+
+        foreach (var table in new[]
+                 {
+                     "enrichment_ledger", "correction_map",
+                     "voiceprints", "voiceprint_tombstones", "voiceprint_enrollment_audio",
+                     "open_points",
+                 })
+        {
+            Assert.True(await TableExistsAsync(table), $"expected table '{table}' to exist after ensuring all schemas");
+        }
+    }
+
+    private async Task<bool> TableExistsAsync(string table)
+    {
+        await using var c = new Npgsql.NpgsqlConnection(_cfg.PostgresDsn);
+        await c.OpenAsync();
+        await using var cmd = new Npgsql.NpgsqlCommand(
+            "SELECT to_regclass(@t) IS NOT NULL", c);
+        cmd.Parameters.AddWithValue("t", $"public.{table}");
+        return (bool)(await cmd.ExecuteScalarAsync())!;
+    }
+
     private async Task WaitReadyAsync()
     {
         for (var i = 0; i < 30; i++)

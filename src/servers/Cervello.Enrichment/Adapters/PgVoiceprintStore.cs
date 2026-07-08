@@ -27,8 +27,10 @@ namespace Cervello.Enrichment.Adapters;
 /// CT146 DB — extension present, HNSW index build, cosine parity with the in-memory store — is an
 /// L2 on-CT integration step (see the mission return's L2 checklist).</para>
 /// </summary>
-public sealed class PgVoiceprintStore : IVoiceprintStore
+public sealed class PgVoiceprintStore : IVoiceprintStore, ISchemaInitializer
 {
+    public string SchemaName => "voiceprints, voiceprint_tombstones, voiceprint_enrollment_audio";
+
     private const string Ddl = """
         CREATE EXTENSION IF NOT EXISTS vector;
         CREATE TABLE IF NOT EXISTS voiceprints (

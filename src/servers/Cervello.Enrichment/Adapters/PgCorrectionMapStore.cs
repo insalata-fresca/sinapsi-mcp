@@ -16,8 +16,10 @@ namespace Cervello.Enrichment.Adapters;
 /// <para>L2 verification deferred (like PostgresStateStore): compiles + DI-registered; SQL/DDL
 /// asserted by review + the opt-in offline pgvector integration test. LIVE behaviour is an L2 step.</para>
 /// </summary>
-public sealed class PgCorrectionMapStore : ICorrectionMapStore
+public sealed class PgCorrectionMapStore : ICorrectionMapStore, ISchemaInitializer
 {
+    public string SchemaName => "correction_map";
+
     private const string Ddl = """
         CREATE TABLE IF NOT EXISTS correction_map (
             term_before        TEXT NOT NULL,

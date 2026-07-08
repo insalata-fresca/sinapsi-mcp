@@ -95,6 +95,60 @@ public sealed class HostCompositionTests
         }
     }
 
+    // ── MIGRATE-FIX: the host must ensure EVERY Pg adapter's schema on startup, not just the ──
+    // ledger. The startup loop (Program.cs) ensures every registered ISchemaInitializer; here we
+    // assert the LIVE composition registers one per Pg store and that, together, they cover every
+    // expected table (enrichment_ledger, correction_map, voiceprints[+tombstones+enrollment_audio],
+    // open_points). Each initializer resolves to the SAME singleton the pipeline uses — so ensuring
+    // it creates the exact table the CorrectionStage/etc. read. Construction-only: no DB touched
+    // (the testcontainer path in the engine suite exercises the real DDL when it can run offline).
+    [Fact]
+    public void Live_composition_registers_a_schema_initializer_for_every_pg_adapter_table()
+    {
+        try
+        {
+            var sp = Build(live: true);
+
+            var initializers = sp.GetServices<ISchemaInitializer>().ToList();
+            // One per Pg store: ledger, correction-map, voiceprint, open-points.
+            Assert.Equal(4, initializers.Count);
+
+            // Every expected table is covered by some initializer's SchemaName (the voiceprint store
+            // owns three tables listed together).
+            var covered = string.Join(",", initializers.Select(i => i.SchemaName));
+            foreach (var table in new[]
+                     {
+                         "enrichment_ledger", "correction_map",
+                         "voiceprints", "voiceprint_tombstones", "voiceprint_enrollment_audio",
+                         "open_points",
+                     })
+            {
+                Assert.Contains(table, covered);
+            }
+
+            // Each initializer IS the same singleton the pipeline resolves through its port — so the
+            // startup migration ensures the schema the live stores actually read/write.
+            Assert.Contains(sp.GetRequiredService<IEnrichmentLedger>(), initializers.Cast<object>());
+            Assert.Contains(sp.GetRequiredService<ICorrectionMapStore>(), initializers.Cast<object>());
+            Assert.Contains(sp.GetRequiredService<IVoiceprintStore>(), initializers.Cast<object>());
+            Assert.Contains(sp.GetRequiredService<IOpenPointStore>(), initializers.Cast<object>());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("OIDC_ISSUER", null);
+            Environment.SetEnvironmentVariable("OIDC_AUDIENCE_PROJECT_ID", null);
+        }
+    }
+
+    // Fake mode registers NO ISchemaInitializer (the in-memory stores have no schema), so the
+    // startup migration loop is a correct no-op — a fake-mode host stays fully offline.
+    [Fact]
+    public void Fake_mode_registers_no_schema_initializers()
+    {
+        var sp = Build(live: false);
+        Assert.Empty(sp.GetServices<ISchemaInitializer>());
+    }
+
     // ── L2 wiring: the HOST's OWN production registration closes the IExternalBlobFetcher seam ──
     // Program.cs registers NotConfiguredExternalBlobFetcher in live mode (the one port the engine
     // composition root leaves for the deploy). This asserts the host's PRODUCTION graph resolves the
