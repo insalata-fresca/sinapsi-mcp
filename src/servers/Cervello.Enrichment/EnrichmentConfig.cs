@@ -53,6 +53,24 @@ public sealed record EnrichmentConfig
     /// <summary>Correct-language config handed to CT126 base transcription (e.g. <c>fr</c>, <c>en</c>).</summary>
     public required string TranscribeLanguage { get; init; }
 
+    /// <summary>
+    /// OPTIONAL CT126 base RE-TRANSCRIPTION fallback. FALSE (default) = the ratified posture: the
+    /// Google <c>.txt</c> IS the base and the engine NEVER re-transcribes the audio from scratch, so
+    /// CT126 is not a hard dependency of a full drain. TRUE = if (and only if) a recording carries no
+    /// Google <c>.txt</c>, fall back to CT126 base transcription. Flipping it is a config change
+    /// (<c>CERVELLO_BASE_RETRANSCRIBE_ENABLED=true</c>), never a code change.
+    /// </summary>
+    public required bool BaseReTranscribeEnabled { get; init; }
+
+    /// <summary>
+    /// OPTIONAL selective RE-ASR of garbled spans (CT126). FALSE (default) = a garbled span is left
+    /// as-is (omitted, never guessed) and the drain completes without CT126 — re-ASR is a LATER
+    /// quality enhancement, not a drain dependency. TRUE = re-ASR garbled spans for correction
+    /// evidence; even then a CT126 failure gracefully skips the span (never fails the drain).
+    /// Enabling it is a config change (<c>CERVELLO_REASR_ENABLED=true</c>), never a code change.
+    /// </summary>
+    public required bool ReAsrEnabled { get; init; }
+
     // ── CT146 Postgres (voiceprints / attributions / open-points / correction-map) ─
     /// <summary>Npgsql DSN for the on-CT cervello Postgres (pgvector). Password injected agent-free.</summary>
     public required string PostgresDsn { get; init; }
@@ -113,6 +131,8 @@ public sealed record EnrichmentConfig
             EnrichmentAgent = Env("CERVELLO_ENRICHMENT_AGENT", DefaultEnrichmentAgent),
             Ct126BaseUrl = ReadHttpUrl(getEnv, "CERVELLO_CT126_BASE_URL", DefaultCt126BaseUrl),
             TranscribeLanguage = Env("CERVELLO_TRANSCRIBE_LANGUAGE", DefaultTranscribeLanguage),
+            BaseReTranscribeEnabled = ReadBool(getEnv, "CERVELLO_BASE_RETRANSCRIBE_ENABLED", false),
+            ReAsrEnabled = ReadBool(getEnv, "CERVELLO_REASR_ENABLED", false),
             PostgresDsn = ReadPostgresDsn(getEnv),
             ForgejoBaseUrl = ReadHttpUrl(getEnv, "CERVELLO_FORGEJO_BASE_URL", DefaultForgejoBaseUrl),
             ForgejoRepo = Env("CERVELLO_FORGEJO_REPO", DefaultForgejoRepo),

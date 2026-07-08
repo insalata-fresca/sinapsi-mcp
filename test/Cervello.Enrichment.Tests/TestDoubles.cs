@@ -1,6 +1,28 @@
+using Cervello.Enrichment.Domain;
 using Cervello.Enrichment.Ports;
 
 namespace Cervello.Enrichment.Tests;
+
+/// <summary>
+/// Deterministic fake Google-<c>.txt</c> base source (the RATIFIED base). Returns a scripted base
+/// transcript VERBATIM when one is configured, or <see langword="null"/> (no Google base → the stage
+/// degrades gracefully). Records the calls. No staging blob, no network.
+/// </summary>
+internal sealed class FakeBaseTranscriptSource(BaseTranscript? google) : IBaseTranscriptSource
+{
+    public int Calls { get; private set; }
+    public List<string> Seen { get; } = [];
+
+    /// <summary>A source with NO Google base for any recording (exercises the graceful-degrade path).</summary>
+    public static FakeBaseTranscriptSource None() => new((BaseTranscript?)null);
+
+    public Task<BaseTranscript?> GetGoogleBaseAsync(RecordingRef recording, CancellationToken ct = default)
+    {
+        Calls++;
+        Seen.Add(recording.Id);
+        return Task.FromResult(google);
+    }
+}
 
 /// <summary>
 /// Deterministic fake CT126 transcription (spec <c>text-correction</c>). Returns a scripted base

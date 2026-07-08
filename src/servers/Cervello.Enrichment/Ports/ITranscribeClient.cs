@@ -1,11 +1,14 @@
 namespace Cervello.Enrichment.Ports;
 
 /// <summary>
-/// Port for base transcription via CT126 speaches (spec <c>text-correction</c> →
-/// "Base transcript is the correction substrate"). The engine re-transcribes the recording
-/// audio in the correct language; the returned <see cref="BaseTranscript"/> is the immutable
-/// substrate that the (later, E4) correction pass diffs against — it is never overwritten.
-/// A fake stands in for CT126 in tests (no live endpoint).
+/// Port for the OPTIONAL CT126-speaches base-transcription FALLBACK (spec <c>text-correction</c>).
+/// The RATIFIED base is the Google <c>.txt</c> transcript (<see cref="IBaseTranscriptSource"/>), which
+/// the engine keeps verbatim; it does NOT re-transcribe the audio from scratch as the base. This
+/// client is used ONLY when a recording carries no Google <c>.txt</c> AND the operator has explicitly
+/// enabled the fallback (<c>CERVELLO_BASE_RETRANSCRIBE_ENABLED=true</c>) — otherwise it is never wired
+/// or called, so a full drain never depends on CT126 for the base. When used, the returned
+/// <see cref="BaseTranscript"/> is the immutable substrate the (E4) correction pass diffs against — it
+/// is never overwritten. A fake stands in for CT126 in tests (no live endpoint).
 /// </summary>
 public interface ITranscribeClient
 {

@@ -5,6 +5,7 @@ using Cervello.Enrichment.Pipeline.Stages;
 using Cervello.Enrichment.Policy;
 using Cervello.Enrichment.Ports;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Sinapsi.AgentJwt;
 
 namespace Cervello.Enrichment;
@@ -87,11 +88,45 @@ public static class EnrichmentComposition
         // AddCervelloEnrichment (stores/clients) or by the host/test (audio + fact source + the
         // clients the engine assembly leaves to the caller).
         services.AddSingleton<IngestStage>();
-        services.AddSingleton<BaseTranscribeStage>();
+
+        // BaseTranscribeStage: the Google .txt IS the base (IBaseTranscriptSource). The CT126
+        // re-transcription client is an OPTIONAL fallback, wired ONLY when the config enables it
+        // (CERVELLO_BASE_RETRANSCRIBE_ENABLED=true) — otherwise the stage never touches CT126 for the
+        // base. Explicit factory so the optional client + flag are resolved from config.
+        services.AddSingleton(sp =>
+        {
+            var cfg = sp.GetRequiredService<EnrichmentConfig>();
+            var reTranscribe = cfg.BaseReTranscribeEnabled
+                ? sp.GetService<ITranscribeClient>()   // may be unregistered in fake mode → null → disabled
+                : null;
+            return new BaseTranscribeStage(
+                sp.GetRequiredService<IBaseTranscriptSource>(),
+                sp.GetRequiredService<ITranscriptStore>(),
+                reTranscribe,
+                cfg.BaseReTranscribeEnabled,
+                sp.GetService<ILogger<BaseTranscribeStage>>());
+        });
+
         services.AddSingleton<DiarizeEmbedStage>();
         services.AddSingleton<ClusterMergeStage>();
         services.AddSingleton<AttributionStage>();
-        services.AddSingleton<CorrectionStage>();
+
+        // CorrectionStage: selective re-ASR is OPTIONAL + graceful-degrade. The IReAsrClient is passed
+        // ONLY when CERVELLO_REASR_ENABLED=true; otherwise garbled spans are omitted (left as-is) and
+        // the drain never depends on CT126. Explicit factory so the optional client + flag resolve.
+        services.AddSingleton(sp =>
+        {
+            var cfg = sp.GetRequiredService<EnrichmentConfig>();
+            var reAsr = cfg.ReAsrEnabled ? sp.GetService<IReAsrClient>() : null;
+            return new CorrectionStage(
+                sp.GetRequiredService<ICorrectionLlm>(),
+                sp.GetRequiredService<ICorrectionMapStore>(),
+                reAsr,
+                sp.GetRequiredService<CorrectionGrader>(),
+                cfg.ReAsrEnabled,
+                sp.GetService<ILogger<CorrectionStage>>());
+        });
+
         services.AddSingleton<EnrichLinkStage>();
         services.AddSingleton<ApplyStage>();
 
@@ -175,6 +210,12 @@ public static class EnrichmentComposition
         var audioStagingDir = Environment.GetEnvironmentVariable("CERVELLO_AUDIO_STAGING_DIR")
                               ?? "/var/lib/cervello/staging";
         services.AddSingleton<IAudioSource>(_ => new StagingBlobAudioSource(audioStagingDir));
+
+        // IBaseTranscriptSource: the RATIFIED base — the recording's paired Google .txt transcript
+        // read from the SAME CT staging blob store (content-addressed by the .txt's sha, carried on
+        // RecordingRef.GoogleTxtSha256). Absent/unreadable → null (graceful degrade), never a throw.
+        services.AddSingleton<IBaseTranscriptSource>(sp =>
+            new StagingBlobTranscriptSource(audioStagingDir, sp.GetService<ILogger<StagingBlobTranscriptSource>>()));
 
         // IPriorSource: deterministic filename + manifest-participants prior, grounded against
         // map/people/<slug>.md (never invents a person). No network, no LLM.

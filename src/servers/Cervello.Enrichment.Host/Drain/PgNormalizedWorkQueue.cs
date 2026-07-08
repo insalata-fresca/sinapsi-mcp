@@ -28,11 +28,20 @@ public sealed class PgNormalizedWorkQueue : INormalizedWorkQueue
 {
     // The row shape is owned by Cervello.Watcher.State.PostgresStateStore; we only READ it (+ the one
     // state UPDATE). We do NOT CREATE it — the Watcher's EnsureSchemaAsync is its authoritative owner.
+    //
+    // The Google .txt (the RATIFIED base) is staged on-CT keyed by its OWN content sha; the recording
+    // row carries only txt_drive_id. We LEFT JOIN the Watcher's download ledger on that Drive fileId
+    // (kind='transcript') to resolve the staged .txt content sha, which the base source reads. LEFT
+    // JOIN so a recording with no Google .txt (txt_drive_id NULL, or not yet staged) still leases —
+    // it simply has no google_txt_sha and the base source degrades gracefully. Both tables are the
+    // Watcher's; this is a READ-ONLY, additive view (no watcher-side change).
     private const string LeaseSql = """
-        SELECT recording_id, audio_sha256
-        FROM watcher_recording
-        WHERE state = 'normalized'
-        ORDER BY ready_at ASC
+        SELECT r.recording_id, r.audio_sha256, d.sha256 AS google_txt_sha
+        FROM watcher_recording r
+        LEFT JOIN watcher_download d
+          ON d.file_id = r.txt_drive_id AND d.kind = 'transcript'
+        WHERE r.state = 'normalized'
+        ORDER BY r.ready_at ASC
         LIMIT @max
         """;
 
@@ -76,9 +85,12 @@ public sealed class PgNormalizedWorkQueue : INormalizedWorkQueue
         {
             var id = r.GetString(0);
             var sha = r.GetString(1);
+            // The staged Google .txt content sha (the ratified base), or null when the recording has
+            // no paired Google transcript / it is not (yet) staged — the base source degrades gracefully.
+            var googleTxtSha = r.IsDBNull(2) ? null : r.GetString(2);
             // ready == true: the row is at `normalized`, which is precisely the Watcher's
             // "ready for enrichment" terminal (the local ready-marker equivalent, D-side).
-            batch.Add(new RecordingRef(id, sha, _format, _language, ready: true));
+            batch.Add(new RecordingRef(id, sha, _format, _language, ready: true, googleTxtSha256: googleTxtSha));
         }
         return batch;
     }

@@ -54,7 +54,7 @@ public sealed class HealthEndpointTests
         new(
             new IngestStage(ledger),
             new HostFakeAudioSource(),
-            new BaseTranscribeStage(new HostFakeTranscribeClient(), new HostInMemoryTranscriptStore()),
+            new BaseTranscribeStage(new HostFakeBaseTranscriptSource(), new HostInMemoryTranscriptStore()),
             new DiarizeEmbedStage(HostFakeDiarizeEmbedClient.Empty()),
             new ClusterMergeStage(),
             new AttributionStage(

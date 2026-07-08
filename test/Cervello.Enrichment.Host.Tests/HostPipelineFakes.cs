@@ -17,7 +17,14 @@ internal sealed class HostFakeAudioSource : IAudioSource
         Task.FromResult<ReadOnlyMemory<byte>>(new byte[] { 1, 2, 3, 4 });
 }
 
-/// <summary>Returns a fixed base transcript.</summary>
+/// <summary>The ratified base source: returns a fixed Google-.txt base (verbatim), never CT126.</summary>
+internal sealed class HostFakeBaseTranscriptSource : IBaseTranscriptSource
+{
+    public Task<BaseTranscript?> GetGoogleBaseAsync(RecordingRef recording, CancellationToken ct = default) =>
+        Task.FromResult<BaseTranscript?>(new BaseTranscript("transcript", recording.Language));
+}
+
+/// <summary>Returns a fixed base transcript (CT126 optional fallback — not exercised by default).</summary>
 internal sealed class HostFakeTranscribeClient : ITranscribeClient
 {
     public Task<BaseTranscript> TranscribeAsync(

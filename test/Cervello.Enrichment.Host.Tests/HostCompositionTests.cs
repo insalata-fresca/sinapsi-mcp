@@ -54,6 +54,7 @@ public sealed class HostCompositionTests
             // Fake mode: the engine assembly ships NO fakes for the diarize/transcribe/re-asr/
             // correction-LLM/map-PR ports (their fakes live in the test project by design), so a
             // fake-mode host supplies them. This mirrors exactly what an offline host wires.
+            services.AddSingleton<IBaseTranscriptSource, HostFakeBaseTranscriptSource>();
             services.AddSingleton<ITranscribeClient, HostFakeTranscribeClient>();
             services.AddSingleton<ITranscriptStore, HostInMemoryTranscriptStore>();
             services.AddSingleton<IDiarizeEmbedClient>(HostFakeDiarizeEmbedClient.Empty());

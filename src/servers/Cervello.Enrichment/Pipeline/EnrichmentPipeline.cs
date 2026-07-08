@@ -20,8 +20,9 @@ namespace Cervello.Enrichment.Pipeline;
 ///   whole run below only happens on a fresh key.</item>
 /// <item><b>Fetch audio</b> (<see cref="IAudioSource"/>) — the transient bytes both audio stages
 ///   consume, fetched ONCE and threaded to both (never persisted git-side).</item>
-/// <item><b>BaseTranscribe</b> (<see cref="BaseTranscribeStage"/>) — audio → the immutable
-///   <see cref="BaseTranscript"/> (the correction substrate), persisted once.</item>
+/// <item><b>BaseTranscribe</b> (<see cref="BaseTranscribeStage"/>) — the recording's Google <c>.txt</c>
+///   (the ratified base) → the immutable <see cref="BaseTranscript"/> (the correction substrate),
+///   persisted once. CT126 is NOT called for the base (it is an optional, default-off fallback only).</item>
 /// <item><b>DiarizeEmbed</b> (<see cref="DiarizeEmbedStage"/>) — the SAME audio → per-speaker
 ///   <see cref="SpeakerCluster"/>s (segments + centroid embeddings). A transient sidecar fault →
 ///   <c>failed_retryable</c>; a malformed/undecodable one → <c>failed_terminal</c>.</item>
@@ -144,13 +145,17 @@ public sealed class EnrichmentPipeline
                 return Fail(recording, state, EnrichmentState.FailedTerminal, transitions,
                     "audio source returned empty bytes (no transcript/segments may be fabricated)");
 
-            // ── 3. BASE TRANSCRIBE: audio → immutable base transcript ─────────────────────────────
+            // ── 3. BASE: the Google .txt IS the base (ratified) → immutable base transcript ───────
+            // The stage reads the recording's paired Google .txt verbatim (CT126 not called). CT126
+            // base re-transcription is an optional, default-off fallback used only when no Google .txt
+            // exists — so this step never depends on CT126 for a recording that carries a Google base.
             var baseResult = await _transcribe.TranscribeAsync(recording, audio, ct).ConfigureAwait(false);
-            // On a first run the stage returns the fresh transcript; on an idempotent re-run over a
+            // On a first run the stage returns the fresh base; on an idempotent re-run over a
             // pre-existing base it returns Transcript=null (the base is written once, never clobbered).
-            // In the re-run case we still need the substrate to feed correction — the transcript store
-            // owns it; here we fall back to an empty-substrate transcript in the recording's language
-            // so the chain composes (a live re-run reads the persisted base; the base is never rewritten).
+            // In the re-run case (and the rare NoBase case) we still need a substrate to feed
+            // correction — the transcript store owns the persisted base; here we fall back to an
+            // empty-substrate transcript in the recording's language so the chain composes (a live
+            // re-run reads the persisted base; the base is never rewritten, nothing is fabricated).
             var baseTranscript = baseResult.Transcript ?? new BaseTranscript("", recording.Language);
 
             // ── 4. DIARIZE + EMBED: the SAME audio → per-speaker clusters ─────────────────────────

@@ -32,6 +32,27 @@ public sealed class EnrichmentCompositionTests
         Assert.Equal(PolicyPhase.EscalateOnly, policy.Phase);
     }
 
+    // ── ratified base + graceful CT126 gates: both re-transcribe + re-ASR default OFF ──────────────
+    [Fact]
+    public void Base_retranscribe_and_reasr_default_off_so_ct126_is_not_a_drain_dependency()
+    {
+        var cfg = Cfg();
+        Assert.False(cfg.BaseReTranscribeEnabled); // the Google .txt IS the base; no re-transcription
+        Assert.False(cfg.ReAsrEnabled);            // selective re-ASR is a later, optional enhancement
+    }
+
+    [Fact]
+    public void Base_retranscribe_and_reasr_are_enabled_only_by_config_no_code_change()
+    {
+        var cfg = Cfg(new Dictionary<string, string?>
+        {
+            ["CERVELLO_BASE_RETRANSCRIBE_ENABLED"] = "true",
+            ["CERVELLO_REASR_ENABLED"] = "true",
+        });
+        Assert.True(cfg.BaseReTranscribeEnabled);
+        Assert.True(cfg.ReAsrEnabled);
+    }
+
     [Fact]
     public void A_clean_090_match_escalates_while_escalate_only_proving_the_gate()
     {
