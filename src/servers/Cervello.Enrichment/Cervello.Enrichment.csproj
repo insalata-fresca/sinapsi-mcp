@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RootNamespace>Cervello.Enrichment</RootNamespace>
+    <AssemblyName>Cervello.Enrichment</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Cervello.Enrichment.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- E2b slice: the enrichment engine's diarize/embed/base-transcribe/cluster-merge stages,
+         built against port fakes only (no live sidecar, no CT126, no Postgres). Logging
+         abstractions are the sole dependency; like Cervello.Watcher (invariant 3 / D8) this
+         binary references NEITHER Sinapsi.Nats NOR any NATS package. The live adapters
+         (GatewayDiarizeEmbedClient → brain-api, Ct126TranscribeClient, Pg* stores) are E2a/E3
+         and add their own package refs then. -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
+  </ItemGroup>
+
+</Project>
