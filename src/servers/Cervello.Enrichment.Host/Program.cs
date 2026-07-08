@@ -38,12 +38,19 @@ builder.Services.AddCervelloEnrichment(engineCfg);
 // ── the FULL end-to-end pipeline (E-PIPE): every stage + the EnrichmentPipeline
 //    orchestrator the drain worker now runs, threading a `normalized` recording all
 //    the way to `graph_pr_opened`/escalated. AddCervelloPipeline registers the stages
-//    + orchestrator; the two orchestration-only seams it needs — IAudioSource (the
-//    transient recording audio) + IRecordingFactSource (derived summary/links/timeline/
-//    attention/participants/garbled-spans) — plus IPriorSource are the DEPLOY-SLICE (L2)
-//    seams a live host registers here from the on-CT staging blob + manifest/attention
-//    scorer. This mission builds + tests the orchestrator against FAKES (no deploy), so
-//    the live adapters for those three seams are an L2 follow-up (see the E-PIPE return).
+//    + orchestrator; the three input seams it needs — IAudioSource (the transient
+//    recording audio from the CT staging blob), IPriorSource (filename+manifest prior),
+//    IRecordingFactSource (derived summary/links/timeline/attention/participants/garbled
+//    spans) — are now registered by AddCervelloEnrichment's LIVE branch (L-SEAMS): the
+//    StagingBlobAudioSource / ManifestPriorSource / BrainApiRecordingFactSource live
+//    adapters. So a live host needs no per-seam wiring here.
+//
+//    REMAINING L2 WIRING (the one seam L-SEAMS could not close without the live gateway):
+//    IExternalBlobFetcher — the drive://gmail:// evidence fetcher CtPinStore needs for
+//    pin://-on-cite. Its live adapter calls the gdrive/gmail MCP through the CT121
+//    agentgateway (a scoped machine identity), so it is a genuine deploy concern. The L2
+//    deploy MUST register it before this host resolves the pipeline; it is deliberately
+//    NOT stub-faked (a fake would silently pin garbage). See CompositionCompletenessTests.
 builder.Services.AddCervelloPipeline();
 
 // ── drain source: the read-only view over the Watcher-written `normalized` rows.

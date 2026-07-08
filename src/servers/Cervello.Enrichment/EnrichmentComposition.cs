@@ -70,12 +70,14 @@ public static class EnrichmentComposition
     /// <see cref="EnrichmentPipeline"/> orchestrator that threads them (MISSION E-PIPE). This is the
     /// piece the host runs to drive a <c>normalized</c> recording all the way to
     /// <c>graph_pr_opened</c>/escalated. It resolves the ports from <see cref="AddCervelloEnrichment"/>
-    /// (which MUST be called first) — plus the two orchestration-only ports the chain needs but no
-    /// single stage owns: <see cref="IAudioSource"/> (the transient audio the two audio stages
-    /// consume) and <see cref="IRecordingFactSource"/> (the derived summary/links/timeline/attention/
-    /// participants/garbled-spans). In live mode a host registers those two seams (deploy slice / L2);
-    /// in fake mode a test supplies them. Registering the stages here (not in every host) keeps the
-    /// composition single-sourced.
+    /// (which MUST be called first) — including the three orchestration input ports the chain needs
+    /// but no single stage owns: <see cref="IAudioSource"/> (the transient audio the two audio stages
+    /// consume), <see cref="IPriorSource"/> (the filename+manifest prior), and
+    /// <see cref="IRecordingFactSource"/> (the derived summary/links/timeline/attention/participants/
+    /// garbled-spans). In LIVE mode <see cref="AddCervelloEnrichment"/> now registers all three live
+    /// adapters (L-SEAMS: <see cref="StagingBlobAudioSource"/> / <see cref="ManifestPriorSource"/> /
+    /// <see cref="BrainApiRecordingFactSource"/>); in fake mode a test supplies them. Registering the
+    /// stages here (not in every host) keeps the composition single-sourced.
     /// </summary>
     public static IServiceCollection AddCervelloPipeline(this IServiceCollection services)
     {
@@ -114,6 +116,15 @@ public static class EnrichmentComposition
             c.Timeout = timeout;
         });
         services.AddHttpClient<ICorrectionLlm, BrainApiCorrectionLlm>(c =>
+        {
+            c.BaseAddress = new Uri(cfg.BrainApiBaseUrl);
+            c.Timeout = timeout;
+        });
+
+        // brain-api recording-fact derivation (summary/links/timeline/attention/participants/garbled)
+        // — mirrors the correction LLM; every derived fact is evidence-gated at the wire boundary
+        // (unsourced → dropped, never invented). The attribution is NOT derived here.
+        services.AddHttpClient<IRecordingFactSource, BrainApiRecordingFactSource>(c =>
         {
             c.BaseAddress = new Uri(cfg.BrainApiBaseUrl);
             c.Timeout = timeout;
@@ -158,9 +169,24 @@ public static class EnrichmentComposition
         services.AddSingleton<ILinkResolver>(_ => new RepoLinkResolver(repoRoot));
         services.AddSingleton<IAccessLog>(_ => new CtAccessLog(accessLogPath));
 
-        // Pin store: the on-CT blob write + sha are live; the external fetch is an L2 seam (a host
-        // registers the live IExternalBlobFetcher over the gateway). Registered here so the graph
-        // resolves; a missing fetcher is a deploy-time wiring error, surfaced loudly, not a fake.
+        // ── the three orchestration input seams (L-SEAMS) — live adapters ─────────────────────────
+        // IAudioSource: the transient recording audio from the CT staging blob the Watcher writes
+        // (content-addressed by audio_sha256). Read-only, never git-side; a missing blob → terminal.
+        var audioStagingDir = Environment.GetEnvironmentVariable("CERVELLO_AUDIO_STAGING_DIR")
+                              ?? "/var/lib/cervello/staging";
+        services.AddSingleton<IAudioSource>(_ => new StagingBlobAudioSource(audioStagingDir));
+
+        // IPriorSource: deterministic filename + manifest-participants prior, grounded against
+        // map/people/<slug>.md (never invents a person). No network, no LLM.
+        services.AddSingleton<IPriorSource>(_ => new ManifestPriorSource(repoRoot));
+
+        // (IRecordingFactSource is the typed brain-api HttpClient registered above.)
+
+        // Pin store: the on-CT blob write + sha are live; the external fetch is the ONE remaining L2
+        // seam (a deploy registers the live IExternalBlobFetcher over the CT121 agentgateway). NOT
+        // registered here or stub-faked (a fake would silently pin garbage) — so a full-live graph
+        // resolves only once the deploy supplies it. This is the sole missing port the L-SEAMS
+        // composition-completeness gate surfaces by name (CompositionCompletenessTests).
         services.AddSingleton<IPinStore>(sp =>
             new CtPinStore(sp.GetRequiredService<IExternalBlobFetcher>(), pinDir));
 
