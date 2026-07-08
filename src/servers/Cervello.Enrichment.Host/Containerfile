@@ -1,0 +1,42 @@
+# Cervello.Enrichment.Host — OCI image (the deploy slice L2 deploys to CT146-cervello).
+# Two-stage: dotnet SDK 8.0 (build/publish) -> aspnet 8.0 (runtime). Build context
+# is the REPO ROOT (parity with the other servers, so the in-repo ProjectReference to
+# Cervello.Enrichment + src/libs/ resolves); restore is nuget.org-only (no private
+# feed, no build secret). Build from the repo root:
+#   podman build --network=host -f src/servers/Cervello.Enrichment.Host/Containerfile -t <img> .
+#
+# Runtime deps: aspnet + ca-certificates (outbound HTTPS to the CT121 agentgateway /
+# brain-api / CT126 speaches / forgejo — the engine's live adapters) + git (the
+# repo-side stores + the forgejo map-PR writer shell `git` against a CT-local working
+# tree of ste/cervello). Runs non-root (uid 10047 — one above the Watcher's 10046, the
+# two cervello workers co-reside on CT146). This binary opens NO NATS connection
+# (invariant 3 / D8) and needs no NATS seed. No secret is baked: the agent-cervello-
+# enrichment JWK + the Postgres password arrive agent-free from Infisical /ct146/cervello/.
+#
+# Escalate-only + map-PR dry-run are the config DEFAULTS (CERVELLO_GRADED_AUTO_APPLY=false,
+# CERVELLO_MAP_PR_DRY_RUN=true) — flipping either is a deploy-time env change, never baked here.
+
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+COPY . .
+RUN dotnet publish src/servers/Cervello.Enrichment.Host/Cervello.Enrichment.Host.csproj \
+        -c Release -o /app /p:UseAppHost=false
+
+FROM mcr.microsoft.com/dotnet/aspnet:8.0
+WORKDIR /app
+# git: the repo-side stores + the forgejo map-PR writer shell out to `git`.
+# ca-certificates: outbound HTTPS to the CT121 agentgateway / brain-api / CT126 / forgejo.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /app .
+# Non-root by default (rootless-podman friendly). The Quadlet may override the user at
+# deploy so the process can read the 0600 agent-cervello-enrichment JWK + the staging volume.
+RUN useradd --system --no-create-home --uid 10047 cervello
+USER cervello
+ENV CERVELLO_ENRICHMENT_HEALTH_HOST=0.0.0.0 \
+    CERVELLO_ENRICHMENT_HEALTH_PORT=8147 \
+    DOTNET_EnableDiagnostics=0
+# Documentation only; the listen address is env-driven and overridden at deploy.
+EXPOSE 8147
+ENTRYPOINT ["dotnet", "Cervello.Enrichment.Host.dll"]

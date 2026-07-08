@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RootNamespace>Cervello.Enrichment.Host</RootNamespace>
+    <AssemblyName>Cervello.Enrichment.Host</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Expose the internal drain seams (work-queue port, drain worker) to the test
+         project so the drain loop is exercised against fakes without a live DB. -->
+    <InternalsVisibleTo Include="Cervello.Enrichment.Host.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The deploy-slice HOST for the enrichment engine. It references the merged
+         Cervello.Enrichment library (AddCervelloEnrichment + the pipeline stages +
+         the Pg/idempotency ledger) via ProjectReference and hosts it as a CT146
+         BACKGROUND WORKER that drains recordings in state `normalized`. Like the
+         engine + the Watcher (invariant 3 / D8) this binary references NEITHER
+         Sinapsi.Nats NOR any NATS package — the enrichment plane never touches the
+         shared bus; the only thing that leaves the CT is an opaque health heartbeat.
+
+         Npgsql (public nuget.org, the same 8.0.3 the Watcher/engine/Indexer use) is
+         the on-CT data tier: the live drain-source adapter reads the Watcher-written
+         `watcher_recording` rows in state `normalized` (a read-only, additive query
+         against a table the Watcher already owns — no watcher-side change). -->
+    <ProjectReference Include="../Cervello.Enrichment/Cervello.Enrichment.csproj" />
+    <PackageReference Include="Npgsql" Version="8.0.3" />
+  </ItemGroup>
+
+</Project>
