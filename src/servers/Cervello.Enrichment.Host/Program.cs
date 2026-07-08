@@ -35,10 +35,16 @@ builder.Services.AddSingleton(hostCfg);
 //    escalate-only unless CERVELLO_GRADED_AUTO_APPLY=true) ─────────────────────
 builder.Services.AddCervelloEnrichment(engineCfg);
 
-// ── the pipeline ENTRY stage (ingest) the drain worker drives. The stage takes
-//    the engine's IEnrichmentLedger (idempotency) — resolved from the composition
-//    root above. Later stages are NOT threaded here (see DrainWorker scope note). ─
-builder.Services.AddSingleton<IngestStage>();
+// ── the FULL end-to-end pipeline (E-PIPE): every stage + the EnrichmentPipeline
+//    orchestrator the drain worker now runs, threading a `normalized` recording all
+//    the way to `graph_pr_opened`/escalated. AddCervelloPipeline registers the stages
+//    + orchestrator; the two orchestration-only seams it needs — IAudioSource (the
+//    transient recording audio) + IRecordingFactSource (derived summary/links/timeline/
+//    attention/participants/garbled-spans) — plus IPriorSource are the DEPLOY-SLICE (L2)
+//    seams a live host registers here from the on-CT staging blob + manifest/attention
+//    scorer. This mission builds + tests the orchestrator against FAKES (no deploy), so
+//    the live adapters for those three seams are an L2 follow-up (see the E-PIPE return).
+builder.Services.AddCervelloPipeline();
 
 // ── drain source: the read-only view over the Watcher-written `normalized` rows.
 //    Live = the CT146 Postgres table; fake = in-memory (offline slice / a host that

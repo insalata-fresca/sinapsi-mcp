@@ -1,6 +1,9 @@
 using Cervello.Enrichment.Adapters;
+using Cervello.Enrichment.Domain;
 using Cervello.Enrichment.Host.Drain;
+using Cervello.Enrichment.Pipeline;
 using Cervello.Enrichment.Pipeline.Stages;
+using Cervello.Enrichment.Policy;
 using Cervello.Enrichment.Ports;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -26,13 +29,15 @@ public sealed class HealthEndpointTests
         builder.WebHost.UseTestServer();
         builder.Logging.ClearProviders();
 
-        // Wire just the health dependency + its (fake) deps — the SAME /healthz shape as Program.cs.
+        // Wire the health dependency + its (fake) deps — the SAME /healthz shape as Program.cs. The
+        // worker now runs the FULL pipeline, so we build it from a minimal set of fakes; with an empty
+        // queue the health test never invokes a stage — it only asserts the worker reaches Ready.
         var queue = new InMemoryNormalizedWorkQueue();
         var ledger = new InMemoryEnrichmentLedger();
         builder.Services.AddSingleton(HostConfig.From(new Dictionary<string, string?>()));
         builder.Services.AddSingleton<INormalizedWorkQueue>(queue);
         builder.Services.AddSingleton<IEnrichmentLedger>(ledger);
-        builder.Services.AddSingleton(new IngestStage(ledger));
+        builder.Services.AddSingleton(BuildPipeline(ledger));
         builder.Services.AddSingleton<DrainWorker>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<DrainWorker>());
 
@@ -44,7 +49,25 @@ public sealed class HealthEndpointTests
         return app;
     }
 
-    // (health host wires the DrainWorker + its fake deps exactly as Program.cs does)
+    /// <summary>Build a full pipeline over the given ledger from minimal host-local fakes.</summary>
+    private static EnrichmentPipeline BuildPipeline(IEnrichmentLedger ledger) =>
+        new(
+            new IngestStage(ledger),
+            new HostFakeAudioSource(),
+            new BaseTranscribeStage(new HostFakeTranscribeClient(), new HostInMemoryTranscriptStore()),
+            new DiarizeEmbedStage(HostFakeDiarizeEmbedClient.Empty()),
+            new ClusterMergeStage(),
+            new AttributionStage(
+                new InMemoryVoiceprintStore(EnrollmentAllowlist.Empty),
+                new FilenameParticipantPriorSource(new Dictionary<string, PriorCandidates>()),
+                new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
+            new CorrectionStage(new HostFakeCorrectionLlm(), new InMemoryCorrectionMapStore(),
+                new HostFakeReAsrClient(), new CorrectionGrader(PolicyPhase.EscalateOnly)),
+            new EnrichLinkStage(new HostFakeLinkResolver()),
+            new ApplyStage(
+                new CervelloGraphWriter(new HostFakeMapPrWriter(), new HostFakeLinkResolver(), new HostFakePinStore()),
+                new InMemoryOpenPointStore()),
+            new HostFakeRecordingFactSource());
 
     [Fact]
     public async Task Healthz_is_503_before_start_and_200_once_the_worker_is_ready()

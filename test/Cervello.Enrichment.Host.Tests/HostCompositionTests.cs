@@ -1,7 +1,7 @@
 using Cervello.Enrichment;
 using Cervello.Enrichment.Adapters;
+using Cervello.Enrichment.Domain;
 using Cervello.Enrichment.Host.Drain;
-using Cervello.Enrichment.Pipeline.Stages;
 using Cervello.Enrichment.Ports;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -9,10 +9,11 @@ using Xunit;
 namespace Cervello.Enrichment.Host.Tests;
 
 /// <summary>
-/// The host's own DI wiring: it registers the pipeline entry stage + the drain source, and the
-/// drain source tracks the engine's live-vs-fake flag (fake mode stays fully offline — no DB). The
-/// engine's composition (stores, ledger, phase gate) is covered by the engine suite; here we assert
-/// the HOST-added registrations resolve.
+/// The host's own DI wiring: it registers the FULL pipeline (every stage + the orchestrator, via
+/// <c>AddCervelloPipeline</c>) + the drain source, and the drain source tracks the engine's
+/// live-vs-fake flag (fake mode stays fully offline — no DB). The engine's composition (stores,
+/// ledger, phase gate) is covered by the engine suite; here we assert the HOST-added registrations —
+/// the pipeline orchestrator + its three deploy-slice seams — resolve into a <see cref="DrainWorker"/>.
 /// </summary>
 public sealed class HostCompositionTests
 {
@@ -31,7 +32,15 @@ public sealed class HostCompositionTests
         services.AddLogging();
         services.AddSingleton(HostConfig.From(new Dictionary<string, string?>()));
         services.AddCervelloEnrichment(engineCfg);
-        services.AddSingleton<IngestStage>();
+        services.AddCervelloPipeline();
+
+        // The three DEPLOY-SLICE (L2) seams the orchestrator needs but no stage owns — the live
+        // adapters are a deploy follow-up (E-PIPE builds + tests against fakes, no deploy). A
+        // construction-only DI test supplies stubs so the whole graph resolves offline.
+        services.AddSingleton<IAudioSource, StubAudioSource>();
+        services.AddSingleton<IRecordingFactSource, StubRecordingFactSource>();
+        services.AddSingleton<IPriorSource>(new FilenameParticipantPriorSource(new Dictionary<string, PriorCandidates>()));
+
         if (engineCfg.UseLiveAdapters)
         {
             services.AddSingleton<INormalizedWorkQueue, PgNormalizedWorkQueue>();
@@ -42,17 +51,29 @@ public sealed class HostCompositionTests
         else
         {
             services.AddSingleton<INormalizedWorkQueue, InMemoryNormalizedWorkQueue>();
+            // Fake mode: the engine assembly ships NO fakes for the diarize/transcribe/re-asr/
+            // correction-LLM/map-PR ports (their fakes live in the test project by design), so a
+            // fake-mode host supplies them. This mirrors exactly what an offline host wires.
+            services.AddSingleton<ITranscribeClient, HostFakeTranscribeClient>();
+            services.AddSingleton<ITranscriptStore, HostInMemoryTranscriptStore>();
+            services.AddSingleton<IDiarizeEmbedClient>(HostFakeDiarizeEmbedClient.Empty());
+            services.AddSingleton<IReAsrClient, HostFakeReAsrClient>();
+            services.AddSingleton<ICorrectionLlm, HostFakeCorrectionLlm>();
+            services.AddSingleton<ILinkResolver, HostFakeLinkResolver>();
+            services.AddSingleton<IMapPrWriter, HostFakeMapPrWriter>();
+            services.AddSingleton<IPinStore, HostFakePinStore>();
+            services.AddSingleton<CervelloGraphWriter>();
         }
         services.AddSingleton<DrainWorker>();
         return services.BuildServiceProvider();
     }
 
     [Fact]
-    public void Fake_mode_wires_the_in_memory_drain_source_offline()
+    public void Fake_mode_wires_the_full_pipeline_and_drain_source_offline()
     {
         var sp = Build(live: false);
         Assert.IsType<InMemoryNormalizedWorkQueue>(sp.GetRequiredService<INormalizedWorkQueue>());
-        Assert.NotNull(sp.GetRequiredService<IngestStage>());
+        Assert.NotNull(sp.GetRequiredService<Cervello.Enrichment.Pipeline.EnrichmentPipeline>());
         Assert.NotNull(sp.GetRequiredService<DrainWorker>());
     }
 
@@ -91,5 +112,17 @@ public sealed class HostCompositionTests
     {
         public Task<ReadOnlyMemory<byte>> FetchAsync(string externalRef, CancellationToken ct = default) =>
             throw new NotSupportedException("live fetch is an L2 concern");
+    }
+
+    private sealed class StubAudioSource : IAudioSource
+    {
+        public Task<ReadOnlyMemory<byte>> FetchAsync(string recordingId, string audioSha256, CancellationToken ct = default) =>
+            throw new NotSupportedException("audio fetch is an L2 seam (construction-only test)");
+    }
+
+    private sealed class StubRecordingFactSource : IRecordingFactSource
+    {
+        public Task<RecordingFacts> GetFactsAsync(string recordingId, BaseTranscript baseTranscript, CancellationToken ct = default) =>
+            throw new NotSupportedException("fact derivation is an L2 seam (construction-only test)");
     }
 }

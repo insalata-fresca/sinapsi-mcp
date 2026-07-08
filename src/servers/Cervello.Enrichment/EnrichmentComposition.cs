@@ -1,5 +1,7 @@
 using Cervello.Enrichment.Adapters;
 using Cervello.Enrichment.Domain;
+using Cervello.Enrichment.Pipeline;
+using Cervello.Enrichment.Pipeline.Stages;
 using Cervello.Enrichment.Policy;
 using Cervello.Enrichment.Ports;
 using Microsoft.Extensions.DependencyInjection;
@@ -42,8 +44,12 @@ public static class EnrichmentComposition
         services.AddSingleton(cfg);
 
         // ── Policy + phase gate (identical in live + fake mode — it is pure logic) ──────────────
+        // The SAME escalate-only-by-default phase gates BOTH the attribution decision policy and the
+        // correction grader, so a clean 0.90 match still escalates (first concept: every band →
+        // open-point) until CERVELLO_GRADED_AUTO_APPLY=true. Registered once here, shared by the stages.
         var phase = cfg.GradedAutoApply ? PolicyPhase.GradedAutoApply : PolicyPhase.EscalateOnly;
         services.AddSingleton(new DecisionPolicy(DecisionBands.Default, phase));
+        services.AddSingleton(new CorrectionGrader(phase));
 
         // The §10 enrollment allowlist is DATA (who consented), injected — never inferred. Default
         // Empty (nobody enrollable) until the deploy supplies the consented set; overriding is a
@@ -55,6 +61,39 @@ public static class EnrichmentComposition
         else
             AddFakeAdapters(services);
 
+        return services;
+    }
+
+    /// <summary>
+    /// Wire the FULL end-to-end pipeline: every stage (ingest → transcribe → diarize+embed →
+    /// cluster-merge → attribute → correct → enrich+link → apply) + the
+    /// <see cref="EnrichmentPipeline"/> orchestrator that threads them (MISSION E-PIPE). This is the
+    /// piece the host runs to drive a <c>normalized</c> recording all the way to
+    /// <c>graph_pr_opened</c>/escalated. It resolves the ports from <see cref="AddCervelloEnrichment"/>
+    /// (which MUST be called first) — plus the two orchestration-only ports the chain needs but no
+    /// single stage owns: <see cref="IAudioSource"/> (the transient audio the two audio stages
+    /// consume) and <see cref="IRecordingFactSource"/> (the derived summary/links/timeline/attention/
+    /// participants/garbled-spans). In live mode a host registers those two seams (deploy slice / L2);
+    /// in fake mode a test supplies them. Registering the stages here (not in every host) keeps the
+    /// composition single-sourced.
+    /// </summary>
+    public static IServiceCollection AddCervelloPipeline(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        // Every stage is a thin, dependency-injected unit — its ports are already registered by
+        // AddCervelloEnrichment (stores/clients) or by the host/test (audio + fact source + the
+        // clients the engine assembly leaves to the caller).
+        services.AddSingleton<IngestStage>();
+        services.AddSingleton<BaseTranscribeStage>();
+        services.AddSingleton<DiarizeEmbedStage>();
+        services.AddSingleton<ClusterMergeStage>();
+        services.AddSingleton<AttributionStage>();
+        services.AddSingleton<CorrectionStage>();
+        services.AddSingleton<EnrichLinkStage>();
+        services.AddSingleton<ApplyStage>();
+
+        services.AddSingleton<EnrichmentPipeline>();
         return services;
     }
 
