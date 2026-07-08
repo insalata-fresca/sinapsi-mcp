@@ -53,6 +53,17 @@ builder.Services.AddCervelloEnrichment(engineCfg);
 //    NOT stub-faked (a fake would silently pin garbage). See CompositionCompletenessTests.
 builder.Services.AddCervelloPipeline();
 
+// ── L2 seam: IExternalBlobFetcher — the ONE port AddCervelloEnrichment leaves for the
+//    deploy to register (the drive://gmail:// evidence fetcher CtPinStore needs for
+//    pin://-on-cite). The RECORDINGS drain path never cites external evidence, so this is
+//    never reached when enriching a recording; we register a CLEAR-THROWING adapter so the
+//    FULL live graph resolves (host boots, pipeline constructible) WITHOUT silently pinning
+//    garbage. The live agentgateway-backed adapter is deferred to the doc/mail ingestion
+//    mission; if this ever throws it is the signal to wire it, never to fake it. Live-only:
+//    in fake mode the engine wires no CtPinStore, so IExternalBlobFetcher is never resolved.
+if (engineCfg.UseLiveAdapters)
+    builder.Services.AddSingleton<IExternalBlobFetcher>(new NotConfiguredExternalBlobFetcher());
+
 // ── drain source: the read-only view over the Watcher-written `normalized` rows.
 //    Live = the CT146 Postgres table; fake = in-memory (offline slice / a host that
 //    wires its own). The choice tracks the engine's live-adapter flag so a fake-mode

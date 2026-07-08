@@ -93,6 +93,48 @@ public sealed class HostCompositionTests
         }
     }
 
+    // ── L2 wiring: the HOST's OWN production registration closes the IExternalBlobFetcher seam ──
+    // Program.cs registers NotConfiguredExternalBlobFetcher in live mode (the one port the engine
+    // composition root leaves for the deploy). This asserts the host's PRODUCTION graph resolves the
+    // full pipeline + pin store with zero missing ports WITHOUT the test supplying a fetcher stub —
+    // the regression guard that a live CT146 container boots instead of crash-looping on IPinStore.
+    [Fact]
+    public void Live_host_registers_a_throwing_external_blob_fetcher_so_the_full_graph_resolves()
+    {
+        try
+        {
+            Environment.SetEnvironmentVariable("OIDC_ISSUER", "https://id.test");
+            Environment.SetEnvironmentVariable("OIDC_AUDIENCE_PROJECT_ID", "proj-1");
+            var engineCfg = EnrichmentConfig.From(new Dictionary<string, string?>
+            {
+                ["CERVELLO_USE_LIVE_ADAPTERS"] = "true",
+                ["CERVELLO_DB_PASSWORD"] = "unused-at-construction",
+            });
+
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddSingleton(HostConfig.From(new Dictionary<string, string?>()));
+            services.AddCervelloEnrichment(engineCfg);
+            services.AddCervelloPipeline();
+            // Mirror Program.cs EXACTLY: the host registers the throwing fetcher in live mode. NO
+            // test-supplied fetcher stub here — this proves the host closes the seam on its own.
+            services.AddSingleton<IExternalBlobFetcher>(new NotConfiguredExternalBlobFetcher());
+            services.AddSingleton<INormalizedWorkQueue, PgNormalizedWorkQueue>();
+            services.AddSingleton<DrainWorker>();
+            var sp = services.BuildServiceProvider();
+
+            // The pin store (CtPinStore) + the whole orchestrator resolve — the seam is closed.
+            Assert.NotNull(sp.GetRequiredService<IPinStore>());
+            Assert.NotNull(sp.GetRequiredService<Cervello.Enrichment.Pipeline.EnrichmentPipeline>());
+            Assert.IsType<NotConfiguredExternalBlobFetcher>(sp.GetRequiredService<IExternalBlobFetcher>());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("OIDC_ISSUER", null);
+            Environment.SetEnvironmentVariable("OIDC_AUDIENCE_PROJECT_ID", null);
+        }
+    }
+
     // ── invariant 3 / D8: the host references NO NATS client ────────────────────────
     [Fact]
     public void Host_assembly_references_no_nats_client_at_all()
