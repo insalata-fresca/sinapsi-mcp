@@ -78,8 +78,65 @@ public sealed class BridgeConfig
     /// Emergency-disable master switch for the cervello Surface A tools (ACCESS.md §7).
     /// CERVELLO_EXPOSED=false (default true) immediately severs the open-points tools at the bridge
     /// edge — they return {status:"disabled"} before any I/O — without a redeploy.
+    /// Also severs the dialogue-interaction tools (§5) — the same master switch.
     /// </summary>
     public bool CervelloExposed { get; init; } = true;
+
+    // ----- Cervello dialogue-interaction (CB-BRIDGE — design §5) -----
+    // The 7 net-new dialogue tools forward to the CT146 dialogue backend (CB-BACKEND, PR #73):
+    //   read    → POST /context-pack, GET /object, GET /timeline, GET /search
+    //   deposit → POST /capture, POST /goal, POST /goal/{slug}/evidence
+    // The pack/object/timeline/capture/goal routes are on the enrichment host :8147 (same as
+    // open-points); /search routes to the indexer :8009. All plain-HTTP behind the CT121 forwarder.
+
+    /// <summary>
+    /// Base URL for the CT146 dialogue-pack / graph-read / capture / goal routes
+    /// (CERVELLO_PACK_URL). Serves POST /context-pack, GET /object, GET /timeline, POST /capture,
+    /// POST /goal, POST /goal/{slug}/evidence. Default = the enrichment host on :8147 (routed via
+    /// the CT121 forwarder in prod). Reuses the open-points bearer unless CERVELLO_PACK_TOKEN is set.
+    /// </summary>
+    public string CervelloPackUrl { get; init; } = "http://cervello.internal:8147";
+
+    /// <summary>
+    /// Base URL for the CT146 capture / goal deposit routes (CERVELLO_CAPTURE_URL). Serves
+    /// POST /capture, POST /goal, POST /goal/{slug}/evidence. Default = the enrichment host on :8147
+    /// (same host as pack; a distinct env var per design §5.9 so it can be split later). Reuses the
+    /// pack bearer (<see cref="EffectiveCervelloPackToken"/>).
+    /// </summary>
+    public string CervelloCaptureUrl { get; init; } = "http://cervello.internal:8147";
+
+    /// <summary>
+    /// Bearer for the CT146 dialogue-pack/capture/goal surface (CERVELLO_PACK_TOKEN). When unset it
+    /// FALLS BACK to <see cref="CervelloOpenPointsToken"/> (the design §5.9 "reuse
+    /// CERVELLO_OPEN_POINTS_TOKEN" default). Effective-empty → the tools return not_configured.
+    /// </summary>
+    public string CervelloPackToken { get; init; } = "";
+
+    /// <summary>
+    /// Base URL for the cervello hybrid-search route (CERVELLO_SEARCH_URL) → indexer :8009,
+    /// GET /search?q=&amp;kind=&amp;limit=. Default = the indexer on :8009 (routed via the CT121
+    /// forwarder's reserved /search location in prod). Distinct from CAREER_SEARCH_URL: a
+    /// cervello-scoped surface, not the general documents corpus.
+    /// </summary>
+    public string CervelloSearchUrl { get; init; } = "http://cervello.internal:8009";
+
+    /// <summary>
+    /// Bearer for the cervello indexer /search route (CERVELLO_SEARCH_TOKEN == the indexer's
+    /// INDEXER_SEARCH_TOKEN, design §5.2). Empty → cervello_search returns not_configured.
+    /// </summary>
+    public string CervelloSearchToken { get; init; } = "";
+
+    /// <summary>
+    /// Default char budget for cervello_context_pack when the caller omits `budget`
+    /// (CERVELLO_PACK_BUDGET_DEFAULT). The CT146 assembler is the authority; this is the value the
+    /// bridge forwards when unspecified. Fail-closed default 30000 (matches CB-BACKEND).
+    /// </summary>
+    public int CervelloPackBudgetDefault { get; init; } = 30_000;
+
+    /// <summary>Effective bearer for the pack/capture/goal surface: CERVELLO_PACK_TOKEN, else the
+    /// open-points bearer (design §5.9 reuse). Empty → not_configured before any I/O.</summary>
+    public string EffectiveCervelloPackToken =>
+        !string.IsNullOrEmpty(CervelloPackToken) ? CervelloPackToken : CervelloOpenPointsToken;
 
     // ----- OAuth scopes (informational — advertised in RFC 9728 metadata) -----
     /// <summary>
@@ -146,6 +203,15 @@ public sealed class BridgeConfig
             CervelloOpenPointsUrl   = Env("CERVELLO_OPEN_POINTS_URL", "http://cervello.internal:8147"),
             CervelloOpenPointsToken = Env("CERVELLO_OPEN_POINTS_TOKEN", ""),
             CervelloExposed         = EnvBool("CERVELLO_EXPOSED", true),
+            // Cervello dialogue-interaction (CB-BRIDGE §5). Pack/capture/goal share the enrichment
+            // host :8147; search hits the indexer :8009. Tokens: pack falls back to the open-points
+            // bearer when CERVELLO_PACK_TOKEN is unset (§5.9); search reuses INDEXER_SEARCH_TOKEN.
+            CervelloPackUrl          = Env("CERVELLO_PACK_URL", "http://cervello.internal:8147"),
+            CervelloCaptureUrl       = Env("CERVELLO_CAPTURE_URL", "http://cervello.internal:8147"),
+            CervelloPackToken        = Env("CERVELLO_PACK_TOKEN", ""),
+            CervelloSearchUrl        = Env("CERVELLO_SEARCH_URL", "http://cervello.internal:8009"),
+            CervelloSearchToken      = Env("CERVELLO_SEARCH_TOKEN", ""),
+            CervelloPackBudgetDefault = EnvInt("CERVELLO_PACK_BUDGET_DEFAULT", 30_000),
 
             RateLimitDepositPerMin   = EnvInt("BRIDGE_RATE_LIMIT_DEPOSIT_PER_MIN",   30),
             RateLimitReadPerMin      = EnvInt("BRIDGE_RATE_LIMIT_READ_PER_MIN",       60),

@@ -48,6 +48,16 @@ builder.Services.AddHttpClient("cervello-open-points", http =>
     http.Timeout = TimeSpan.FromSeconds(10);
 });
 
+// CB-BRIDGE (design §5) — pooled HttpClients for the cervello dialogue tools. Three named clients:
+//   cervello-pack     → the pack/object/timeline read surface (:8147)
+//   cervello-search   → the indexer hybrid-search surface (:8009)
+//   cervello-capture  → the capture/goal/evidence deposit surface (:8147)
+// All 10s, matching the open-points client (the CT146 assembler is fast; the bridge stays a dumb
+// forwarder). Split clients keep connection pools per upstream.
+builder.Services.AddHttpClient("cervello-pack",    http => http.Timeout = TimeSpan.FromSeconds(10));
+builder.Services.AddHttpClient("cervello-search",  http => http.Timeout = TimeSpan.FromSeconds(10));
+builder.Services.AddHttpClient("cervello-capture", http => http.Timeout = TimeSpan.FromSeconds(10));
+
 // Pooled named HttpClient for raw Forgejo API calls in GitOpsService (item 6 fix).
 // Previously GetForgeJsonAsync / GetForgeJsonBytesAsync used `new HttpClient()` per call —
 // socket-exhaustion anti-pattern. Route through the factory instead.
@@ -80,7 +90,11 @@ builder
     // B4b-8: Career search (intentionally-changed tool — new indexer contract).
     .WithTools<BridgeCareerSearchTools>()
     // S50 L3: cervello open-points Surface A (list + answer, cervello-scoped + emergency-disable).
-    .WithTools<BridgeOpenPointsTools>();
+    .WithTools<BridgeOpenPointsTools>()
+    // CB-BRIDGE §5: cervello dialogue READ tools (context_pack, search, get, timeline_walk).
+    .WithTools<BridgeCervelloReadTools>()
+    // CB-BRIDGE §5: cervello dialogue DEPOSIT tools (capture_fact, set_goal, link_evidence).
+    .WithTools<BridgeCervelloDepositTools>();
 
 var app = builder.Build();
 
