@@ -41,23 +41,28 @@ internal sealed class StubHttpMessageHandler : HttpMessageHandler
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
-        var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(ct);
+        // Capture the RAW body bytes (not just a lossy string decode) so a wire-format test can assert
+        // that binary audio round-trips byte-for-byte — the exact thing a JSON/base64 envelope broke.
+        var bytes = request.Content is null ? [] : await request.Content.ReadAsByteArrayAsync(ct);
+        var body = System.Text.Encoding.UTF8.GetString(bytes);
         Requests.Add(new CapturedRequest(
             request.Method,
             request.RequestUri,
             request.Headers.Authorization?.Scheme,
             request.Headers.Authorization?.Parameter,
             request.Content?.Headers.ContentType?.MediaType,
-            body));
+            body,
+            bytes));
         return _respond(request, body);
     }
 }
 
-/// <summary>A captured outbound request: method, uri, bearer, content-type, and the body text.</summary>
+/// <summary>A captured outbound request: method, uri, bearer, content-type, the body text, and raw bytes.</summary>
 internal sealed record CapturedRequest(
     HttpMethod Method,
     Uri? Uri,
     string? AuthScheme,
     string? Bearer,
     string? ContentType,
-    string Body);
+    string Body,
+    byte[] BodyBytes);
