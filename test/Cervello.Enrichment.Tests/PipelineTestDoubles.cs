@@ -59,3 +59,23 @@ internal sealed class FakeRecordingFactSource(
             participants: _participants,
             garbledSpans: _garbled));
 }
+
+/// <summary>
+/// A recording-fact source that always THROWS — simulates the Brain-API (CT139) <c>/v1/enrich/derive-facts</c>
+/// Claude call 502-ing / timing out on a larger transcript (the live CT146 failure that blocked 73
+/// recordings). Proves fact-derivation is GRACEFUL: the orchestrator logs a warning, continues with ZERO
+/// derived facts, still publishes the transcript, and still reaches graph_pr_opened — NOT failed_retryable.
+/// </summary>
+internal sealed class ThrowingRecordingFactSource(bool retryable = true) : IRecordingFactSource
+{
+    public int Calls { get; private set; }
+
+    public Task<RecordingFacts> GetFactsAsync(
+        string recordingId, BaseTranscript baseTranscript, CancellationToken ct = default)
+    {
+        Calls++;
+        // The exact exception the live BrainApiRecordingFactSource raises on a 502 Bad Gateway.
+        throw new Adapters.RecordingFactSourceException(
+            "recording-fact derivation 502: Bad Gateway", retryable);
+    }
+}

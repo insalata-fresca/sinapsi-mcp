@@ -417,6 +417,115 @@ public sealed class EnrichmentPipelineE2ETests
     }
 
     // ══════════════════════════════════════════════════════════════════════════════════════════════
+    // GRACEFUL OPTIONAL-LLM DEGRADE (MISSION GRACEFUL-LLM-ENRICH)
+    // The Brain-API (CT139) derive-facts / correct Claude calls can 502 / time out on a larger
+    // transcript. They are ENHANCEMENTS, not drain dependencies: a failure must DEGRADE (zero facts /
+    // no corrections), never fail the recording — otherwise the transcript never reaches git.
+    // ══════════════════════════════════════════════════════════════════════════════════════════════
+
+    // ── derive-facts 502 → the recording STILL publishes its transcript, keeps its open-points, and
+    //    reaches graph_pr_opened with ZERO derived facts — NOT failed_retryable. (The live CT146 bug.) ──
+    [Fact]
+    public async Task A_derive_facts_502_degrades_to_zero_facts_still_publishing_and_reaching_graph_pr_opened()
+    {
+        var ledger = new InMemoryEnrichmentLedger();
+        var store = await EnrolledStore();
+        var pr = new FakeMapPrWriter();
+        var points = new InMemoryOpenPointStore();
+        var publisher = new FakeGitPublisher();
+        var throwingFacts = new ThrowingRecordingFactSource(); // /v1/enrich/derive-facts → 502 Bad Gateway
+
+        var pipeline = new EnrichmentPipeline(
+            new IngestStage(ledger),
+            new FakeAudioSource(SynthAudio),
+            new BaseTranscribeStage(new FakeBaseTranscriptSource(new BaseTranscript("standup transcript", "fr")), new InMemoryTranscriptStore()),
+            new DiarizeEmbedStage(FakeDiarizeEmbedClient.Returning(DiarizeResponse())),
+            new ClusterMergeStage(),
+            new AttributionStage(store,
+                new FilenameParticipantPriorSource(new Dictionary<string, PriorCandidates> { [RecId] = new PriorCandidates(["guilhem"], true) }),
+                new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
+            new CorrectionStage(new FakeCorrectionLlm(Array.Empty<CorrectionCandidate>()), new InMemoryCorrectionMapStore(), new FakeReAsrClient(), new CorrectionGrader(PolicyPhase.EscalateOnly)),
+            new EnrichLinkStage(new FakeLinkResolver("guilhem", "marco", "mara")),
+            new ApplyStage(new CervelloGraphWriter(pr, new FakeLinkResolver("guilhem", "marco", "mara"), new FakePinStore()), points),
+            throwingFacts,
+            publisher);
+
+        var outcome = await pipeline.RunAsync(Rec(), EnrichmentState.Normalized);
+
+        // The derivation WAS attempted (and 502'd) but the drain DID NOT fail — it reached graph_pr_opened.
+        Assert.Equal(1, throwingFacts.Calls);
+        Assert.Equal(PipelineStatus.Completed, outcome.Status);
+        Assert.Equal(EnrichmentState.GraphPrOpened, outcome.State);
+        Assert.DoesNotContain(EnrichmentState.FailedRetryable, outcome.StateTransitions);
+        Assert.DoesNotContain(EnrichmentState.FailedTerminal, outcome.StateTransitions);
+
+        // ZERO derived facts: no summary, no derived links / timeline (never guessed one).
+        var bundle = Assert.IsType<EnrichmentBundle>(outcome.Bundle);
+        var apply = Assert.IsType<ApplyResult>(outcome.Apply);
+        Assert.Equal(0, apply.Mutations); // no timeline mutation (no derived facts) + escalate-only attributions
+
+        // The three diarized speakers still ESCALATE to open-points (open-points kept despite no facts).
+        Assert.Equal(3, apply.OpenPoints);
+        Assert.Equal(3, (await points.ListPendingAsync()).Count);
+
+        // The base transcript STILL published to git (the searchable substrate reached the indexer).
+        var req = Assert.Single(publisher.Requests);
+        Assert.Contains($"recordings/transcripts/{RecId}.md", req.RepoRelativePaths);
+        Assert.Contains("recordings/manifest.yaml", req.RepoRelativePaths);
+    }
+
+    // ── correction 502 is ALSO graceful: base left as-is, drain still reaches graph_pr_opened ───────────
+    [Fact]
+    public async Task A_correction_502_degrades_to_no_corrections_still_reaching_graph_pr_opened()
+    {
+        var ledger = new InMemoryEnrichmentLedger();
+        var store = await EnrolledStore();
+        var pr = new FakeMapPrWriter();
+        var points = new InMemoryOpenPointStore();
+        var publisher = new FakeGitPublisher();
+        var throwingCorrection = new ThrowingCorrectionLlm(); // /v1/enrich/correct → 502 Bad Gateway
+
+        var pipeline = new EnrichmentPipeline(
+            new IngestStage(ledger),
+            new FakeAudioSource(SynthAudio),
+            new BaseTranscribeStage(new FakeBaseTranscriptSource(new BaseTranscript("standup transcript", "fr")), new InMemoryTranscriptStore()),
+            new DiarizeEmbedStage(FakeDiarizeEmbedClient.Returning(DiarizeResponse())),
+            new ClusterMergeStage(),
+            new AttributionStage(store,
+                new FilenameParticipantPriorSource(new Dictionary<string, PriorCandidates> { [RecId] = new PriorCandidates(["guilhem"], true) }),
+                new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
+            new CorrectionStage(throwingCorrection, new InMemoryCorrectionMapStore(), new FakeReAsrClient(), new CorrectionGrader(PolicyPhase.EscalateOnly)),
+            new EnrichLinkStage(new FakeLinkResolver("guilhem", "marco", "mara")),
+            new ApplyStage(new CervelloGraphWriter(pr, new FakeLinkResolver("guilhem", "marco", "mara"), new FakePinStore()), points),
+            new FakeRecordingFactSource(),
+            publisher);
+
+        var outcome = await pipeline.RunAsync(Rec(), EnrichmentState.Normalized);
+
+        Assert.Equal(1, throwingCorrection.Calls);
+        Assert.Equal(PipelineStatus.Completed, outcome.Status);
+        Assert.Equal(EnrichmentState.GraphPrOpened, outcome.State);
+        Assert.DoesNotContain(EnrichmentState.FailedRetryable, outcome.StateTransitions);
+        // The transcript still published despite the correction 502.
+        var req = Assert.Single(publisher.Requests);
+        Assert.Contains($"recordings/transcripts/{RecId}.md", req.RepoRelativePaths);
+    }
+
+    // ── a FULLY-SUCCESSFUL recording is UNCHANGED by the graceful wrapping (facts present, timeline written).
+    [Fact]
+    public async Task A_successful_recording_is_unchanged_facts_present()
+    {
+        var (pipeline, pr, _, _) = await BuildPipelineWithTimelineAsync();
+
+        var outcome = await pipeline.RunAsync(Rec(), EnrichmentState.Normalized);
+
+        Assert.Equal(EnrichmentState.GraphPrOpened, outcome.State);
+        Assert.NotNull(pr.LastPr);
+        // The derived timeline fact IS present (graceful path never triggered on success).
+        Assert.Contains(pr.LastPr!.Mutations, m => m.DossierPath == "map/timeline.md");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════════════════════════
     // MIXED CASES — transcript-only + audio-only recordings (PIPELINE-MIXED-CASES)
     // ══════════════════════════════════════════════════════════════════════════════════════════════
 

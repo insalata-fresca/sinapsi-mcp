@@ -212,14 +212,63 @@ public sealed class EnrichmentPipeline
             state = Advance(state, EnrichmentState.AttentionScored, transitions); // → attention_scored
 
             // Derived facts (summary/links/timeline/attention/participants/garbled) for THIS recording.
-            var facts = await _facts.GetFactsAsync(recording.Id, baseTranscript, ct).ConfigureAwait(false);
+            // ── OPTIONAL-LLM step, GRACEFUL-DEGRADE. Fact-derivation is a Brain-API (CT139) Claude call
+            //     that can 502 / time out on a larger transcript. It is an ENHANCEMENT, not a drain
+            //     dependency: a failed derivation must NOT fail the recording (which would block the
+            //     transcript from ever reaching git). On any transient/derivation failure we LOG a
+            //     warning and CONTINUE with ZERO derived facts (no facts, no fact-derived links/
+            //     timeline) — never guessed ones. The base transcript still publishes, the open-points
+            //     from diarize/attribution are kept, and the run still reaches graph_pr_opened. (A
+            //     cancellation still unwinds — that is a shutdown, not an LLM failure.)
+            RecordingFacts facts;
+            try
+            {
+                facts = await _facts.GetFactsAsync(recording.Id, baseTranscript, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex,
+                    "pipeline {Key}: fact-derivation unavailable ({Msg}) — continuing with ZERO derived facts " +
+                    "(transcript still publishes, open-points kept; never guessed a fact)",
+                    recording.IdempotencyKey, ex.Message);
+                facts = RecordingFacts.None();
+            }
 
             // ── 7. CORRECTION: base transcript + resolved participants → evidence-gated diffs ──────
             //     (base transcript from step 3 + participants derived alongside attribution — the
             //     "prior stages feed correction" hand-off.)
-            var correction = await _correction
-                .CorrectAsync(recording.Id, baseTranscript.Markdown, facts.Participants, facts.GarbledSpans, ct)
-                .ConfigureAwait(false);
+            // OPTIONAL-LLM step, GRACEFUL-DEGRADE. Correction is another Brain-API (CT139) Claude call
+            // that can 502 / time out. Like fact-derivation it ENHANCES the transcript, it does not gate
+            // the drain: a failed correction pass must NOT fail the recording. On failure we LOG a warning
+            // and CONTINUE with an EMPTY correction result — the base transcript is left as-is (never
+            // rewritten, never guessed), and the run still reaches graph_pr_opened.
+            CorrectionResult correction;
+            try
+            {
+                correction = await _correction
+                    .CorrectAsync(recording.Id, baseTranscript.Markdown, facts.Participants, facts.GarbledSpans, ct)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex,
+                    "pipeline {Key}: correction unavailable ({Msg}) — continuing with NO corrections " +
+                    "(base transcript left as-is; drain continues)",
+                    recording.IdempotencyKey, ex.Message);
+                correction = new CorrectionResult(
+                    baseTranscript.Markdown,
+                    Array.Empty<CorrectionDiff>(),
+                    Array.Empty<CorrectionVerdict>(),
+                    Array.Empty<CorrectionVerdict>());
+            }
             var correctionVerdicts = CollectCorrectionVerdicts(correction);
 
             // ── 8. ENRICH + LINK: verdicts + derived facts → SCHEMAS §6 bundle ────────────────────

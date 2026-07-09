@@ -56,6 +56,22 @@ public sealed record RecordingFacts
         GarbledSpans = garbledSpans ?? Array.Empty<TextSpan>();
     }
 
+    /// <summary>
+    /// The CONSERVATIVE empty fact set: nothing derived (no summary, no links/timeline/participants/
+    /// garbled-spans), attention defaults to <c>ping</c> (surface for a human, never auto-promote on an
+    /// absent signal). This is what the orchestrator threads when an OPTIONAL LLM derivation step fails
+    /// (502 / timeout) so the recording still drains — zero facts, never guessed ones.
+    /// </summary>
+    public static RecordingFacts None() => new(
+        summary: "",
+        entities: Array.Empty<string>(),
+        dates: Array.Empty<string>(),
+        proposedLinks: Array.Empty<ProposedLink>(),
+        proposedTimeline: Array.Empty<ProposedTimelineLine>(),
+        attention: new BundleAttention("ping", 0.0, "no derived facts (derivation unavailable)"),
+        participants: Array.Empty<ResolvedParticipant>(),
+        garbledSpans: Array.Empty<TextSpan>());
+
     public string Summary { get; }
     public IReadOnlyList<string> Entities { get; }
     public IReadOnlyList<string> Dates { get; }
