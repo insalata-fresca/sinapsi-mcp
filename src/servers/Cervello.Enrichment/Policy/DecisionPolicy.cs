@@ -175,6 +175,78 @@ public sealed class DecisionPolicy(
         return AttributionVerdict.AutoApplied(c.MergedSpeaker, person, best, source, basis);
     }
 
+    /// <summary>
+    /// Decide a PARTICIPANT-HINT attribution (metadata, non-voice) THROUGH the policy — the M6
+    /// write-safety fix. Previously the attribution stage built the applied verdict for a 1:1 hint
+    /// DIRECTLY (bypassing this policy and its ambiguity/conflict guards); routing it here means a
+    /// metadata hint can never auto-write a name the policy did not vet.
+    ///
+    /// <para>A hint is admitted as its OWN auto-basis rule (<see cref="ConfirmationBasis.ParticipantHintRule"/>),
+    /// distinct from a voice match, so an audit can tell a hint from a voiceprint. It is vetted by the
+    /// SAME guards a voice match faces:</para>
+    /// <list type="bullet">
+    ///   <item><b>Conflict</b> — the person the hint names ALSO has a strong enrolled voiceprint that
+    ///     matches a DIFFERENT person (<paramref name="conflictingEnrolledPerson"/> ≥ auto, ≠ the hinted
+    ///     person) → OPEN-POINT, never auto-apply. A hint cannot override a voice signal.</item>
+    ///   <item><b>Ambiguity</b> — two enrolled people both ≥ auto for this same voice
+    ///     (<paramref name="secondEnrolledPerson"/> ≥ auto) → OPEN-POINT. The voice is contested; a hint
+    ///     cannot break the tie.</item>
+    ///   <item><b>Phase gate</b> — <see cref="PolicyPhase.EscalateOnly"/> (the default) → OPEN-POINT
+    ///     (dark); <see cref="PolicyPhase.GradedAutoApply"/> → auto-applied with the metadata basis.</item>
+    /// </list>
+    /// The hint NEVER fabricates: an empty hinted person throws; a conflicted/ambiguous hint is withheld
+    /// even under GradedAutoApply (proving a metadata hint cannot auto-write on an un-vetted path).
+    /// </summary>
+    /// <param name="hintedPerson">The participant the recording's hint names (must be non-empty).</param>
+    /// <param name="confidence">The (review-band) confidence the hint carries — a metadata signal, not a voice cosine.</param>
+    /// <param name="conflictingEnrolledPerson">
+    /// A DIFFERENT enrolled person whose voiceprint matches this voice ≥ auto (a conflict), or null.
+    /// </param>
+    /// <param name="secondEnrolledPerson">
+    /// A second enrolled person also matching this voice ≥ auto (ambiguity), or null.
+    /// </param>
+    public AttributionVerdict DecideParticipantHint(
+        string mergedSpeaker,
+        string recordingId,
+        string hintedPerson,
+        double confidence,
+        string? conflictingEnrolledPerson = null,
+        string? secondEnrolledPerson = null)
+    {
+        if (string.IsNullOrWhiteSpace(mergedSpeaker))
+            throw new ArgumentException("mergedSpeaker must be non-empty", nameof(mergedSpeaker));
+        if (string.IsNullOrWhiteSpace(recordingId))
+            throw new ArgumentException("recordingId must be non-empty", nameof(recordingId));
+        if (string.IsNullOrWhiteSpace(hintedPerson))
+            throw new ArgumentException("a participant-hint attribution must name a person", nameof(hintedPerson));
+
+        // Guard 1 — CONFLICT: a strong enrolled voiceprint says a DIFFERENT person. The voice signal
+        // wins the tie-break to an open-point; a metadata hint never overrides a voice match.
+        if (!string.IsNullOrWhiteSpace(conflictingEnrolledPerson)
+            && !string.Equals(conflictingEnrolledPerson, hintedPerson, StringComparison.Ordinal))
+            return AttributionVerdict.OpenPoint(mergedSpeaker, confidence,
+                $"conflict: participant hint names {hintedPerson} but a strong enrolled voiceprint matches "
+                + $"{conflictingEnrolledPerson} for speaker {mergedSpeaker} in recording {recordingId} → operator confirmation required");
+
+        // Guard 2 — AMBIGUITY: two enrolled people both ≥ auto for this voice; a hint cannot break it.
+        if (!string.IsNullOrWhiteSpace(secondEnrolledPerson))
+            return AttributionVerdict.OpenPoint(mergedSpeaker, confidence,
+                $"ambiguous: participant hint names {hintedPerson} but two enrolled voiceprints both match "
+                + $"speaker {mergedSpeaker} in recording {recordingId} → operator confirmation required");
+
+        // Phase gate — the default EscalateOnly withholds the hint (dark); GradedAutoApply applies it.
+        if (Phase == PolicyPhase.EscalateOnly)
+            return AttributionVerdict.OpenPoint(mergedSpeaker, confidence,
+                $"participant-hint: is speaker {mergedSpeaker} {hintedPerson}? "
+                + "(named by the recording's participant hint; confirm to attribute + enroll)");
+
+        // GradedAutoApply: auto-apply with a METADATA basis (rule = participant-hint) + a source ref —
+        // distinct from a voice-match basis so an audit can tell a hint from a voiceprint.
+        var basis = ConfirmationBasis.Auto(_autoBasisVersion, rule: ConfirmationBasis.ParticipantHintRule);
+        var source = $"rec://{recordingId}#{mergedSpeaker}";
+        return AttributionVerdict.AutoApplied(mergedSpeaker, hintedPerson, confidence, source, basis);
+    }
+
     private static string Describe(AttributionCandidate c) =>
         c.BestMatchPerson is null ? "(none)" : $"{c.BestMatchPerson} @ {c.BestMatchCosine:0.###}";
 }

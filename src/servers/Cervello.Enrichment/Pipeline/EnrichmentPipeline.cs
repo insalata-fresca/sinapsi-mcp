@@ -80,6 +80,7 @@ public sealed class EnrichmentPipeline
     private readonly IGitPublisher _gitPublisher;
     private readonly IRecordingVoiceprintStore _recordingVoiceprints;
     private readonly ITranscriptStore? _transcriptStore;
+    private readonly AutoEnrollmentCoordinator? _autoEnroll;
     private readonly ILogger _log;
 
     /// <summary>The auto-basis version the applied-timeline mutations carry (lint R9 provenance).</summary>
@@ -102,6 +103,7 @@ public sealed class EnrichmentPipeline
         IGitPublisher? gitPublisher = null,
         IRecordingVoiceprintStore? recordingVoiceprints = null,
         ITranscriptStore? transcriptStore = null,
+        AutoEnrollmentCoordinator? autoEnroll = null,
         ILogger<EnrichmentPipeline>? logger = null)
     {
         _ingest = ingest ?? throw new ArgumentNullException(nameof(ingest));
@@ -126,6 +128,12 @@ public sealed class EnrichmentPipeline
         // test/host that doesn't need the artifact) the corrected+labeled build still runs (in-memory,
         // for the pipeline outcome / future callers) but nothing is persisted — never a hard dependency.
         _transcriptStore = transcriptStore;
+        // M6 item 2: OPTIONAL — when a host wires it, an auto-applied participant-hint attribution
+        // (GradedAutoApply + 1:1 + §10 allowlist) turns its enroll proposal into an actual voiceprint
+        // write. When ABSENT (a test/host that doesn't need auto-enroll, or the default escalate-only
+        // posture) the pipeline only LOGS proposals — nothing is ever written. Dark by default: the
+        // coordinator itself no-ops under EscalateOnly even when wired.
+        _autoEnroll = autoEnroll;
         _log = logger ?? NullLogger<EnrichmentPipeline>.Instance;
     }
 
@@ -266,12 +274,33 @@ public sealed class EnrichmentPipeline
                 //     escalate-only apply gate; M4 ships dark, the flip is M6).
                 var attributionResult = await _attribution.ResolveAsync(recording.Id, merged, ct).ConfigureAwait(false);
                 attribution = attributionResult.Verdicts;
+
+                // ── 6b. AUTO-ENROLL (M6 item 2) — DARK BY DEFAULT ────────────────────────────────
+                //     Turn a participant-hint enroll PROPOSAL into an actual voiceprint write, but ONLY
+                //     under GradedAutoApply + the 1:1 auto-applied verdict + the §10 allowlist. When the
+                //     coordinator is absent, or under the default EscalateOnly (it no-ops), NOTHING is
+                //     written — the proposals stay proposals (logged). The write can never happen with
+                //     the flag OFF. Off-allowlist persons are refused inside the coordinator (logged,
+                //     never written), and any write failure is non-fatal (attribution already stands).
                 if (attributionResult.EnrollmentProposals.Count > 0)
-                    _log.LogInformation(
-                        "pipeline {Key}: {N} auto-enrollment PROPOSAL(s) from participant hints (not written — " +
-                        "escalate-only gate holds until M6): {People}",
-                        recording.IdempotencyKey, attributionResult.EnrollmentProposals.Count,
-                        string.Join(", ", attributionResult.EnrollmentProposals.Select(p => p.PersonSlug)));
+                {
+                    var wrote = _autoEnroll is null
+                        ? Array.Empty<string>()
+                        : await _autoEnroll.AutoEnrollAsync(
+                            recording.Id, attributionResult, DateOnly.FromDateTime(DateTime.UtcNow), ct)
+                            .ConfigureAwait(false);
+
+                    if (wrote.Count > 0)
+                        _log.LogInformation(
+                            "pipeline {Key}: {N} voiceprint(s) AUTO-ENROLLED (GradedAutoApply + 1:1 + allowlist): {People}",
+                            recording.IdempotencyKey, wrote.Count, string.Join(", ", wrote));
+                    else
+                        _log.LogInformation(
+                            "pipeline {Key}: {N} auto-enrollment PROPOSAL(s) from participant hints, NONE written " +
+                            "(dark: escalate-only default / no coordinator / off-allowlist): {People}",
+                            recording.IdempotencyKey, attributionResult.EnrollmentProposals.Count,
+                            string.Join(", ", attributionResult.EnrollmentProposals.Select(p => p.PersonSlug)));
+                }
             }
             else
             {

@@ -92,14 +92,33 @@ public sealed class AttributionStage(
         if (unmatched.Count == 1 && unaccountedHints.Count == 1)
         {
             // (2) Unambiguous 1:1 → attribute the voice to the participant + PROPOSE enrollment. The
-            //     named attribution flows through the escalate-only gate exactly like an enrolled match
-            //     (open-point under EscalateOnly, auto-applied under GradedAutoApply).
+            //     named attribution flows THROUGH the decision policy (M6 write-safety fix) — the policy
+            //     vets it against the SAME conflict/ambiguity guards a voice match faces and applies the
+            //     phase gate (open-point under EscalateOnly, auto-applied under GradedAutoApply).
             var idx = unmatched[0];
             var person = unaccountedHints[0];
-            verdicts[idx] = DecideNamed(recordingId, clusters[idx], person, ParticipantHintConfidence);
-            proposals.Add(new EnrollmentProposal(person, recordingId, clusters[idx].MergedSpeaker, clusters[idx].Centroid));
-            _log.LogInformation("attribution {Rec}#{Speaker}: participant-hint → {Person} (+enroll proposed)",
-                recordingId, clusters[idx].MergedSpeaker, person);
+            var (verdict, contested) = await DecideNamedAsync(recordingId, clusters[idx], person, ParticipantHintConfidence, ct)
+                .ConfigureAwait(false);
+            verdicts[idx] = verdict;
+
+            // Emit an enroll PROPOSAL whenever the hint is an UN-CONTESTED 1:1 assignment — under
+            // EscalateOnly the verdict is an open-point (pending confirmation) but the proposal still
+            // stands (logged, NEVER written — the write gate is downstream in the pipeline, M6 item 2);
+            // under GradedAutoApply the verdict auto-applies and the proposal is the enroll input.
+            // A hint the policy WITHHELD for conflict/ambiguity (a contested identity, not merely
+            // unconfirmed) carries NO proposal — enrolling a voiceprint the policy declined to attribute
+            // would re-open the very bypass this fix closes.
+            if (!contested)
+            {
+                proposals.Add(new EnrollmentProposal(person, recordingId, clusters[idx].MergedSpeaker, clusters[idx].Centroid));
+                _log.LogInformation("attribution {Rec}#{Speaker}: participant-hint → {Person} ({Outcome}, +enroll proposed)",
+                    recordingId, clusters[idx].MergedSpeaker, person, verdict.Outcome);
+            }
+            else
+            {
+                _log.LogInformation("attribution {Rec}#{Speaker}: participant-hint for {Person} withheld ({Outcome}, contested) — no enroll proposal",
+                    recordingId, clusters[idx].MergedSpeaker, person, verdict.Outcome);
+            }
         }
         else if (unmatched.Count > 1 && unaccountedHints.Count > 1)
         {
@@ -172,27 +191,41 @@ public sealed class AttributionStage(
     }
 
     /// <summary>
-    /// Produce a NAMED attribution verdict (participant-hint assignment) through the escalate-only gate:
-    /// a synthetic candidate whose prior AGREES on the hinted person at the hint confidence, so the
-    /// policy escalates it under EscalateOnly and auto-applies it under GradedAutoApply — a metadata
-    /// hint, held to the review band, never presented as a voice match.
+    /// Produce a NAMED attribution verdict (participant-hint assignment) THROUGH the decision policy
+    /// (M6 write-safety fix — the hint no longer bypasses the policy). Before deciding, it re-derives the
+    /// hinted voice's ENROLLED-voiceprint signals (a conflicting strong match to a different person, or a
+    /// second ≥-auto match) so the policy can apply the SAME conflict/ambiguity guards a voice match
+    /// faces: a metadata hint contradicted or contested by a voice signal is WITHHELD (open-point) even
+    /// under GradedAutoApply, never auto-written. Tombstoned people are dropped (lint R8), so a deleted
+    /// person's voiceprint neither conflicts nor auto-applies.
     /// </summary>
-    private AttributionVerdict DecideNamed(string recordingId, MergedCluster cluster, string person, double confidence)
+    private async Task<(AttributionVerdict Verdict, bool Contested)> DecideNamedAsync(
+        string recordingId, MergedCluster cluster, string person, double confidence, CancellationToken ct)
     {
-        // Present as a PRIOR-ONLY signal (no best-match voice) so the policy treats it as a confirming
-        // hint requiring confirmation — a metadata hint cannot auto-apply as if voice-confirmed. Under
-        // GradedAutoApply the policy still routes a prior-agreeing candidate to an open-point unless a
-        // voice match backs it, so we build the applied verdict directly here for the hint path and let
-        // the phase gate decide: EscalateOnly → open-point; GradedAutoApply → auto-applied.
-        if (_policy.Phase == PolicyPhase.EscalateOnly)
-            return AttributionVerdict.OpenPoint(cluster.MergedSpeaker, confidence,
-                $"participant-hint: is speaker {cluster.MergedSpeaker} {person}? "
-                + "(named by the recording's participant hint; confirm to attribute + enroll)");
+        // Re-match the hinted voice against the enrolled store to surface any voice signal the policy
+        // must vet the hint against (a strong match to a DIFFERENT person = conflict; a second ≥-auto
+        // match = ambiguity). This is the unmatched path, so the BEST live match is < auto for the
+        // hinted person — but another enrolled person could still match ≥ auto (the conflict case).
+        var matches = await _store.MatchAsync(cluster.Centroid, ct).ConfigureAwait(false);
+        var live = new List<VoiceprintMatch>(matches.Count);
+        foreach (var m in matches)
+            if (!await _store.IsDeletedAsync(m.PersonSlug, ct).ConfigureAwait(false))
+                live.Add(m);
 
-        // GradedAutoApply (M6): the hint auto-applies with a metadata basis (rule = participant-hint) + a
-        // source ref — distinct from a voice-match basis so an audit can tell a hint from a voiceprint.
-        var basis = ConfirmationBasis.Auto("v1", rule: "participant-hint");
-        var source = $"rec://{recordingId}#{cluster.MergedSpeaker}";
-        return AttributionVerdict.AutoApplied(cluster.MergedSpeaker, person, confidence, source, basis);
+        // Enrolled people (≠ the hinted person) whose voiceprint matches this voice ≥ the auto band.
+        var strongOthers = live
+            .Where(m => _policy.Bands.IsAuto(m.Cosine) && !string.Equals(m.PersonSlug, person, StringComparison.Ordinal))
+            .ToList();
+        var conflicting = strongOthers.Count > 0 ? strongOthers[0].PersonSlug : null;
+        var secondStrong = strongOthers.Count > 1 ? strongOthers[1].PersonSlug : null;
+
+        // A hint is CONTESTED iff a voice signal conflicts or the identity is ambiguous — those verdicts
+        // are withheld regardless of phase and must NOT carry an enroll proposal. A plain escalate-only
+        // open-point (no conflict/ambiguity) is NOT contested — it is a pending confirmation.
+        var contested = conflicting is not null || secondStrong is not null;
+
+        var verdict = _policy.DecideParticipantHint(
+            cluster.MergedSpeaker, recordingId, person, confidence, conflicting, secondStrong);
+        return (verdict, contested);
     }
 }

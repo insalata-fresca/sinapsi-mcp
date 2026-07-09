@@ -60,6 +60,21 @@ public static class EnrichmentComposition
         // registration replacement by the host, not a code change here.
         services.AddSingleton(EnrollmentAllowlist.Empty);
 
+        // VoiceprintEnrollment wraps IVoiceprintStore (registered in both live + fake mode) — the ONLY
+        // path that writes a centroid. Registered in the SHARED root (was live-only) so the auto-enroll
+        // coordinator + open-points service resolve it in every composition.
+        services.AddSingleton<VoiceprintEnrollment>();
+
+        // M6 item 2 — the auto-enrollment coordinator. Registered with the SAME phase as the policy, so
+        // it is DARK by default (no-op under EscalateOnly) and only writes when the operator flips
+        // CERVELLO_GRADED_AUTO_APPLY=true. It resolves VoiceprintEnrollment + the §10 allowlist (both
+        // registered here); the pipeline consumes it. A code path that never enables the flag never writes.
+        services.AddSingleton(sp => new AutoEnrollmentCoordinator(
+            sp.GetRequiredService<VoiceprintEnrollment>(),
+            sp.GetRequiredService<EnrollmentAllowlist>(),
+            phase,
+            sp.GetService<ILogger<AutoEnrollmentCoordinator>>()));
+
         if (cfg.UseLiveAdapters)
             AddLiveAdapters(services, cfg);
         else
@@ -330,7 +345,7 @@ public static class EnrichmentComposition
         // live IVoiceprintStore (210); it was previously only test-constructed. The service opens no
         // NATS/HTTP itself — the CT146 host maps a token-gated HTTP surface over it (Host/Program.cs);
         // the bearer gate FAILS CLOSED on an empty token (a mis-provisioned deploy exposes nothing).
-        services.AddSingleton<VoiceprintEnrollment>();
+        // (VoiceprintEnrollment is now registered in the shared AddCervelloEnrichment root.)
         services.AddSingleton<OpenPointsService>();
     }
 
