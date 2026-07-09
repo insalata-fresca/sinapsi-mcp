@@ -59,7 +59,6 @@ public sealed class HealthEndpointTests
             new ClusterMergeStage(),
             new AttributionStage(
                 new InMemoryVoiceprintStore(EnrollmentAllowlist.Empty),
-                new FilenameParticipantPriorSource(new Dictionary<string, PriorCandidates>()),
                 new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
             new CorrectionStage(new HostFakeCorrectionLlm(), new InMemoryCorrectionMapStore(),
                 new HostFakeReAsrClient(), new CorrectionGrader(PolicyPhase.EscalateOnly)),

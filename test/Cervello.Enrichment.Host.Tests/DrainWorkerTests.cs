@@ -39,14 +39,13 @@ public sealed class DrainWorkerTests
         IEnrichmentLedger ledger, IDiarizeEmbedClient? diarizeClient = null)
     {
         var store = new InMemoryVoiceprintStore(EnrollmentAllowlist.Empty);
-        var prior = new FilenameParticipantPriorSource(new Dictionary<string, PriorCandidates>());
         return new EnrichmentPipeline(
             new IngestStage(ledger),
             new HostFakeAudioSource(),
             new BaseTranscribeStage(new HostFakeBaseTranscriptSource(), new HostInMemoryTranscriptStore()),
             new DiarizeEmbedStage(diarizeClient ?? HostFakeDiarizeEmbedClient.Empty()),
             new ClusterMergeStage(),
-            new AttributionStage(store, prior, new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
+            new AttributionStage(store, new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
             new CorrectionStage(new HostFakeCorrectionLlm(), new InMemoryCorrectionMapStore(),
                 new HostFakeReAsrClient(), new CorrectionGrader(PolicyPhase.EscalateOnly)),
             new EnrichLinkStage(new HostFakeLinkResolver()),
