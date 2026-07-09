@@ -95,8 +95,26 @@ public sealed class DecisionPolicy(
         if (string.IsNullOrWhiteSpace(recordingId))
             throw new ArgumentException("recordingId must be non-empty", nameof(recordingId));
 
-        // 1) Below-reject with no confirming prior → OMIT (never guessed). This is checked FIRST
-        //    and is NOT overridden by escalate-only mode: there is no identification to escalate.
+        // 1a) COLD START / NOVEL SPEAKER: no voiceprint enrolled to compare against
+        //     (BestMatchPerson is null) AND no prior contradicts. This is a REAL person we
+        //     cannot yet name — not a non-identification. Escalate it to an open-point so the
+        //     who's-who bootstrap can start; answering enrolls the voiceprint. This is a
+        //     GROUNDED QUESTION, never a guess (no Person/basis is asserted), so it stays inside
+        //     the never-guess floor. It is NOT overridden by escalate-only (already withheld).
+        //     A CONFLICTING strong prior (e.g. it names a DELETED person — lint R8) is excluded
+        //     here so a tombstoned person is never re-surfaced; that falls through to omit (1b).
+        if (candidate.BestMatchPerson is null
+            && candidate.PriorRelation != PriorRelation.Agrees
+            && candidate.PriorRelation != PriorRelation.Conflicts)
+            return AttributionVerdict.OpenPoint(candidate.MergedSpeaker, 0.0,
+                $"who is speaker {candidate.MergedSpeaker} in recording {recordingId}? "
+                + "(no enrolled voiceprint yet — name to enroll"
+                + (candidate.PriorPerson is null ? ")" : $"; filename/participant prior suggests {candidate.PriorPerson})"));
+
+        // 1b) Remaining below-reject / no-live-match with no confirming prior → OMIT (either a
+        //     NON-NULL voiceprint we compared and it genuinely isn't them, or a null match whose
+        //     only prior CONFLICTS — a tombstoned/other person we must not re-surface). Escalating
+        //     would create a phantom question. Checked FIRST and NOT overridden by escalate-only.
         var noVoiceMatch = candidate.BestMatchPerson is null || _bands.IsReject(candidate.BestMatchCosine);
         if (noVoiceMatch && candidate.PriorRelation != PriorRelation.Agrees)
             return AttributionVerdict.Omitted(candidate.MergedSpeaker,

@@ -99,11 +99,31 @@ public sealed class DecisionPolicyTests
         Assert.Equal(0.0, v.Confidence);
     }
 
-    [Fact] // no voice match at all + no prior → omit
-    public void No_match_and_no_prior_is_omitted()
+    [Fact] // COLD START: no voiceprint enrolled to compare (null best-match) → OPEN-POINT, not omit.
+           // This is a real speaker we cannot yet name — the who's-who bootstrap must start here.
+    public void Cold_start_null_best_match_opens_a_point_not_omitted()
     {
         var v = Graded().Decide(Candidate(0.0, bestPerson: null, prior: PriorRelation.None), Rec);
-        Assert.Equal(AttributionOutcome.Omitted, v.Outcome);
+        Assert.Equal(AttributionOutcome.OpenPoint, v.Outcome);
+        Assert.Null(v.Person);     // never named — grounded question, not a guess
+        Assert.Null(v.Basis);      // withheld — no basis on an open-point
+        Assert.Contains("who is speaker", v.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(Rec, v.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact] // a NON-NULL match below the reject band with no prior still OMITS (we checked — it isn't them)
+    public void Below_reject_non_null_match_no_prior_still_omits()
+    {
+        var v = Graded().Decide(Candidate(0.30, bestPerson: "guilhem", prior: PriorRelation.None), Rec);
+        Assert.Equal(AttributionOutcome.Omitted, v.Outcome); // not a phantom question
+        Assert.Null(v.Person);
+    }
+
+    [Fact] // COLD START holds under escalate-only too — a null best-match is an open-point, not omit
+    public void Escalate_only_cold_start_null_best_match_opens_a_point()
+    {
+        var v = EscalateOnly().Decide(Candidate(0.0, bestPerson: null, prior: PriorRelation.None), Rec);
+        Assert.Equal(AttributionOutcome.OpenPoint, v.Outcome);
     }
 
     // ---- PHASE GATE (the mission's headline proof) ---------------------------------------

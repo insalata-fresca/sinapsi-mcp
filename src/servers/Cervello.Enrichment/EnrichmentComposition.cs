@@ -237,6 +237,24 @@ public static class EnrichmentComposition
         services.AddSingleton<ILinkResolver>(_ => new RepoLinkResolver(repoRoot));
         services.AddSingleton<IAccessLog>(_ => new CtAccessLog(accessLogPath));
 
+        // forgejo searchable-substrate publisher: commits transcripts + bundles + manifest to
+        // ste/cervello main via the contents REST API (the SAME agent-free bearer egress), so the
+        // strictly-git-sourced indexer (:8009) indexes recording content → recall returns it. This is
+        // INDEPENDENT of the map-PR dry-run gate (that governs map/ attributions); audio + voiceprints
+        // never enter git (LINT R7, enforced in the publisher). Reads from the CT working tree above.
+        // A named HttpClient supplies the base address + timeout; the factory injects the working tree.
+        services.AddHttpClient(nameof(ForgejoContentsPublisher), c =>
+        {
+            c.BaseAddress = new Uri(cfg.ForgejoBaseUrl);
+            c.Timeout = timeout;
+        });
+        services.AddSingleton<IGitPublisher>(sp => new ForgejoContentsPublisher(
+            sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(ForgejoContentsPublisher)),
+            sp.GetRequiredService<IBearerProvider>(),
+            sp.GetRequiredService<EnrichmentConfig>(),
+            repoRoot,
+            sp.GetService<ILogger<ForgejoContentsPublisher>>()));
+
         // ── the three orchestration input seams (L-SEAMS) — live adapters ─────────────────────────
         // IAudioSource: the transient recording audio from the CT staging blob the Watcher writes
         // (content-addressed by audio_sha256). Read-only, never git-side; a missing blob → terminal.
@@ -304,6 +322,10 @@ public static class EnrichmentComposition
         services.AddSingleton<IOpenPointStore, InMemoryOpenPointStore>();
         services.AddSingleton<IEnrichmentLedger, InMemoryEnrichmentLedger>();
         services.AddSingleton<IBundleStore, InMemoryBundleStore>();
+
+        // No live git egress in fake mode: the searchable-substrate publisher is a no-op (the offline
+        // slice writes artifacts to the in-memory stores; nothing is pushed to ste/cervello).
+        services.AddSingleton<IGitPublisher, NoOpGitPublisher>();
 
         AddAuthGate(services, EnrichmentConfig.From(_ => null) with { OpenPointsAuthEnabled = true });
     }
