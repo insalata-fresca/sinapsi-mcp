@@ -106,6 +106,7 @@ public sealed class EnrichmentCompositionTests
             ["CERVELLO_USE_LIVE_ADAPTERS"] = "true",
             ["CERVELLO_DB_PASSWORD"] = "unused-at-construction",
             ["CERVELLO_BRAIN_BEARER_TOKEN"] = "brain-bearer-under-test",
+            ["CERVELLO_FORGE_REPO_TOKEN"] = "forge-token-under-test",
         };
         Environment.SetEnvironmentVariable("OIDC_ISSUER", "https://id.test");
         Environment.SetEnvironmentVariable("OIDC_AUDIENCE_PROJECT_ID", "proj-1");
@@ -157,24 +158,49 @@ public sealed class EnrichmentCompositionTests
         Assert.Contains("CERVELLO_BRAIN_BEARER_TOKEN", ex.Message);
     }
 
-    // ── the audience router: static brain bearer for brain-api, minted JWT for everything else ─────
+    // ── the forgejo egress requires the static forgejo token: live mode FAILS CLOSED on an empty one ──
+    [Fact]
+    public void Live_mode_fails_closed_when_the_static_forgejo_token_is_empty()
+    {
+        // Live adapters enabled + a brain bearer present, but CERVELLO_FORGE_REPO_TOKEN unset — the
+        // forgejo REST API rejects the minted Zitadel JWT, so an empty forgejo token is never valid.
+        var env = new Dictionary<string, string?>
+        {
+            ["CERVELLO_USE_LIVE_ADAPTERS"] = "true",
+            ["CERVELLO_DB_PASSWORD"] = "unused-at-construction",
+            ["CERVELLO_BRAIN_BEARER_TOKEN"] = "brain-bearer-under-test",
+            // CERVELLO_FORGE_REPO_TOKEN deliberately absent
+        };
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            new ServiceCollection().AddCervelloEnrichment(EnrichmentConfig.From(env)));
+        Assert.Contains("CERVELLO_FORGE_REPO_TOKEN", ex.Message);
+    }
+
+    // ── the audience router: static brain bearer for brain-api, static forgejo token for forgejo, ──
+    // ── minted JWT for everything else (CT126 speaches) ────────────────────────────────────────────
     [Fact]
     public async Task Audience_router_returns_the_static_brain_bearer_only_for_the_brain_api_audience()
     {
         var router = new AudienceRoutingBearerProvider(
             brainApi: new StaticBearerProvider("STATIC-BRAIN"),
+            forgejo: new StaticBearerProvider("STATIC-FORGE"),
             minted: new StaticBearerProvider("MINTED-JWT"));
 
-        // The three brain-api enrich clients tag "brain-api" → the static token.
+        // The three brain-api enrich clients tag "brain-api" → the static brain token.
         Assert.Equal("STATIC-BRAIN", await router.GetBearerAsync(AudienceRoutingBearerProvider.BrainApiAudience));
         Assert.Equal("STATIC-BRAIN", await router.GetBearerAsync(GatewayDiarizeEmbedClient.Audience));
         Assert.Equal("STATIC-BRAIN", await router.GetBearerAsync(BrainApiCorrectionLlm.Audience));
         Assert.Equal("STATIC-BRAIN", await router.GetBearerAsync(BrainApiRecordingFactSource.Audience));
 
-        // CT126 + forgejo egress → the minted JWT (unchanged).
+        // forgejo egress (git push + map-PR writer) tag "forgejo" → the static forgejo access token.
+        // Distinct from the brain token AND from the minted JWT (forgejo REST rejects the Zitadel JWT).
+        Assert.Equal("STATIC-FORGE", await router.GetBearerAsync(AudienceRoutingBearerProvider.ForgejoAudience));
+        Assert.Equal("STATIC-FORGE", await router.GetBearerAsync(ForgejoContentsPublisher.Audience));
+        Assert.Equal("STATIC-FORGE", await router.GetBearerAsync(ForgejoMapPrWriter.Audience));
+
+        // CT126 speaches egress → the minted JWT (unchanged fall-through).
         Assert.Equal("MINTED-JWT", await router.GetBearerAsync(Ct126TranscribeClient.Audience));
         Assert.Equal("MINTED-JWT", await router.GetBearerAsync(Ct126ReAsrClient.Audience));
-        Assert.Equal("MINTED-JWT", await router.GetBearerAsync(ForgejoMapPrWriter.Audience));
     }
 
     // ── fail-closed config ───────────────────────────────────────────────────────

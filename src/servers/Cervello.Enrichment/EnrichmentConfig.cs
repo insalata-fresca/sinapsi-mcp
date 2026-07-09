@@ -104,6 +104,23 @@ public sealed record EnrichmentConfig
     public required string ForgejoBaseBranch { get; init; }
 
     /// <summary>
+    /// The STATIC forgejo access token (<c>CERVELLO_FORGE_REPO_TOKEN</c>) presented on every forgejo
+    /// egress (the searchable-transcript git push AND the map-PR writer — both tag audience
+    /// <c>forgejo</c>). Forgejo's REST API validates a native forgejo access token, NOT a Zitadel OIDC
+    /// JWT, so the minted <c>agent-cervello-enrichment</c> JWT is REJECTED there with 401 — the engine
+    /// must present this real forgejo token instead. It MUST equal cervello's forgejo write token
+    /// (Infisical <c>/ct146/cervello/FORGE_REPO_TOKEN</c>, the map-PR writer's token). Injected
+    /// agent-free at deploy, NEVER committed / in the image / in agent context. Empty in fake mode (no
+    /// live egress); the composition root FAILS CLOSED on an empty value in live mode (a mis-provisioned
+    /// deploy never presents an empty forgejo token). CT126 egress keeps the minted JWT (its own
+    /// <c>ct126-speaches</c> audience routes through the fall-through).
+    /// <para>Scoped-JWT-for-forgejo (per-route audience acceptance on forgejo) is a noted future
+    /// hardening; today the static bearer is the smallest by-the-books fix (same pattern as the
+    /// brain-api audience's <see cref="BrainBearerToken"/>).</para>
+    /// </summary>
+    public required string ForgejoRepoToken { get; init; }
+
+    /// <summary>
     /// Map-PR writer DRY-RUN. TRUE (default) = assemble + self-lint + log the PR but DO NOT open a
     /// real forgejo PR (the L1 boundary: no real map-PRs). FALSE = open the live review-PR (L2, on-CT).
     /// </summary>
@@ -176,6 +193,9 @@ public sealed record EnrichmentConfig
             ForgejoBaseUrl = ReadHttpUrl(getEnv, "CERVELLO_FORGEJO_BASE_URL", DefaultForgejoBaseUrl),
             ForgejoRepo = Env("CERVELLO_FORGEJO_REPO", DefaultForgejoRepo),
             ForgejoBaseBranch = Env("CERVELLO_FORGEJO_BASE_BRANCH", DefaultForgejoBaseBranch),
+            // The static forgejo access token. Empty default (fake mode needs none); the composition
+            // root fails closed on an empty value in LIVE mode. Never a baked-in secret.
+            ForgejoRepoToken = getEnv("CERVELLO_FORGE_REPO_TOKEN") ?? "",
             MapPrDryRun = ReadBool(getEnv, "CERVELLO_MAP_PR_DRY_RUN", true),
             OpenPointsAuthEnabled = ReadBool(getEnv, "CERVELLO_OPEN_POINTS_AUTH_ENABLED", true),
             IndexerBaseUrl = ReadHttpUrl(getEnv, "CERVELLO_INDEXER_BASE_URL", DefaultIndexerBaseUrl),

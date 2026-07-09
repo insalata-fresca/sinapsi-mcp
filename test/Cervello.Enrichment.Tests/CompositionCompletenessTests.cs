@@ -39,6 +39,8 @@ public sealed class CompositionCompletenessTests
             ["CERVELLO_DB_PASSWORD"] = "unused-at-construction",
             // The static brain bearer the enrich routes require (live mode fails closed on an empty one).
             ["CERVELLO_BRAIN_BEARER_TOKEN"] = "brain-bearer-under-test",
+            // The static forgejo access token the forgejo egress requires (live mode fails closed too).
+            ["CERVELLO_FORGE_REPO_TOKEN"] = "forge-token-under-test",
         };
         Environment.SetEnvironmentVariable("OIDC_ISSUER", "https://id.test");
         Environment.SetEnvironmentVariable("OIDC_AUDIENCE_PROJECT_ID", "proj-1");

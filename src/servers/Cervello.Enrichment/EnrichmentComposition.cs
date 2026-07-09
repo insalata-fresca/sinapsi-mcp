@@ -156,14 +156,29 @@ public static class EnrichmentComposition
                 "injected agent-free from Infisical /ct121/homelab-state-mcp at deploy). Provide it, or " +
                 "run with CERVELLO_USE_LIVE_ADAPTERS=false for the offline slice.");
 
-        // The minted-JWT provider (CT126 + forgejo). Kept exactly as before — the Watcher's pattern.
+        // forgejo egress (the searchable-transcript git push AND the map-PR writer) presents a native
+        // forgejo ACCESS TOKEN — forgejo's REST API rejects the minted Zitadel JWT with 401 (the
+        // failure that kept transcripts out of ste/cervello and left recall empty). Fail CLOSED on an
+        // empty forgejo token — a mis-provisioned deploy never presents an empty token (the push would
+        // 401 anyway).
+        if (string.IsNullOrEmpty(cfg.ForgejoRepoToken))
+            throw new InvalidOperationException(
+                "CERVELLO_FORGE_REPO_TOKEN is empty but live adapters are enabled: the forgejo egress " +
+                "(searchable-transcript git push + map-PR writer) requires a native forgejo access token " +
+                "(== Infisical /ct146/cervello/FORGE_REPO_TOKEN, injected agent-free at deploy) — forgejo's " +
+                "REST API rejects the minted Zitadel JWT with 401. Provide it, or run with " +
+                "CERVELLO_USE_LIVE_ADAPTERS=false for the offline slice.");
+
+        // The minted-JWT provider (CT126 speaches). Kept exactly as before — the Watcher's pattern.
         services.AddSingleton(AgentJwtOptions.FromEnvironment());
         services.AddHttpClient<AgentJwtMinter>();
         services.AddSingleton<AgentJwtBearerProvider>();
 
-        // The audience router: static brain bearer for "brain-api", minted JWT for everything else.
+        // The audience router: static brain bearer for "brain-api", static forgejo access token for
+        // "forgejo", minted JWT for everything else (CT126 speaches).
         services.AddSingleton<IBearerProvider>(sp => new AudienceRoutingBearerProvider(
             new StaticBearerProvider(cfg.BrainBearerToken),
+            new StaticBearerProvider(cfg.ForgejoRepoToken),
             sp.GetRequiredService<AgentJwtBearerProvider>()));
 
         // brain-api typed clients (diarize-embed proxy + correction LLM).

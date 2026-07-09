@@ -24,6 +24,7 @@ public sealed class HostCompositionTests
         {
             env["CERVELLO_DB_PASSWORD"] = "unused-at-construction";
             env["CERVELLO_BRAIN_BEARER_TOKEN"] = "brain-bearer-under-test"; // enrich routes require it
+            env["CERVELLO_FORGE_REPO_TOKEN"] = "forge-token-under-test"; // forgejo egress requires it
             Environment.SetEnvironmentVariable("OIDC_ISSUER", "https://id.test");
             Environment.SetEnvironmentVariable("OIDC_AUDIENCE_PROJECT_ID", "proj-1");
         }
@@ -166,6 +167,7 @@ public sealed class HostCompositionTests
                 ["CERVELLO_USE_LIVE_ADAPTERS"] = "true",
                 ["CERVELLO_DB_PASSWORD"] = "unused-at-construction",
                 ["CERVELLO_BRAIN_BEARER_TOKEN"] = "brain-bearer-under-test",
+                ["CERVELLO_FORGE_REPO_TOKEN"] = "forge-token-under-test",
             });
 
             var services = new ServiceCollection();
