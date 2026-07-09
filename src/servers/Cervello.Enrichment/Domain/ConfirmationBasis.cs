@@ -19,6 +19,13 @@ public sealed record ConfirmationBasis
     /// <summary>The auto-basis rule name for a voice-match auto-apply (SCHEMAS §6 / DESIGN §10.2).</summary>
     public const string VoiceMatchRule = "voice-match";
 
+    /// <summary>
+    /// The auto-basis rule name for a PARTICIPANT-HINT auto-apply (M6) — a metadata (filename/
+    /// participant) assignment vetted by the decision policy, distinct from a voice match so an audit
+    /// can tell a hint from a voiceprint (<c>auto://participant-hint@&lt;version&gt;</c>).
+    /// </summary>
+    public const string ParticipantHintRule = "participant-hint";
+
     private ConfirmationBasis(ConfirmationBasisKind kind, string id, string? rule, string? version)
     {
         Kind = kind;
