@@ -21,6 +21,17 @@ public interface IDriveClient
     /// <summary>Fetch one page of changes from <paramref name="pageToken"/> (<c>changes.list</c>).</summary>
     Task<ChangePage> ListChangesAsync(string pageToken, CancellationToken ct);
 
+    /// <summary>
+    /// List EVERY file currently in <paramref name="folderId"/> as non-removed
+    /// <see cref="DriveChange"/> entries (same shape <c>ProcessChangeAsync</c>
+    /// consumes) — the one-time startup BACKFILL of the pre-existing recording
+    /// backlog, independent of the changes cursor (which only ever sees files that
+    /// mutate AFTER bootstrap). Returns the full folder snapshot; the caller runs
+    /// each entry through the identical download→classify→pair→register path, so an
+    /// already-imported recording is an idempotent no-op.
+    /// </summary>
+    Task<IReadOnlyList<DriveChange>> ListFolderAsync(string folderId, CancellationToken ct);
+
     /// <summary>Read one file's metadata (fields WATCH needs), or null if gone.</summary>
     Task<DriveChange?> GetMetadataAsync(string fileId, CancellationToken ct);
 

@@ -67,6 +67,16 @@ public sealed record WatcherConfig
     /// <summary>Identity string for logs/diagnostics (was reported to the Drive API pre-M6-refine).</summary>
     public required string ApplicationName { get; init; }
 
+    /// <summary>
+    /// Force a one-time full-folder BACKFILL of the pre-existing recording backlog on
+    /// process start even when a cursor already exists (a genuine first run — null
+    /// cursor — always backfills regardless). From <c>CERVELLO_WATCHER_FORCE_BACKFILL</c>,
+    /// default false, fail-closed on a non-boolean value. The scan is idempotent
+    /// (rec:&lt;id&gt;:&lt;sha&gt; dedupe + manifest id dedupe), so re-running it only
+    /// registers files the changes feed never saw.
+    /// </summary>
+    public required bool ForceBackfill { get; init; }
+
     // ---- bounds (fail-closed) ----
     internal const string DefaultGatewayUrl = "http://127.0.0.1:8443/mcp";
     internal const string DefaultWatcherAgent = "agent-cervello-watcher";
@@ -123,6 +133,7 @@ public sealed record WatcherConfig
             GdriveRetryBackoffMs = ReadBoundedInt(getEnv,
                 "CERVELLO_WATCHER_GDRIVE_RETRY_BACKOFF_MS", DefaultGdriveRetryBackoffMs, 0, MaxGdriveRetryBackoffMs),
             ApplicationName = Env("CERVELLO_WATCHER_APP_NAME", "cervello-watcher"),
+            ForceBackfill = ReadBool(getEnv, "CERVELLO_WATCHER_FORCE_BACKFILL", false),
         };
     }
 
@@ -172,6 +183,25 @@ public sealed record WatcherConfig
             MaxPoolSize = 10,
             Timeout = 15,
         }.ConnectionString;
+    }
+
+    /// <summary>
+    /// Fail-closed boolean: empty ⇒ default; a well-formed bool (case-insensitive
+    /// <c>true</c>/<c>false</c>, or <c>1</c>/<c>0</c>) is honoured; anything else
+    /// throws naming the var, so a typo cannot silently disable the backfill.
+    /// </summary>
+    private static bool ReadBool(Func<string, string?> getEnv, string envVar, bool dflt)
+    {
+        var raw = getEnv(envVar);
+        if (string.IsNullOrEmpty(raw))
+            return dflt;
+        return raw.Trim().ToLowerInvariant() switch
+        {
+            "true" or "1" => true,
+            "false" or "0" => false,
+            _ => throw new InvalidOperationException(
+                $"{envVar}='{raw}' is invalid: expected true/false (or 1/0) (default {dflt})."),
+        };
     }
 
     /// <summary>Fail-closed bounded int: non-numeric / out-of-range throws naming the var.</summary>

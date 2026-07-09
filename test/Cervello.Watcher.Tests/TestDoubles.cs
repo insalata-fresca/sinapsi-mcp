@@ -24,6 +24,9 @@ public sealed class RecordingDriveSpy : IDriveClient
         return _inner.ListChangesAsync(pageToken, ct);
     }
 
+    public Task<IReadOnlyList<DriveChange>> ListFolderAsync(string folderId, CancellationToken ct) =>
+        _inner.ListFolderAsync(folderId, ct);
+
     public Task<DriveChange?> GetMetadataAsync(string fileId, CancellationToken ct) =>
         _inner.GetMetadataAsync(fileId, ct);
 

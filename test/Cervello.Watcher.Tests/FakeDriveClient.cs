@@ -67,6 +67,24 @@ public sealed class FakeDriveClient : IDriveClient
         return Task.FromResult(new ChangePage(Array.Empty<DriveChange>(), null, pageToken));
     }
 
+    /// <summary>
+    /// Backfill listing: EVERY seeded file whose parents include <paramref name="folderId"/>
+    /// and which is not removed/trashed, as non-removed <see cref="DriveChange"/> entries —
+    /// the in-memory analogue of gdrive_list_files(folderId). Preserves seed insertion order
+    /// so tests can assert steady page-order processing.
+    /// </summary>
+    public Task<IReadOnlyList<DriveChange>> ListFolderAsync(string folderId, CancellationToken ct)
+    {
+        IReadOnlyList<DriveChange> files = _meta.Values
+            .Where(m => !m.Removed && !m.Trashed && m.Parents.Contains(folderId))
+            .Select(m => new DriveChange(
+                fileId: m.FileId, name: m.Name, mimeType: m.MimeType, md5: m.Md5, size: m.Size,
+                createdTime: m.CreatedTime, modifiedTime: m.ModifiedTime,
+                parents: m.Parents, removed: false, trashed: false))
+            .ToList();
+        return Task.FromResult(files);
+    }
+
     public Task<DriveChange?> GetMetadataAsync(string fileId, CancellationToken ct) =>
         Task.FromResult(_meta.TryGetValue(fileId, out var m) ? m : null);
 

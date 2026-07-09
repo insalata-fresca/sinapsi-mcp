@@ -228,6 +228,35 @@ public sealed class McpGdriveClient : IDriveClient
         return new ChangePage(changes, NextPageToken: null, NewStartPageToken: newToken);
     }
 
+    /// <summary>
+    /// Full-folder BACKFILL listing: EVERY current (non-trashed) file in
+    /// <paramref name="folderId"/> as a non-removed <see cref="DriveChange"/>. Reuses
+    /// the exact gateway-call + retry + parse plumbing as <see cref="ListChangesAsync"/>
+    /// (<c>gdrive_list_files</c>, <c>pageSize=1000</c>, <c>includeTrashed=false</c>) —
+    /// no new HTTP path. The gdrive MCP's <c>list_files</c> exposes no pagination
+    /// cursor (no nextPageToken); its 1000-file ceiling IS the page, so a single call
+    /// returns the whole folder. Should the recordings folder ever exceed 1000 files,
+    /// the tool would silently truncate — a fail-loud guard logs would belong upstream
+    /// in the MCP, not here; the current corpus (dozens) is far under the ceiling.
+    /// </summary>
+    public async Task<IReadOnlyList<DriveChange>> ListFolderAsync(string folderId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(folderId))
+            throw new InvalidOperationException(
+                "ListFolderAsync requires a resolved folderId (WatcherConfig.FolderId).");
+
+        const int pageSize = 1000; // gdrive_list_files ceiling; the tool exposes no cursor
+        var raw = await CallToolWithRetryAsync(
+            "gdrive_list_files",
+            new { folderId, pageSize, includeTrashed = false }, ct).ConfigureAwait(false);
+
+        var files = ParseFileList(raw);
+        var result = new List<DriveChange>(files.Count);
+        foreach (var f in files)
+            result.Add(ToDriveChange(f, folderId, removed: false));
+        return result;
+    }
+
     public async Task<DriveChange?> GetMetadataAsync(string fileId, CancellationToken ct)
     {
         var raw = await CallToolWithRetryAsync(
