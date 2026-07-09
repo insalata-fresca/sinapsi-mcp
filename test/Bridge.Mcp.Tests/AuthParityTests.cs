@@ -191,6 +191,67 @@ public sealed class AuthParityTests
         Assert.Equal("user-scope", ctx.Subject);
     }
 
+    // ── Cervello scope auto-grant gated on CERVELLO_EXPOSED (BRIDGE-CERVELLO-SCOPE-GRANT) ──
+    //
+    // Zitadel's auth-code flow strips the unknown bridge:cervello:* scopes from the token
+    // claim. A cervello-exposed deployment must auto-grant them so the scope check passes for
+    // the cervello read/deposit tools; a non-cervello deployment must NOT grant them. This is
+    // the SCOPE claim only — the workspace-binding + deposit path-guard remain independent
+    // server-side controls on CT146.
+
+    /// <summary>Mint an RS256 JWT that has NO bridge:cervello:* scopes in its claim (mirrors
+    /// what Zitadel actually issues after stripping the unknown custom scopes).</summary>
+    private static string MintTokenWithScope(string scopeClaim)
+    {
+        var handler = new JwtSecurityTokenHandler { SetDefaultTimesOnTokenCreation = false };
+        var now = DateTime.UtcNow;
+        var descriptor = new SecurityTokenDescriptor
+        {
+            Subject = new ClaimsIdentity([
+                new Claim("sub",   "cervello-session"),
+                new Claim("scope", scopeClaim),
+            ]),
+            Issuer             = Issuer,
+            Audience           = Audience,
+            IssuedAt           = now,
+            Expires            = now.AddHours(1),
+            SigningCredentials = new SigningCredentials(_privateKey, SecurityAlgorithms.RsaSha256),
+        };
+        return handler.WriteToken(handler.CreateJwtSecurityToken(descriptor));
+    }
+
+    [Fact]
+    public void ValidateTokenWithKeys_CervelloExposed_GrantsCervelloScopes_WhenAbsentFromClaim()
+    {
+        // Token claim WITHOUT bridge:cervello:* (Zitadel strips them). With CERVELLO_EXPOSED=true
+        // the read + deposit cervello scopes must be auto-granted so the tools' scope check passes.
+        var token = MintTokenWithScope("openid profile");
+
+        var ctx = BridgeAuthMiddleware.ValidateTokenWithKeys(
+            token, [_publicKey], Issuer, [Audience], cervelloExposed: true);
+
+        Assert.True(ctx.HasScope("bridge:cervello:read"));    // cervello read tool authorizes
+        Assert.True(ctx.HasScope("bridge:cervello:deposit")); // cervello deposit tool authorizes
+        // Legacy surface still merged (unchanged behaviour).
+        Assert.True(ctx.HasScope("bridge:deposit"));
+    }
+
+    [Fact]
+    public void ValidateTokenWithKeys_CervelloNotExposed_DoesNotGrantCervelloScopes()
+    {
+        // Same token, but CERVELLO_EXPOSED=false → the cervello scopes are NOT auto-granted,
+        // so a non-cervello deployment does not silently authorize the cervello tools.
+        var token = MintTokenWithScope("openid profile");
+
+        var ctx = BridgeAuthMiddleware.ValidateTokenWithKeys(
+            token, [_publicKey], Issuer, [Audience], cervelloExposed: false);
+
+        Assert.False(ctx.HasScope("bridge:cervello:read"));
+        Assert.False(ctx.HasScope("bridge:cervello:deposit"));
+        // Legacy surface still granted regardless of the cervello flag.
+        Assert.True(ctx.HasScope("bridge:deposit"));
+    }
+
     // ── JWKS fetch failure → SecurityTokenException path ─────────────────────
     //
     // We cannot unit-test the middleware's HTTP-exception→401 path without a full

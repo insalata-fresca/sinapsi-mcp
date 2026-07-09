@@ -60,6 +60,36 @@ public sealed class AuthMiddlewareTests
         Assert.DoesNotContain("bridge:read:facts_sensitive", LegacyScopes.All);
     }
 
+    [Fact]
+    public void LegacyScopes_All_DoesNotContainCervelloScopes()
+    {
+        // The base auto-granted set must NEVER contain the cervello scopes — those are only
+        // added by Granted(cervelloExposed:true). This guards a non-cervello deployment.
+        Assert.DoesNotContain("bridge:cervello:read",    LegacyScopes.All);
+        Assert.DoesNotContain("bridge:cervello:deposit", LegacyScopes.All);
+    }
+
+    [Fact]
+    public void LegacyScopes_Granted_AddsCervelloScopes_WhenExposed()
+    {
+        // CERVELLO_EXPOSED=true → both cervello scopes are auto-granted (so the legacy bearer
+        // and JWT paths authorize the cervello read/deposit tools), on top of the legacy set.
+        var granted = LegacyScopes.Granted(cervelloExposed: true);
+        Assert.Contains("bridge:cervello:read",    granted);
+        Assert.Contains("bridge:cervello:deposit", granted);
+        Assert.Contains("bridge:deposit",          granted); // legacy surface preserved
+    }
+
+    [Fact]
+    public void LegacyScopes_Granted_OmitsCervelloScopes_WhenNotExposed()
+    {
+        // CERVELLO_EXPOSED=false → no cervello scopes; a non-cervello deployment never grants them.
+        var granted = LegacyScopes.Granted(cervelloExposed: false);
+        Assert.DoesNotContain("bridge:cervello:read",    granted);
+        Assert.DoesNotContain("bridge:cervello:deposit", granted);
+        Assert.Contains("bridge:deposit", granted); // legacy surface still granted
+    }
+
     // ── BridgeConfig scopes_supported ─────────────────────────────────────────
 
     [Fact]
