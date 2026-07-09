@@ -83,4 +83,32 @@ public sealed class ConfigAndProxyTests
         var cfg = WatcherConfig.From(env);
         Assert.Equal("folder-abc123", cfg.FolderId);
     }
+
+    [Fact]
+    public void Force_backfill_defaults_to_false()
+    {
+        var cfg = WatcherConfig.From(Env());
+        Assert.False(cfg.ForceBackfill);
+    }
+
+    [Theory]
+    [InlineData("true", true)]
+    [InlineData("TRUE", true)]
+    [InlineData("1", true)]
+    [InlineData("false", false)]
+    [InlineData("0", false)]
+    public void Force_backfill_parses_well_formed_booleans(string raw, bool expected)
+    {
+        var env = Env(("CERVELLO_WATCHER_FORCE_BACKFILL", raw));
+        var cfg = WatcherConfig.From(env);
+        Assert.Equal(expected, cfg.ForceBackfill);
+    }
+
+    [Fact]
+    public void Bad_force_backfill_throws_naming_the_var()
+    {
+        var env = Env(("CERVELLO_WATCHER_FORCE_BACKFILL", "yes-please"));
+        var ex = Assert.Throws<InvalidOperationException>(() => WatcherConfig.From(env));
+        Assert.Contains("CERVELLO_WATCHER_FORCE_BACKFILL", ex.Message);
+    }
 }
