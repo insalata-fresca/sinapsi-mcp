@@ -75,26 +75,24 @@ public sealed class NeverGuessAcceptanceTests
             ("guilhem", TestVectors.Axis(0)),
             ("marco", TestVectors.Axis(30)),
             ("mara", TestVectors.TiltedFromAxis(30, 31, 0.999))); // sits on top of marco → both ≥ auto
-        var prior = new FilenameParticipantPriorSource(new Dictionary<string, PriorCandidates>
-        {
-            [Rec] = new PriorCandidates(["guilhem"], isStrong: true),
-        });
-        var attribution = new AttributionStage(store, prior, new DecisionPolicy(DecisionBands.Default, PolicyPhase.GradedAutoApply));
+        // No participant hint → the ungrounded speaker (s3) becomes a local "Unknown speaker N".
+        var attribution = new AttributionStage(store, new DecisionPolicy(DecisionBands.Default, PolicyPhase.GradedAutoApply));
 
-        var verdicts = await attribution.ResolveAsync(Rec, new[]
+        var verdicts = (await attribution.ResolveAsync(Rec, new[]
         {
-            Cluster("s1", TestVectors.TiltedFromAxis(0, 5, 0.9)),   // clean → guilhem (auto)
+            Cluster("s1", TestVectors.TiltedFromAxis(0, 5, 0.9)),   // clean → guilhem (enrolled, auto)
             Cluster("s2", TestVectors.TiltedFromAxis(30, 40, 0.95)),// ambiguous marco/mara → escalate
-            Cluster("s3", TestVectors.Axis(99)),                    // orthogonal, no prior → omit (unidentified)
-        });
+            Cluster("s3", TestVectors.Axis(99)),                    // orthogonal, no enrolled match, no hint
+        })).Verdicts;
 
         // Sanity on the decision itself: s1 resolves cleanly; s2 + s3 are NEVER auto-applied
-        // (s2 ambiguous; s3 below-reject — a prior alone can never assert identity at ~0 voice conf).
+        // (s2 ambiguous enrolled; s3 no enrolled match + no hint → local "Unknown speaker N").
         Assert.Equal(AttributionOutcome.AutoApplied, verdicts[0].Outcome);
         Assert.Equal(AttributionOutcome.OpenPoint, verdicts[1].Outcome);
         Assert.NotEqual(AttributionOutcome.AutoApplied, verdicts[2].Outcome); // never guessed
         Assert.Null(verdicts[2].Person);   // no identity asserted for the ungrounded speaker
         Assert.Null(verdicts[2].Basis);    // no basis fabricated
+        Assert.Equal("Unknown speaker 3", verdicts[2].LocalUnknownLabel); // recording-local label
 
         // Apply.
         var pr = new FakeMapPrWriter();
@@ -108,9 +106,10 @@ public sealed class NeverGuessAcceptanceTests
         var known = new HashSet<string>(StringComparer.Ordinal) { "guilhem", "marco", "mara", Rec };
         AssertNeverGuessed(pr.LastPr, known);
 
-        // s2 (ambiguous) + s3 (below-reject + prior) both escalate to open-points — never the map.
-        Assert.Equal(2, applied.OpenPoints);
-        Assert.Equal(0, applied.Omitted);
+        // s2 (ambiguous enrolled) escalates to an open-point; s3 (no match, no hint) is a local unknown
+        // (omitted) — neither reaches the map.
+        Assert.Equal(1, applied.OpenPoints);
+        Assert.Equal(1, applied.Omitted);
         // Exactly one applied attribution — guilhem — carries an auto:// basis.
         var m = Assert.Single(pr.LastPr!.Mutations);
         Assert.Contains("guilhem", m.DossierPath);
@@ -164,16 +163,16 @@ public sealed class NeverGuessAcceptanceTests
     public async Task Below_reject_no_prior_is_left_unidentified_never_guessed()
     {
         var store = await EnrolledStore(("guilhem", TestVectors.Axis(0)));
-        var attribution = new AttributionStage(store,
-            new FilenameParticipantPriorSource(new Dictionary<string, PriorCandidates> { [Rec] = PriorCandidates.None }),
-            new DecisionPolicy(DecisionBands.Default, PolicyPhase.GradedAutoApply));
+        // No participant hint → the ungrounded voice becomes a local "Unknown speaker N" (omitted).
+        var attribution = new AttributionStage(store, new DecisionPolicy(DecisionBands.Default, PolicyPhase.GradedAutoApply));
 
-        var verdicts = await attribution.ResolveAsync(Rec, new[] { Cluster("s1", TestVectors.Axis(88)) });
+        var verdicts = (await attribution.ResolveAsync(Rec, new[] { Cluster("s1", TestVectors.Axis(88)) })).Verdicts;
 
         var v = Assert.Single(verdicts);
         Assert.Equal(AttributionOutcome.Omitted, v.Outcome);
         Assert.Null(v.Person);      // no identity asserted
         Assert.Null(v.Basis);       // no basis fabricated
+        Assert.Equal("Unknown speaker 1", v.LocalUnknownLabel);
 
         // And it never reaches map/.
         var pr = new FakeMapPrWriter();

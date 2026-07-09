@@ -167,6 +167,29 @@ public sealed record AttributionVerdict
     public static AttributionVerdict Omitted(string mergedSpeaker, string reason) =>
         new(mergedSpeaker, AttributionOutcome.Omitted, null, 0.0, null, null, reason);
 
+    /// <summary>
+    /// A recording-LOCAL "Unknown speaker N" label (enroll-based attribution): no enrolled match and no
+    /// unambiguous participant hint, so the voice is left unidentified but given a deterministic local
+    /// handle (stable per <c>(recordingId, clusterIndex)</c>) and FLAGGED. It writes NO name to
+    /// <c>map/</c> (an <see cref="AttributionOutcome.Omitted"/> outcome — the never-fabricate floor); the
+    /// label is carried in <see cref="LocalUnknownLabel"/> for the transcript's local rendering. There is
+    /// NO cross-recording linking — the label is meaningful only within this recording.
+    /// </summary>
+    public static AttributionVerdict UnknownLocal(string mergedSpeaker, string localLabel)
+    {
+        if (string.IsNullOrWhiteSpace(localLabel))
+            throw new ArgumentException("UnknownLocal requires a non-empty local label", nameof(localLabel));
+        return new(mergedSpeaker, AttributionOutcome.Omitted, null, 0.0, null, null,
+            $"unknown speaker (no enrolled match, no unambiguous participant hint) — local label '{localLabel}'")
+        { LocalUnknownLabel = localLabel };
+    }
+
+    /// <summary>
+    /// The recording-LOCAL "Unknown speaker N" label, present ONLY for an <see cref="UnknownLocal"/>
+    /// verdict (else null). Deterministic per <c>(recordingId, clusterIndex)</c>; never cross-recording.
+    /// </summary>
+    public string? LocalUnknownLabel { get; init; }
+
     private static void RequireApplied(string person, string sourceRef, ConfirmationBasis basis)
     {
         if (string.IsNullOrWhiteSpace(person))
