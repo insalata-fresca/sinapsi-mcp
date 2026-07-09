@@ -70,10 +70,14 @@ public sealed class EnrichmentPipeline
     private readonly EnrichLinkStage _enrich;
     private readonly ApplyStage _apply;
     private readonly IRecordingFactSource _facts;
+    private readonly IGitPublisher _gitPublisher;
     private readonly ILogger _log;
 
     /// <summary>The auto-basis version the applied-timeline mutations carry (lint R9 provenance).</summary>
     private const string TimelineBasisVersion = "v1";
+
+    /// <summary>The recordings manifest git path (DESIGN §3) — republished so the indexer sees the roster.</summary>
+    private const string ManifestPath = "recordings/manifest.yaml";
 
     public EnrichmentPipeline(
         IngestStage ingest,
@@ -86,6 +90,7 @@ public sealed class EnrichmentPipeline
         EnrichLinkStage enrich,
         ApplyStage apply,
         IRecordingFactSource facts,
+        IGitPublisher? gitPublisher = null,
         ILogger<EnrichmentPipeline>? logger = null)
     {
         _ingest = ingest ?? throw new ArgumentNullException(nameof(ingest));
@@ -98,6 +103,9 @@ public sealed class EnrichmentPipeline
         _enrich = enrich ?? throw new ArgumentNullException(nameof(enrich));
         _apply = apply ?? throw new ArgumentNullException(nameof(apply));
         _facts = facts ?? throw new ArgumentNullException(nameof(facts));
+        // Default to a no-op: a test that constructs the pipeline directly (no publisher) stays
+        // offline; the live host wires the ForgejoContentsPublisher (searchable-substrate push).
+        _gitPublisher = gitPublisher ?? new NoOpGitPublisher();
         _log = logger ?? NullLogger<EnrichmentPipeline>.Instance;
     }
 
@@ -213,6 +221,15 @@ public sealed class EnrichmentPipeline
             var applied = await _apply.ApplyAsync(applyInput, ct).ConfigureAwait(false);
             state = Advance(state, EnrichmentState.GraphPrOpened, transitions); // → graph_pr_opened
 
+            // ── 10. PUBLISH the SEARCHABLE SUBSTRATE to ste/cervello git (independent of the map-PR
+            //     dry-run gate). The verbatim transcript + the enrichment bundle + the manifest are
+            //     grounded, NON-attribution artifacts (git paths per DESIGN §3); pushing them lets the
+            //     strictly-git-sourced indexer (:8009) index the recording so recall returns real
+            //     content. Audio + voiceprints NEVER enter git (LINT R7 — enforced in the publisher).
+            //     Best-effort: a push failure is logged but does NOT fail the drain or roll back state
+            //     (the recording is already fully enriched on-CT; the next run/rescan re-publishes).
+            await PublishSearchableSubstrateAsync(recording.Id, bundleId, ct).ConfigureAwait(false);
+
             _log.LogInformation(
                 "pipeline {Key}: normalized → graph_pr_opened ({Mut} mutations, {Open} open-points, {Omit} omitted, pr={Pr})",
                 recording.IdempotencyKey, applied.Mutations, applied.OpenPoints, applied.Omitted,
@@ -232,6 +249,47 @@ public sealed class EnrichmentPipeline
             _log.LogError(ex, "pipeline {Key}: failed → failed_retryable", recording.IdempotencyKey);
             transitions.Add(EnrichmentState.FailedRetryable);
             return PipelineOutcome.Failed(EnrichmentState.FailedRetryable, transitions, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Publish this recording's grounded, non-attribution artifacts to <c>ste/cervello</c> git so the
+    /// indexer can index them: the verbatim transcript (<c>recordings/transcripts/&lt;id&gt;.md</c>),
+    /// the enrichment bundle (<c>inbox/&lt;id&gt;/{data.json,bundle.md}</c>), and the manifest
+    /// (<c>recordings/manifest.yaml</c>). The publisher reads each from the CT working tree, refuses
+    /// any never-git path (audio/voiceprints, LINT R7), and is a no-op for an unchanged/absent file.
+    /// Best-effort: never throws into the drain (searchability is decoupled from the enrich state).
+    /// </summary>
+    private async Task PublishSearchableSubstrateAsync(string recordingId, string bundleId, CancellationToken ct)
+    {
+        try
+        {
+            var paths = new List<string>
+            {
+                $"recordings/transcripts/{recordingId}.md",
+                $"inbox/{bundleId}/data.json",
+                $"inbox/{bundleId}/bundle.md",
+                ManifestPath,
+            };
+            var result = await _gitPublisher
+                .PublishAsync(new GitPublishRequest(recordingId, paths), ct)
+                .ConfigureAwait(false);
+            if (!result.WasNoOp)
+                _log.LogInformation(
+                    "pipeline {Rec}: published searchable substrate ({Count} file(s)) → indexer will re-index",
+                    recordingId, result.Pushed.Count);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // The recording is already fully enriched + its artifacts written on-CT; a failed push
+            // must NOT fail the drain or roll back §5 state. The next run/60-min rescan re-publishes.
+            _log.LogWarning(ex,
+                "pipeline {Rec}: searchable-substrate publish failed (non-fatal — will retry next run/rescan)",
+                recordingId);
         }
     }
 

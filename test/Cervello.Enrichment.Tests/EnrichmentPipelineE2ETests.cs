@@ -72,7 +72,8 @@ public sealed class EnrichmentPipelineE2ETests
         BuildPipelineAsync(
             PolicyPhase phase = PolicyPhase.EscalateOnly,
             IDiarizeEmbedClient? diarizeClient = null,
-            IReadOnlyList<CorrectionCandidate>? corrections = null)
+            IReadOnlyList<CorrectionCandidate>? corrections = null,
+            IGitPublisher? gitPublisher = null)
     {
         var ledger = new InMemoryEnrichmentLedger();
         var ingest = new IngestStage(ledger);
@@ -109,7 +110,8 @@ public sealed class EnrichmentPipelineE2ETests
 
         var facts = new FakeRecordingFactSource();
         var pipeline = new EnrichmentPipeline(
-            ingest, audio, transcribe, diarize, merge, attribution, correction, enrich, apply, facts);
+            ingest, audio, transcribe, diarize, merge, attribution, correction, enrich, apply, facts,
+            gitPublisher);
         return (pipeline, pr, points, ledger);
     }
 
@@ -163,6 +165,39 @@ public sealed class EnrichmentPipelineE2ETests
 
         // The open-points carry the ambiguity for the operator — the ONLY resolution path.
         Assert.Equal(3, (await points.ListPendingAsync()).Count);
+    }
+
+    // ── SEARCHABLE SUBSTRATE: a completed run PUBLISHES transcript + bundle + manifest to git ───────
+    [Fact]
+    public async Task A_completed_run_publishes_the_searchable_substrate_to_git()
+    {
+        var publisher = new FakeGitPublisher();
+        var (pipeline, _, _, _) = await BuildPipelineAsync(gitPublisher: publisher);
+
+        var outcome = await pipeline.RunAsync(Rec(), EnrichmentState.Normalized);
+
+        Assert.Equal(PipelineStatus.Completed, outcome.Status);
+        var request = Assert.Single(publisher.Requests);
+        Assert.Equal(RecId, request.RecordingId);
+        // The grounded, non-attribution artifacts the indexer needs — transcript + bundle + manifest.
+        Assert.Contains($"recordings/transcripts/{RecId}.md", request.RepoRelativePaths);
+        Assert.Contains($"inbox/{RecId}/data.json", request.RepoRelativePaths);
+        Assert.Contains($"inbox/{RecId}/bundle.md", request.RepoRelativePaths);
+        Assert.Contains("recordings/manifest.yaml", request.RepoRelativePaths);
+        // LINT R7: no audio / voiceprint path is ever handed to the publisher.
+        Assert.DoesNotContain(request.RepoRelativePaths, p =>
+            p.Contains("audio", StringComparison.Ordinal) || p.Contains("voiceprint", StringComparison.Ordinal));
+    }
+
+    [Fact] // a git-publish FAILURE is NON-FATAL: the recording still drains to graph_pr_opened
+    public async Task A_git_publish_failure_does_not_fail_the_drain()
+    {
+        var (pipeline, _, _, _) = await BuildPipelineAsync(gitPublisher: new ThrowingGitPublisher());
+
+        var outcome = await pipeline.RunAsync(Rec(), EnrichmentState.Normalized);
+
+        Assert.Equal(PipelineStatus.Completed, outcome.Status);
+        Assert.Equal(EnrichmentState.GraphPrOpened, outcome.State); // reached the terminal state anyway
     }
 
     // ── RATIFIED: a Google-base recording drains FULLY to graph_pr_opened with NO CT126 anywhere ────

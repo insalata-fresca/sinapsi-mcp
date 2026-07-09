@@ -91,6 +91,8 @@ public sealed class EnrichmentCompositionTests
         Assert.IsType<InMemoryCorrectionMapStore>(sp.GetRequiredService<ICorrectionMapStore>());
         Assert.IsType<InMemoryEnrichmentLedger>(sp.GetRequiredService<IEnrichmentLedger>());
         Assert.IsType<StaticBearerProvider>(sp.GetRequiredService<IBearerProvider>());
+        // No live git egress offline — the searchable-substrate publisher is a no-op.
+        Assert.IsType<NoOpGitPublisher>(sp.GetRequiredService<IGitPublisher>());
     }
 
     [Fact]
@@ -127,6 +129,8 @@ public sealed class EnrichmentCompositionTests
             Assert.IsType<Ct126ReAsrClient>(sp.GetRequiredService<IReAsrClient>());
             Assert.IsType<BrainApiCorrectionLlm>(sp.GetRequiredService<ICorrectionLlm>());
             Assert.IsType<ForgejoMapPrWriter>(sp.GetRequiredService<IMapPrWriter>());
+            // The searchable-substrate publisher is the LIVE forgejo contents pusher (recall fix §1).
+            Assert.IsType<ForgejoContentsPublisher>(sp.GetRequiredService<IGitPublisher>());
             Assert.IsType<CtPinStore>(sp.GetRequiredService<IPinStore>());
         }
         finally

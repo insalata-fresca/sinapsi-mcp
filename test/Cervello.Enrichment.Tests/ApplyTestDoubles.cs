@@ -21,6 +21,29 @@ internal sealed class FakeMapPrWriter : IMapPrWriter
     }
 }
 
+/// <summary>
+/// Capturing fake <see cref="IGitPublisher"/>: records the publish requests so a test can assert the
+/// pipeline pushes the searchable substrate (transcript + bundle + manifest) on a completed run,
+/// without any git/network. Reports the paths as "pushed".
+/// </summary>
+internal sealed class FakeGitPublisher : IGitPublisher
+{
+    public List<GitPublishRequest> Requests { get; } = [];
+
+    public Task<GitPublishResult> PublishAsync(GitPublishRequest request, CancellationToken ct = default)
+    {
+        Requests.Add(request);
+        return Task.FromResult(new GitPublishResult(request.RepoRelativePaths, Array.Empty<string>(), WasNoOp: false));
+    }
+}
+
+/// <summary>A publisher that throws — proving a push failure is NON-FATAL to the drain.</summary>
+internal sealed class ThrowingGitPublisher : IGitPublisher
+{
+    public Task<GitPublishResult> PublishAsync(GitPublishRequest request, CancellationToken ct = default) =>
+        throw new GitPublishException("simulated forgejo egress failure");
+}
+
 /// <summary>Fake pin store: deterministic sha for an external ref (no real fetch).</summary>
 internal sealed class FakePinStore : IPinStore
 {
