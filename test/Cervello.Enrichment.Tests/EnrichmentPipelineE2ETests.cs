@@ -168,6 +168,9 @@ public sealed class EnrichmentPipelineE2ETests
     }
 
     // ── SEARCHABLE SUBSTRATE: a completed run PUBLISHES transcript + bundle + manifest to git ───────
+    // (M2 — decouple transcript-publish) TWO publishes now happen: an EARLY base-only one (right after
+    // BaseTranscribe) and the ENRICHED one (stage 10, after graph_pr_opened). This test asserts the
+    // final/enriched publish's shape; the early-publish ordering + idempotency are their own tests below.
     [Fact]
     public async Task A_completed_run_publishes_the_searchable_substrate_to_git()
     {
@@ -177,7 +180,8 @@ public sealed class EnrichmentPipelineE2ETests
         var outcome = await pipeline.RunAsync(Rec(), EnrichmentState.Normalized);
 
         Assert.Equal(PipelineStatus.Completed, outcome.Status);
-        var request = Assert.Single(publisher.Requests);
+        Assert.Equal(2, publisher.Requests.Count); // early base-only + enriched
+        var request = publisher.Requests[^1]; // the LAST (enriched) publish carries the full set
         Assert.Equal(RecId, request.RecordingId);
         // The grounded, non-attribution artifacts the indexer needs — transcript + bundle + manifest.
         Assert.Contains($"recordings/transcripts/{RecId}.md", request.RepoRelativePaths);
@@ -187,6 +191,117 @@ public sealed class EnrichmentPipelineE2ETests
         // LINT R7: no audio / voiceprint path is ever handed to the publisher.
         Assert.DoesNotContain(request.RepoRelativePaths, p =>
             p.Contains("audio", StringComparison.Ordinal) || p.Contains("voiceprint", StringComparison.Ordinal));
+    }
+
+    // ── M2: the base transcript publishes EARLY — right after BaseTranscribe, BEFORE diarize runs ────
+    // (mission acceptance evidence #1: "a pipeline test where a recording with audio publishes the base
+    // transcript BEFORE DiarizeEmbed runs — assert publish call ordering + that the indexer-visible path
+    // exists pre-attribution"). A diarize client that snapshots "was the transcript already published?"
+    // at the moment it's called proves the ordering directly (not just call counts).
+    [Fact]
+    public async Task M2_the_base_transcript_publishes_before_diarize_embed_runs()
+    {
+        var publisher = new FakeGitPublisher();
+        var basePathPublishedBeforeDiarize = false;
+        var diarizeClient = FakeDiarizeEmbedClient.Returning(_ =>
+        {
+            // Snapshot at the instant DiarizeEmbed is invoked: the early base-only publish (stage 3b)
+            // must already have happened — proving the ordering, not just that both eventually occur.
+            basePathPublishedBeforeDiarize = publisher.Requests.Any(r =>
+                r.RepoRelativePaths.Contains($"recordings/transcripts/{RecId}.md"));
+            return DiarizeResponse();
+        });
+        var (pipeline, _, _, _) = await BuildPipelineAsync(diarizeClient: diarizeClient, gitPublisher: publisher);
+
+        var outcome = await pipeline.RunAsync(Rec(), EnrichmentState.Normalized);
+
+        Assert.Equal(PipelineStatus.Completed, outcome.Status);
+        Assert.True(basePathPublishedBeforeDiarize,
+            "the base transcript must be published (indexer-visible) BEFORE DiarizeEmbed is even called");
+
+        // The FIRST publish call is the early one: base-only (no bundle/manifest paths), fired before
+        // any attribution/correction/apply work — the indexer can already see the transcript.
+        var early = publisher.Requests[0];
+        Assert.Equal(RecId, early.RecordingId);
+        Assert.Equal([$"recordings/transcripts/{RecId}.md"], early.RepoRelativePaths);
+
+        // R7 still holds on the early call too.
+        Assert.DoesNotContain(early.RepoRelativePaths, p =>
+            p.Contains("audio", StringComparison.Ordinal) || p.Contains("voiceprint", StringComparison.Ordinal));
+
+        // The run still reaches graph_pr_opened and still fires the later enriched publish (2 total).
+        Assert.Equal(2, publisher.Requests.Count);
+    }
+
+    // ── M2: the later ENRICHED publish UPDATES the same transcript path — never a duplicate/conflict ──
+    // (mission acceptance evidence #2: "the stage-10 re-publish still fires; R7 still refuses audio; no
+    // re-transcription"). ForgejoContentsPublisher's GET-sha → POST(create)/PUT(update) contract makes
+    // this idempotent BY CONSTRUCTION at the adapter layer; here we assert the pipeline SEAM emits both
+    // calls over the identical repo-relative path (never a different path per call), which is exactly
+    // what lets create-or-update-by-sha treat the second as an update of the first, not a new file.
+    [Fact]
+    public async Task M2_the_enriched_republish_updates_the_same_transcript_path_not_a_duplicate()
+    {
+        var publisher = new FakeGitPublisher();
+        var (pipeline, _, _, _) = await BuildPipelineAsync(gitPublisher: publisher);
+
+        var outcome = await pipeline.RunAsync(Rec(), EnrichmentState.Normalized);
+
+        Assert.Equal(PipelineStatus.Completed, outcome.Status);
+        Assert.Equal(2, publisher.Requests.Count);
+
+        var transcriptPath = $"recordings/transcripts/{RecId}.md";
+        // BOTH the early (baseOnly) and the enriched (stage 10) publish target the SAME repo-relative
+        // transcript path — never a distinct/versioned path — so the adapter's create-or-update-by-sha
+        // updates ONE blob in place across the two calls instead of creating two files.
+        Assert.All(publisher.Requests, r => Assert.Contains(transcriptPath, r.RepoRelativePaths));
+        // No re-transcription: the transcript text itself is written ONCE by BaseTranscribeStage
+        // (proved by A_google_base_recording_drains_to_graph_pr_opened_without_ct126 / the CT126-absent
+        // tests) — M2 only adds WHEN the already-persisted file is pushed, never re-derives its content.
+
+        // No attribution/diarize/sidecar behavior changed by the early publish: still 1 diarize call,
+        // still reaches graph_pr_opened with the same never-guess floor as the baseline E2E test.
+        var apply = Assert.IsType<ApplyResult>(outcome.Apply);
+        Assert.Equal(3, apply.OpenPoints); // unchanged from the headline escalate-only assertion
+    }
+
+    // ── M2: a TRANSCRIPT-ONLY recording (no audio, diarize/merge/attribution never even attempted)
+    //    ALSO gets the early base-only publish — fast recall must not depend on audio being present. ───
+    [Fact]
+    public async Task M2_a_transcript_only_recording_also_publishes_the_base_transcript_early()
+    {
+        var ledger = new InMemoryEnrichmentLedger();
+        var store = await EnrolledStore();
+        var pr = new FakeMapPrWriter();
+        var points = new InMemoryOpenPointStore();
+        var publisher = new FakeGitPublisher();
+        var audio = new FakeAudioSource(unavailable: true); // would throw if ever fetched
+        var diarizeSpy = FakeDiarizeEmbedClient.Returning(DiarizeResponse()); // would prove ordering if called
+
+        var pipeline = new EnrichmentPipeline(
+            new IngestStage(ledger),
+            audio,
+            new BaseTranscribeStage(new FakeBaseTranscriptSource(new BaseTranscript("meeting notes verbatim", "fr")), new InMemoryTranscriptStore()),
+            new DiarizeEmbedStage(diarizeSpy),
+            new ClusterMergeStage(),
+            new AttributionStage(store, new FilenameParticipantPriorSource(new Dictionary<string, PriorCandidates>()), new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
+            new CorrectionStage(new FakeCorrectionLlm(Array.Empty<CorrectionCandidate>()), new InMemoryCorrectionMapStore(), new FakeReAsrClient(), new CorrectionGrader(PolicyPhase.EscalateOnly)),
+            new EnrichLinkStage(new FakeLinkResolver()),
+            new ApplyStage(new CervelloGraphWriter(pr, new FakeLinkResolver(), new FakePinStore()), points),
+            new FakeRecordingFactSource(),
+            publisher);
+
+        var outcome = await pipeline.RunAsync(TranscriptOnlyRec(), EnrichmentState.Normalized);
+
+        Assert.Equal(PipelineStatus.Completed, outcome.Status);
+        Assert.Equal(0, audio.Fetches);
+        Assert.Equal(0, diarizeSpy.Calls); // audio stages skipped entirely — early publish is independent of them
+
+        // Both the early base-only and the later enriched publish fired for a transcript-only recording.
+        Assert.Equal(2, publisher.Requests.Count);
+        var early = publisher.Requests[0];
+        Assert.Equal($"20260704-notes", early.RecordingId);
+        Assert.Equal(["recordings/transcripts/20260704-notes.md"], early.RepoRelativePaths);
     }
 
     [Fact] // a git-publish FAILURE is NON-FATAL: the recording still drains to graph_pr_opened
@@ -468,8 +583,10 @@ public sealed class EnrichmentPipelineE2ETests
         Assert.Equal(3, apply.OpenPoints);
         Assert.Equal(3, (await points.ListPendingAsync()).Count);
 
-        // The base transcript STILL published to git (the searchable substrate reached the indexer).
-        var req = Assert.Single(publisher.Requests);
+        // The base transcript STILL published to git (the searchable substrate reached the indexer) —
+        // early base-only publish (M2) PLUS the stage-10 enriched publish, both over the same drain.
+        Assert.Equal(2, publisher.Requests.Count);
+        var req = publisher.Requests[^1]; // the enriched (full-set) publish
         Assert.Contains($"recordings/transcripts/{RecId}.md", req.RepoRelativePaths);
         Assert.Contains("recordings/manifest.yaml", req.RepoRelativePaths);
     }
@@ -506,9 +623,9 @@ public sealed class EnrichmentPipelineE2ETests
         Assert.Equal(PipelineStatus.Completed, outcome.Status);
         Assert.Equal(EnrichmentState.GraphPrOpened, outcome.State);
         Assert.DoesNotContain(EnrichmentState.FailedRetryable, outcome.StateTransitions);
-        // The transcript still published despite the correction 502.
-        var req = Assert.Single(publisher.Requests);
-        Assert.Contains($"recordings/transcripts/{RecId}.md", req.RepoRelativePaths);
+        // The transcript still published despite the correction 502 — early + enriched (M2).
+        Assert.Equal(2, publisher.Requests.Count);
+        Assert.All(publisher.Requests, req => Assert.Contains($"recordings/transcripts/{RecId}.md", req.RepoRelativePaths));
     }
 
     // ── a FULLY-SUCCESSFUL recording is UNCHANGED by the graceful wrapping (facts present, timeline written).
@@ -587,12 +704,14 @@ public sealed class EnrichmentPipelineE2ETests
         Assert.Equal(0, apply.OpenPoints); // no speaker to escalate
 
         // The transcript was PUBLISHED (searchable substrate) — the Google .txt persisted verbatim.
-        var req = Assert.Single(publisher.Requests);
+        // Transcript-only still gets BOTH the early base-only (M2) and the later enriched publish.
+        Assert.Equal(2, publisher.Requests.Count);
+        var req = publisher.Requests[^1];
         Assert.Contains($"recordings/transcripts/{req.RecordingId}.md", req.RepoRelativePaths);
         Assert.Equal("meeting notes verbatim", transcriptStore.Read(req.RecordingId)?.Markdown);
-        // LINT R7: no audio/voiceprint path published.
-        Assert.DoesNotContain(req.RepoRelativePaths, p =>
-            p.Contains("audio", StringComparison.Ordinal) || p.Contains("voiceprint", StringComparison.Ordinal));
+        // LINT R7: no audio/voiceprint path published (either call).
+        Assert.All(publisher.Requests, r => Assert.DoesNotContain(r.RepoRelativePaths, p =>
+            p.Contains("audio", StringComparison.Ordinal) || p.Contains("voiceprint", StringComparison.Ordinal)));
     }
 
     // ── AUDIO-ONLY: no Google .txt → BaseTranscribe transcribes via CT126 (BaseReTranscribeEnabled),

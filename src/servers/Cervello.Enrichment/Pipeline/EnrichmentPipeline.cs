@@ -22,7 +22,10 @@ namespace Cervello.Enrichment.Pipeline;
 ///   consume, fetched ONCE and threaded to both (never persisted git-side).</item>
 /// <item><b>BaseTranscribe</b> (<see cref="BaseTranscribeStage"/>) — the recording's Google <c>.txt</c>
 ///   (the ratified base) → the immutable <see cref="BaseTranscript"/> (the correction substrate),
-///   persisted once. CT126 is NOT called for the base (it is an optional, default-off fallback only).</item>
+///   persisted once. CT126 is NOT called for the base (it is an optional, default-off fallback only).
+///   Immediately after, an EARLY <c>baseOnly</c> <see cref="PublishSearchableSubstrateAsync"/> call
+///   (M2 — decouple transcript-publish) pushes JUST the transcript, independent of diarize/attribution/
+///   correction, so recall is fast — never gated behind the slower stages below.</item>
 /// <item><b>DiarizeEmbed</b> (<see cref="DiarizeEmbedStage"/>) — the SAME audio → per-speaker
 ///   <see cref="SpeakerCluster"/>s (segments + centroid embeddings). A transient sidecar fault →
 ///   <c>failed_retryable</c>; a malformed/undecodable one → <c>failed_terminal</c>.</item>
@@ -184,6 +187,19 @@ public sealed class EnrichmentPipeline
             // re-run reads the persisted base; the base is never rewritten, nothing is fabricated).
             var baseTranscript = baseResult.Transcript ?? new BaseTranscript("", recording.Language);
 
+            // ── 3b. EARLY PUBLISH: the base transcript, independent of diarize/attribution/correction ──
+            //     (M2 — decouple transcript-publish for fast recall). Push JUST
+            //     recordings/transcripts/<id>.md to the searchable substrate right after BaseTranscribe,
+            //     so cervello_search / recall sees the recording within ~8s of transcription instead of
+            //     waiting behind the full diarize→attribute→correct→apply chain (which can run minutes).
+            //     Runs for EVERY recording that reaches this point — including transcript-only ones
+            //     (audio stages 4-6 are skipped below, but the base still needs to be searchable fast).
+            //     The stage-10 publish below re-publishes the FULL set (transcript + bundle + manifest)
+            //     once enrichment completes — ForgejoContentsPublisher's create-or-update-by-sha makes
+            //     the second push update the same blob in place, never a duplicate. Best-effort: never
+            //     throws into the drain (see PublishSearchableSubstrateAsync).
+            await PublishSearchableSubstrateAsync(recording.Id, bundleId: null, baseOnly: true, ct).ConfigureAwait(false);
+
             // ── 4-6. AUDIO STAGES (diarize → merge → attribute) — SKIPPED for a transcript-only ────
             // recording (no audio → no speakers → no attribution, the never-guess floor). Otherwise
             // run them normally; a 0-segment audio result already degrades gracefully (empty clusters
@@ -308,7 +324,7 @@ public sealed class EnrichmentPipeline
             //     content. Audio + voiceprints NEVER enter git (LINT R7 — enforced in the publisher).
             //     Best-effort: a push failure is logged but does NOT fail the drain or roll back state
             //     (the recording is already fully enriched on-CT; the next run/rescan re-publishes).
-            await PublishSearchableSubstrateAsync(recording.Id, bundleId, ct).ConfigureAwait(false);
+            await PublishSearchableSubstrateAsync(recording.Id, bundleId, baseOnly: false, ct).ConfigureAwait(false);
 
             _log.LogInformation(
                 "pipeline {Key}: normalized → graph_pr_opened ({Mut} mutations, {Open} open-points, {Omit} omitted, pr={Pr})",
@@ -334,30 +350,41 @@ public sealed class EnrichmentPipeline
 
     /// <summary>
     /// Publish this recording's grounded, non-attribution artifacts to <c>ste/cervello</c> git so the
-    /// indexer can index them: the verbatim transcript (<c>recordings/transcripts/&lt;id&gt;.md</c>),
+    /// indexer can index them. When <paramref name="baseOnly"/> is <see langword="true"/> (the M2 EARLY
+    /// publish, called right after <see cref="BaseTranscribeStage"/> — before diarize/attribution/
+    /// correction have run) only the verbatim transcript (<c>recordings/transcripts/&lt;id&gt;.md</c>)
+    /// is pushed, so recall is fast and never gated behind the slower audio/LLM stages; <paramref
+    /// name="bundleId"/> is not needed in that case. Otherwise (the stage-10 ENRICHED publish, after
+    /// <c>graph_pr_opened</c>) the full set is pushed: the transcript (now possibly corrected — same
+    /// path, so this second push UPDATES the blob the early call created rather than duplicating it),
     /// the enrichment bundle (<c>inbox/&lt;id&gt;/{data.json,bundle.md}</c>), and the manifest
-    /// (<c>recordings/manifest.yaml</c>). The publisher reads each from the CT working tree, refuses
-    /// any never-git path (audio/voiceprints, LINT R7), and is a no-op for an unchanged/absent file.
-    /// Best-effort: never throws into the drain (searchability is decoupled from the enrich state).
+    /// (<c>recordings/manifest.yaml</c>). <see cref="ForgejoContentsPublisher"/> is a GET-sha →
+    /// POST(create)/PUT(update)-by-sha adapter, so the two calls over the SAME transcript path are
+    /// idempotent by construction: the first call creates (no prior sha), the second reads the sha the
+    /// first call left and updates in place — never a conflict, never a duplicate. The publisher reads
+    /// each path from the CT working tree, refuses any never-git path (audio/voiceprints, LINT R7), and
+    /// is a no-op for an unchanged/absent file. Best-effort: never throws into the drain (searchability
+    /// is decoupled from the enrich state).
     /// </summary>
-    private async Task PublishSearchableSubstrateAsync(string recordingId, string bundleId, CancellationToken ct)
+    private async Task PublishSearchableSubstrateAsync(
+        string recordingId, string? bundleId, bool baseOnly, CancellationToken ct)
     {
         try
         {
-            var paths = new List<string>
+            var paths = new List<string> { $"recordings/transcripts/{recordingId}.md" };
+            if (!baseOnly)
             {
-                $"recordings/transcripts/{recordingId}.md",
-                $"inbox/{bundleId}/data.json",
-                $"inbox/{bundleId}/bundle.md",
-                ManifestPath,
-            };
+                paths.Add($"inbox/{bundleId}/data.json");
+                paths.Add($"inbox/{bundleId}/bundle.md");
+                paths.Add(ManifestPath);
+            }
             var result = await _gitPublisher
                 .PublishAsync(new GitPublishRequest(recordingId, paths), ct)
                 .ConfigureAwait(false);
             if (!result.WasNoOp)
                 _log.LogInformation(
-                    "pipeline {Rec}: published searchable substrate ({Count} file(s)) → indexer will re-index",
-                    recordingId, result.Pushed.Count);
+                    "pipeline {Rec}: published {Kind} searchable substrate ({Count} file(s)) → indexer will re-index",
+                    recordingId, baseOnly ? "base-only" : "enriched", result.Pushed.Count);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
