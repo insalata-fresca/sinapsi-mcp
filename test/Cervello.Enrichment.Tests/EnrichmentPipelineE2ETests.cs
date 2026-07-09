@@ -90,11 +90,7 @@ public sealed class EnrichmentPipelineE2ETests
         var merge = new ClusterMergeStage();
 
         var store = await EnrolledStore();
-        var prior = new FilenameParticipantPriorSource(new Dictionary<string, PriorCandidates>
-        {
-            [RecId] = new PriorCandidates(["guilhem"], isStrong: true),
-        });
-        var attribution = new AttributionStage(store, prior, new DecisionPolicy(DecisionBands.Default, phase));
+        var attribution = new AttributionStage(store, new DecisionPolicy(DecisionBands.Default, phase));
 
         var correction = new CorrectionStage(
             new FakeCorrectionLlm(corrections ?? Array.Empty<CorrectionCandidate>()),
@@ -150,10 +146,11 @@ public sealed class EnrichmentPipelineE2ETests
         // The omitted (orphan) speaker s3 is NOT proposed as an attribution (never guessed a name).
         Assert.DoesNotContain(bundle.Enrichment.Attribution, a => a.Segment == "s3");
 
-        // 3. Escalate-only holds: the ambiguous s2 + the below-reject s3 escalate; the clean 0.90 s1
-        //    match STILL escalates under escalate-only. So all three speakers → open-points, NONE auto-applied.
+        // 3. Escalate-only holds: the clean s1 enrolled match STILL escalates; the ambiguous s2 escalates;
+        //    the orphan s3 (no enrolled match, no participant hint) is a LOCAL "Unknown speaker N" (omitted,
+        //    never an open-point — the descoped model does not cross-recording-link an unknown). NONE auto-applied.
         var apply = Assert.IsType<ApplyResult>(outcome.Apply);
-        Assert.Equal(3, apply.OpenPoints);      // s1 (clean, escalated), s2 (ambiguous), s3 (below-reject)
+        Assert.Equal(2, apply.OpenPoints);      // s1 (clean enrolled, escalated) + s2 (ambiguous)
         Assert.Equal(0, apply.Mutations);       // nothing auto-applied under escalate-only
 
         // 4. Map-PR is dry-run: no attribution mutation reached map/ (the ONLY mutations would be
@@ -164,8 +161,9 @@ public sealed class EnrichmentPipelineE2ETests
         // 5. Never-guess floor end-to-end: whatever (if anything) reached map/ is sourced + basis'd.
         AssertNeverGuessed(pr.LastPr, new HashSet<string>(StringComparer.Ordinal) { "guilhem", "marco", "mara", RecId });
 
-        // The open-points carry the ambiguity for the operator — the ONLY resolution path.
-        Assert.Equal(3, (await points.ListPendingAsync()).Count);
+        // The open-points carry the ambiguity for the operator (s1 escalated + s2 ambiguous); the orphan
+        // s3 is a local unknown, not an open-point.
+        Assert.Equal(2, (await points.ListPendingAsync()).Count);
     }
 
     // ── SEARCHABLE SUBSTRATE: a completed run PUBLISHES transcript + bundle + manifest to git ───────
@@ -263,7 +261,7 @@ public sealed class EnrichmentPipelineE2ETests
         // No attribution/diarize/sidecar behavior changed by the early publish: still 1 diarize call,
         // still reaches graph_pr_opened with the same never-guess floor as the baseline E2E test.
         var apply = Assert.IsType<ApplyResult>(outcome.Apply);
-        Assert.Equal(3, apply.OpenPoints); // unchanged from the headline escalate-only assertion
+        Assert.Equal(2, apply.OpenPoints); // unchanged from the headline escalate-only assertion (s3 = local unknown)
     }
 
     // ── M2: a TRANSCRIPT-ONLY recording (no audio, diarize/merge/attribution never even attempted)
@@ -285,7 +283,7 @@ public sealed class EnrichmentPipelineE2ETests
             new BaseTranscribeStage(new FakeBaseTranscriptSource(new BaseTranscript("meeting notes verbatim", "fr")), new InMemoryTranscriptStore()),
             new DiarizeEmbedStage(diarizeSpy),
             new ClusterMergeStage(),
-            new AttributionStage(store, new FilenameParticipantPriorSource(new Dictionary<string, PriorCandidates>()), new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
+            new AttributionStage(store,  new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
             new CorrectionStage(new FakeCorrectionLlm(Array.Empty<CorrectionCandidate>()), new InMemoryCorrectionMapStore(), new FakeReAsrClient(), new CorrectionGrader(PolicyPhase.EscalateOnly)),
             new EnrichLinkStage(new FakeLinkResolver()),
             new ApplyStage(new CervelloGraphWriter(pr, new FakeLinkResolver(), new FakePinStore()), points),
@@ -336,8 +334,7 @@ public sealed class EnrichmentPipelineE2ETests
                 new InMemoryTranscriptStore()),
             new DiarizeEmbedStage(FakeDiarizeEmbedClient.Returning(DiarizeResponse())),
             new ClusterMergeStage(),
-            new AttributionStage(store,
-                new FilenameParticipantPriorSource(new Dictionary<string, PriorCandidates> { [RecId] = new PriorCandidates(["guilhem"], true) }),
+            new AttributionStage(store, 
                 new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
             // A garbled span is present, but re-ASR is DISABLED and NO IReAsrClient is wired → the
             // span is left as-is (omitted), and the drain completes without CT126.
@@ -396,6 +393,44 @@ public sealed class EnrichmentPipelineE2ETests
         AssertNeverGuessed(pr.LastPr, new HashSet<string>(StringComparer.Ordinal) { "guilhem", "marco", "mara", RecId });
     }
 
+    // ── WORST CASE (enroll-based descope): a recording whose voices match NO enrolled print and have NO
+    //    participant hint still drains fully to graph_pr_opened, labelling every voice a LOCAL
+    //    "Unknown speaker N" (omitted — no map write, no fabrication, no cross-recording link). The
+    //    pipeline never blocks. ─────────────────────────────────────────────────────────────────────────
+    [Fact]
+    public async Task Worst_case_all_unknown_voices_drains_with_local_unknown_labels_never_blocking()
+    {
+        var ledger = new InMemoryEnrichmentLedger();
+        var store = new InMemoryVoiceprintStore(EnrollmentAllowlist.Empty); // nobody enrolled
+        var pr = new FakeMapPrWriter();
+        var points = new InMemoryOpenPointStore();
+
+        // No IParticipantHintSource wired (null) → no hint. The 3 diarized voices all become local unknowns.
+        var pipeline = new EnrichmentPipeline(
+            new IngestStage(ledger),
+            new FakeAudioSource(SynthAudio),
+            new BaseTranscribeStage(new FakeBaseTranscriptSource(new BaseTranscript("standup transcript", "fr")), new InMemoryTranscriptStore()),
+            new DiarizeEmbedStage(FakeDiarizeEmbedClient.Returning(DiarizeResponse())),
+            new ClusterMergeStage(),
+            new AttributionStage(store, new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
+            new CorrectionStage(new FakeCorrectionLlm(Array.Empty<CorrectionCandidate>()), new InMemoryCorrectionMapStore(), new FakeReAsrClient(), new CorrectionGrader(PolicyPhase.EscalateOnly)),
+            new EnrichLinkStage(new FakeLinkResolver()),
+            new ApplyStage(new CervelloGraphWriter(pr, new FakeLinkResolver(), new FakePinStore()), points),
+            new FakeRecordingFactSource());
+
+        var outcome = await pipeline.RunAsync(Rec(), EnrichmentState.Normalized);
+
+        // The pipeline reached graph_pr_opened — never blocked despite every voice being unknown.
+        Assert.Equal(PipelineStatus.Completed, outcome.Status);
+        Assert.Equal(EnrichmentState.GraphPrOpened, outcome.State);
+        var apply = Assert.IsType<ApplyResult>(outcome.Apply);
+        // No enrolled match + no hint → all local unknowns (omitted): 0 map writes, 0 open-points.
+        Assert.Equal(0, apply.Mutations);
+        Assert.Equal(0, apply.OpenPoints);
+        Assert.Null(pr.LastPr);                          // nothing reached map/
+        Assert.Empty(await points.ListPendingAsync());   // no open-points — unknowns are local, not escalated
+    }
+
     // ── graded phase: the clean s1 auto-applies with a valid basis; s2/s3 still escalate ────────────
     [Fact]
     public async Task Under_graded_auto_apply_the_clean_match_reaches_map_with_a_valid_basis()
@@ -406,9 +441,9 @@ public sealed class EnrichmentPipelineE2ETests
 
         Assert.Equal(EnrichmentState.GraphPrOpened, outcome.State);
         var apply = Assert.IsType<ApplyResult>(outcome.Apply);
-        // s1 → guilhem auto-applied; s2 ambiguous + s3 below-reject → open-points.
+        // s1 → guilhem auto-applied; s2 ambiguous → open-point; s3 (no match, no hint) → local unknown (omitted).
         Assert.Equal(1, apply.Mutations);
-        Assert.Equal(2, apply.OpenPoints);
+        Assert.Equal(1, apply.OpenPoints);
         Assert.NotNull(apply.Pr); // a (fake) dry-run-analogue PR handle for the applied fact
 
         // The applied fact is sourced + basis'd + not invented (never-guess held even when writing).
@@ -539,7 +574,7 @@ public sealed class EnrichmentPipelineE2ETests
             new BaseTranscribeStage(new FakeBaseTranscriptSource(new BaseTranscript("x", "fr")), new InMemoryTranscriptStore()),
             new DiarizeEmbedStage(FakeDiarizeEmbedClient.Returning(DiarizeResponse())),
             new ClusterMergeStage(),
-            new AttributionStage(store, new FilenameParticipantPriorSource(new Dictionary<string, PriorCandidates>()), new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
+            new AttributionStage(store,  new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
             new CorrectionStage(new FakeCorrectionLlm(Array.Empty<CorrectionCandidate>()), new InMemoryCorrectionMapStore(), new FakeReAsrClient(), new CorrectionGrader(PolicyPhase.EscalateOnly)),
             new EnrichLinkStage(new FakeLinkResolver()),
             new ApplyStage(new CervelloGraphWriter(new FakeMapPrWriter(), new FakeLinkResolver(), new FakePinStore()), new InMemoryOpenPointStore()),
@@ -582,7 +617,7 @@ public sealed class EnrichmentPipelineE2ETests
             new BaseTranscribeStage(new FakeBaseTranscriptSource(new BaseTranscript("standup transcript", "fr")), new InMemoryTranscriptStore()),
             new DiarizeEmbedStage(FakeDiarizeEmbedClient.Returning(DiarizeResponse())),
             new ClusterMergeStage(),
-            new AttributionStage(store, new FilenameParticipantPriorSource(new Dictionary<string, PriorCandidates> { [RecId] = new PriorCandidates(["guilhem"], true) }), new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
+            new AttributionStage(store,  new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
             new CorrectionStage(new FakeCorrectionLlm(Array.Empty<CorrectionCandidate>()), new InMemoryCorrectionMapStore(), new FakeReAsrClient(), new CorrectionGrader(PolicyPhase.EscalateOnly)),
             new EnrichLinkStage(new FakeLinkResolver("guilhem", "marco", "mara")),
             new ApplyStage(new CervelloGraphWriter(pr, new FakeLinkResolver("guilhem", "marco", "mara"), new FakePinStore()), points),
@@ -615,8 +650,7 @@ public sealed class EnrichmentPipelineE2ETests
             new BaseTranscribeStage(new FakeBaseTranscriptSource(new BaseTranscript("standup transcript", "fr")), new InMemoryTranscriptStore()),
             new DiarizeEmbedStage(FakeDiarizeEmbedClient.Returning(DiarizeResponse())),
             new ClusterMergeStage(),
-            new AttributionStage(store,
-                new FilenameParticipantPriorSource(new Dictionary<string, PriorCandidates> { [RecId] = new PriorCandidates(["guilhem"], true) }),
+            new AttributionStage(store, 
                 new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
             new CorrectionStage(new FakeCorrectionLlm(Array.Empty<CorrectionCandidate>()), new InMemoryCorrectionMapStore(), new FakeReAsrClient(), new CorrectionGrader(PolicyPhase.EscalateOnly)),
             new EnrichLinkStage(new FakeLinkResolver("guilhem", "marco", "mara")),
@@ -638,9 +672,9 @@ public sealed class EnrichmentPipelineE2ETests
         var apply = Assert.IsType<ApplyResult>(outcome.Apply);
         Assert.Equal(0, apply.Mutations); // no timeline mutation (no derived facts) + escalate-only attributions
 
-        // The three diarized speakers still ESCALATE to open-points (open-points kept despite no facts).
-        Assert.Equal(3, apply.OpenPoints);
-        Assert.Equal(3, (await points.ListPendingAsync()).Count);
+        // s1 + s2 ESCALATE to open-points (kept despite no facts); s3 is a local unknown (omitted).
+        Assert.Equal(2, apply.OpenPoints);
+        Assert.Equal(2, (await points.ListPendingAsync()).Count);
 
         // The base transcript STILL published to git (the searchable substrate reached the indexer) —
         // early base-only publish (M2) PLUS the stage-10 enriched publish, both over the same drain.
@@ -667,8 +701,7 @@ public sealed class EnrichmentPipelineE2ETests
             new BaseTranscribeStage(new FakeBaseTranscriptSource(new BaseTranscript("standup transcript", "fr")), new InMemoryTranscriptStore()),
             new DiarizeEmbedStage(FakeDiarizeEmbedClient.Returning(DiarizeResponse())),
             new ClusterMergeStage(),
-            new AttributionStage(store,
-                new FilenameParticipantPriorSource(new Dictionary<string, PriorCandidates> { [RecId] = new PriorCandidates(["guilhem"], true) }),
+            new AttributionStage(store, 
                 new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
             new CorrectionStage(throwingCorrection, new InMemoryCorrectionMapStore(), new FakeReAsrClient(), new CorrectionGrader(PolicyPhase.EscalateOnly)),
             new EnrichLinkStage(new FakeLinkResolver("guilhem", "marco", "mara")),
@@ -737,7 +770,7 @@ public sealed class EnrichmentPipelineE2ETests
             new BaseTranscribeStage(new FakeBaseTranscriptSource(new BaseTranscript("meeting notes verbatim", "fr")), transcriptStore),
             new DiarizeEmbedStage(diarizeSpy),
             new ClusterMergeStage(),
-            new AttributionStage(store, new FilenameParticipantPriorSource(new Dictionary<string, PriorCandidates>()), new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
+            new AttributionStage(store,  new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
             new CorrectionStage(new FakeCorrectionLlm(Array.Empty<CorrectionCandidate>()), new InMemoryCorrectionMapStore(), new FakeReAsrClient(), new CorrectionGrader(PolicyPhase.EscalateOnly)),
             new EnrichLinkStage(new FakeLinkResolver()),
             new ApplyStage(new CervelloGraphWriter(pr, new FakeLinkResolver(), new FakePinStore()), points),
@@ -799,8 +832,7 @@ public sealed class EnrichmentPipelineE2ETests
                 reTranscribeEnabled: true),               // … and ENABLED (audio-only requires it ON)
             new DiarizeEmbedStage(diarizeSpy),
             new ClusterMergeStage(),
-            new AttributionStage(store,
-                new FilenameParticipantPriorSource(new Dictionary<string, PriorCandidates> { ["20260704-voicememo"] = new PriorCandidates(["guilhem"], true) }),
+            new AttributionStage(store, 
                 new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
             new CorrectionStage(new FakeCorrectionLlm(Array.Empty<CorrectionCandidate>()), new InMemoryCorrectionMapStore(), new FakeReAsrClient(), new CorrectionGrader(PolicyPhase.EscalateOnly)),
             new EnrichLinkStage(new FakeLinkResolver("guilhem", "marco", "mara")),
@@ -818,9 +850,9 @@ public sealed class EnrichmentPipelineE2ETests
         // … and the audio pipeline ran (diarize was called — audio IS present).
         Assert.Equal(1, diarizeSpy.Calls);
 
-        // Speakers were diarized + attributed (3 clusters → escalate-only → 3 open-points).
+        // Speakers were diarized + attributed (3 clusters → escalate-only → s1+s2 open-points; s3 local unknown).
         var apply = Assert.IsType<ApplyResult>(outcome.Apply);
-        Assert.Equal(3, apply.OpenPoints);
+        Assert.Equal(2, apply.OpenPoints);
     }
 
     // ── Guard: an AUDIO recording whose blob is genuinely MISSING still fails terminal (unchanged) —
@@ -836,7 +868,7 @@ public sealed class EnrichmentPipelineE2ETests
             new BaseTranscribeStage(new FakeBaseTranscriptSource(new BaseTranscript("x", "fr")), new InMemoryTranscriptStore()),
             new DiarizeEmbedStage(FakeDiarizeEmbedClient.Returning(DiarizeResponse())),
             new ClusterMergeStage(),
-            new AttributionStage(store, new FilenameParticipantPriorSource(new Dictionary<string, PriorCandidates>()), new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
+            new AttributionStage(store,  new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
             new CorrectionStage(new FakeCorrectionLlm(Array.Empty<CorrectionCandidate>()), new InMemoryCorrectionMapStore(), new FakeReAsrClient(), new CorrectionGrader(PolicyPhase.EscalateOnly)),
             new EnrichLinkStage(new FakeLinkResolver()),
             new ApplyStage(new CervelloGraphWriter(new FakeMapPrWriter(), new FakeLinkResolver(), new FakePinStore()), new InMemoryOpenPointStore()),

@@ -254,8 +254,17 @@ public sealed class EnrichmentPipeline
                         recording.IdempotencyKey);
                 }
 
-                // ── 6. ATTRIBUTION: merged clusters (centroids) → grounded verdicts ───────────────
-                attribution = await _attribution.ResolveAsync(recording.Id, merged, ct).ConfigureAwait(false);
+                // ── 6. ATTRIBUTION: merged clusters → enrolled-match / participant-hint / unknown verdicts
+                //     + any auto-ENROLLMENT PROPOSALS (proposals only — the enroll write stays behind the
+                //     escalate-only apply gate; M4 ships dark, the flip is M6).
+                var attributionResult = await _attribution.ResolveAsync(recording.Id, merged, ct).ConfigureAwait(false);
+                attribution = attributionResult.Verdicts;
+                if (attributionResult.EnrollmentProposals.Count > 0)
+                    _log.LogInformation(
+                        "pipeline {Key}: {N} auto-enrollment PROPOSAL(s) from participant hints (not written — " +
+                        "escalate-only gate holds until M6): {People}",
+                        recording.IdempotencyKey, attributionResult.EnrollmentProposals.Count,
+                        string.Join(", ", attributionResult.EnrollmentProposals.Select(p => p.PersonSlug)));
             }
             else
             {

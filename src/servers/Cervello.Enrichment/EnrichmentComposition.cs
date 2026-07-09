@@ -294,6 +294,12 @@ public static class EnrichmentComposition
         // map/people/<slug>.md (never invents a person). No network, no LLM.
         services.AddSingleton<IPriorSource>(_ => new ManifestPriorSource(repoRoot));
 
+        // IParticipantHintSource (enroll-based attribution): the ordered filename participant hint,
+        // grounded against map/people/<slug>.md. Used by AttributionStage for an unambiguous 1:1
+        // voice→participant assignment (+ an enroll proposal) when there is no enrolled match. A HINT
+        // only — never fabricates a name; the enroll write stays behind the escalate-only gate (M6).
+        services.AddSingleton<IParticipantHintSource>(_ => new FilenameParticipantHintSource(repoRoot));
+
         // (IRecordingFactSource is the typed brain-api HttpClient registered above.)
 
         // Pin store: the on-CT blob write + sha are live; the external fetch is the ONE remaining L2
