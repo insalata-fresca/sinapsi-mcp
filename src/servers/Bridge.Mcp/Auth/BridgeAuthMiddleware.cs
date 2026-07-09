@@ -149,7 +149,8 @@ public sealed class BridgeAuthMiddleware(
         {
             Mode     = "bearer",
             Subject  = "legacy-bearer",
-            Scopes   = LegacyScopes.All,
+            // Auto-granted set = LegacyScopes.All (+ cervello scopes iff CERVELLO_EXPOSED=true).
+            Scopes   = new HashSet<string>(LegacyScopes.Granted(config.CervelloExposed), StringComparer.Ordinal),
             RawToken = token,
         };
     }
@@ -163,7 +164,8 @@ public sealed class BridgeAuthMiddleware(
             token,
             signingKeys,
             config.ZitadelIssuer.TrimEnd('/'),
-            [config.McpResourceUri, config.ZitadelClientId]);
+            [config.McpResourceUri, config.ZitadelClientId],
+            config.CervelloExposed);
     }
 
     /// <summary>
@@ -180,7 +182,8 @@ public sealed class BridgeAuthMiddleware(
         string token,
         IEnumerable<SecurityKey> signingKeys,
         string validIssuer,
-        string[] validAudiences)
+        string[] validAudiences,
+        bool cervelloExposed = false)
     {
         var handler = new JwtSecurityTokenHandler { MapInboundClaims = false };
         var parameters = new TokenValidationParameters
@@ -215,8 +218,12 @@ public sealed class BridgeAuthMiddleware(
             rawScope.Split(' ', StringSplitOptions.RemoveEmptyEntries),
             StringComparer.Ordinal);
 
-        // Trusted Zitadel JWT gets the full non-sensitive legacy surface too (Python parity).
-        foreach (var s in LegacyScopes.All) scopes.Add(s);
+        // Trusted Zitadel JWT gets the full non-sensitive legacy surface too (Python parity),
+        // plus the cervello scopes when this deployment exposes cervello (CERVELLO_EXPOSED=true).
+        // Zitadel's auth-code flow strips the unknown bridge:cervello:* scopes from the token
+        // claim, so a cervello-exposed session would otherwise fail the scope check even though
+        // CT146 (the real auth boundary) would accept the bearer.
+        foreach (var s in LegacyScopes.Granted(cervelloExposed)) scopes.Add(s);
 
         var sub = principal.FindFirst("sub")?.Value ?? "<unknown>";
 
