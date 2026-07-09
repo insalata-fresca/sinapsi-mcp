@@ -139,24 +139,42 @@ public sealed class EnrichmentPipeline
             var state = Advance(currentState, ingest.State, transitions); // → enriched
 
             // ── 2. FETCH AUDIO (once; threaded to transcribe + diarize) ───────────────────────────
-            ReadOnlyMemory<byte> audio;
-            try
+            // MIXED cases: a TRANSCRIPT-ONLY recording (recording.HasAudio == false) has NO audio blob.
+            // We do NOT fetch it (there is nothing to fetch) and SKIP every audio-dependent stage
+            // (diarize/merge/attribution) below — the transcript still publishes + derives facts, and
+            // the state still advances to graph_pr_opened. When audio IS expected, an absent/empty blob
+            // remains a terminal failure (never fabricate a transcript/segments from missing audio).
+            var hasAudio = recording.HasAudio;
+            ReadOnlyMemory<byte> audio = ReadOnlyMemory<byte>.Empty;
+            if (hasAudio)
             {
-                audio = await _audio.FetchAsync(recording.Id, recording.AudioSha256, ct).ConfigureAwait(false);
+                try
+                {
+                    audio = await _audio.FetchAsync(recording.Id, recording.AudioSha256, ct).ConfigureAwait(false);
+                }
+                catch (AudioUnavailableException ex)
+                {
+                    return Fail(recording, state, EnrichmentState.FailedTerminal, transitions,
+                        $"audio unavailable: {ex.Message}");
+                }
+                if (audio.IsEmpty)
+                    return Fail(recording, state, EnrichmentState.FailedTerminal, transitions,
+                        "audio source returned empty bytes (no transcript/segments may be fabricated)");
             }
-            catch (AudioUnavailableException ex)
+            else
             {
-                return Fail(recording, state, EnrichmentState.FailedTerminal, transitions,
-                    $"audio unavailable: {ex.Message}");
+                _log.LogInformation(
+                    "pipeline {Key}: transcript-only recording (no audio) — skipping diarize/merge/attribution; " +
+                    "publishing transcript + deriving facts only",
+                    recording.IdempotencyKey);
             }
-            if (audio.IsEmpty)
-                return Fail(recording, state, EnrichmentState.FailedTerminal, transitions,
-                    "audio source returned empty bytes (no transcript/segments may be fabricated)");
 
             // ── 3. BASE: the Google .txt IS the base (ratified) → immutable base transcript ───────
             // The stage reads the recording's paired Google .txt verbatim (CT126 not called). CT126
             // base re-transcription is an optional, default-off fallback used only when no Google .txt
             // exists — so this step never depends on CT126 for a recording that carries a Google base.
+            // For an AUDIO-ONLY recording (no Google .txt) the stage transcribes via CT126 when
+            // BaseReTranscribeEnabled — else it yields NoBase (an empty substrate, never fabricated).
             var baseResult = await _transcribe.TranscribeAsync(recording, audio, ct).ConfigureAwait(false);
             // On a first run the stage returns the fresh base; on an idempotent re-run over a
             // pre-existing base it returns Transcript=null (the base is written once, never clobbered).
@@ -166,18 +184,31 @@ public sealed class EnrichmentPipeline
             // re-run reads the persisted base; the base is never rewritten, nothing is fabricated).
             var baseTranscript = baseResult.Transcript ?? new BaseTranscript("", recording.Language);
 
-            // ── 4. DIARIZE + EMBED: the SAME audio → per-speaker clusters ─────────────────────────
-            var diarize = await _diarize.DiarizeEmbedAsync(recording, audio, ct).ConfigureAwait(false);
-            if (!diarize.Succeeded)
-                // The stage already classified transient (retryable) vs terminal — honour it verbatim.
-                return Fail(recording, state, diarize.FailureState!.Value, transitions,
-                    diarize.Reason ?? "diarize-embed failed");
+            // ── 4-6. AUDIO STAGES (diarize → merge → attribute) — SKIPPED for a transcript-only ────
+            // recording (no audio → no speakers → no attribution, the never-guess floor). Otherwise
+            // run them normally; a 0-segment audio result already degrades gracefully (empty clusters
+            // → empty verdicts). Either way there is NO speaker attribution when there is no audio.
+            IReadOnlyList<AttributionVerdict> attribution;
+            if (hasAudio)
+            {
+                // ── 4. DIARIZE + EMBED: the SAME audio → per-speaker clusters ─────────────────────
+                var diarize = await _diarize.DiarizeEmbedAsync(recording, audio, ct).ConfigureAwait(false);
+                if (!diarize.Succeeded)
+                    // The stage already classified transient (retryable) vs terminal — honour it verbatim.
+                    return Fail(recording, state, diarize.FailureState!.Value, transitions,
+                        diarize.Reason ?? "diarize-embed failed");
 
-            // ── 5. CLUSTER MERGE: over-split clusters → one merged unit per real speaker ───────────
-            var merged = _merge.Merge(diarize.Clusters);
+                // ── 5. CLUSTER MERGE: over-split clusters → one merged unit per real speaker ───────
+                var merged = _merge.Merge(diarize.Clusters);
 
-            // ── 6. ATTRIBUTION: merged clusters (centroids) → grounded verdicts ───────────────────
-            var attribution = await _attribution.ResolveAsync(recording.Id, merged, ct).ConfigureAwait(false);
+                // ── 6. ATTRIBUTION: merged clusters (centroids) → grounded verdicts ───────────────
+                attribution = await _attribution.ResolveAsync(recording.Id, merged, ct).ConfigureAwait(false);
+            }
+            else
+            {
+                // Transcript-only: no audio ⇒ no diarization ⇒ no attribution (never guessed a speaker).
+                attribution = Array.Empty<AttributionVerdict>();
+            }
             state = Advance(state, EnrichmentState.AttentionScored, transitions); // → attention_scored
 
             // Derived facts (summary/links/timeline/attention/participants/garbled) for THIS recording.

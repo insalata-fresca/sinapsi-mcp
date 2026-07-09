@@ -28,12 +28,40 @@ public sealed class DomainTests
     }
 
     [Fact]
+    public void Recording_key_for_transcript_only_is_rec_id_txt_transcriptSha()
+    {
+        // MIXED-cases: no audio (empty audio sha) ⇒ keyed on the transcript sha, txt: prefixed. This
+        // MUST match the drain's RecordingRef.IdempotencyKey (rec:<id>:txt:<sha>) so the shared row's
+        // ledger-claim + state advance target the same key.
+        var r = new Recording("20260705-notes", "Notes", "", "", "TXTDRIVE",
+            "2026-07-05T09:30", PipelineState.Normalized, transcriptSha256: "TSHA");
+        Assert.False(r.HasAudio);
+        Assert.Equal("rec:20260705-notes:txt:TSHA", r.RecordingKey);
+        Assert.Equal("TSHA", r.KeySha);
+    }
+
+    [Fact]
+    public void Recording_audio_only_keeps_the_audio_key_and_has_no_transcript()
+    {
+        var r = new Recording("20260705-memo", "Memo", "ASHA", "ADRIVE", null,
+            "2026-07-05T09:30", PipelineState.Normalized);
+        Assert.True(r.HasAudio);
+        Assert.Null(r.TranscriptSha256);
+        Assert.Equal("rec:20260705-memo:ASHA", r.RecordingKey);
+    }
+
+    [Fact]
     public void Recording_rejects_empty_required_fields()
     {
         Assert.Throws<ArgumentException>(() =>
             new Recording("", "Foo", "SHA1", "A", "T", "2026-07-05T09:30", PipelineState.Normalized));
+        // MIXED-cases: empty audio_sha256 is LEGAL when a transcript side is present (transcript-only).
+        // A recording with NEITHER side (no audio sha, no txt drive id, no transcript sha) is rejected.
         Assert.Throws<ArgumentException>(() =>
-            new Recording("id", "Foo", "", "A", "T", "2026-07-05T09:30", PipelineState.Normalized));
+            new Recording("id", "Foo", "", "", null, "2026-07-05T09:30", PipelineState.Normalized));
+        // An audio side present but missing its Drive id is still rejected (custody: audio needs a source).
+        Assert.Throws<ArgumentException>(() =>
+            new Recording("id", "Foo", "SHA1", "", "T", "2026-07-05T09:30", PipelineState.Normalized));
     }
 
     [Fact]

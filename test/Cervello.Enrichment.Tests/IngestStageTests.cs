@@ -40,6 +40,25 @@ public sealed class IngestStageTests
         Assert.Equal("rec:20260601-guilhem:sha-aaa", Ready().IdempotencyKey);
     }
 
+    // ---- MIXED-cases: a transcript-only ref (no audio) is keyed rec:<id>:txt:<transcript-sha> ----
+    // MUST match the Watcher's Recording.RecordingKey for a transcript-only recording so the shared
+    // §5/§8 row's ledger-claim + state advance target the same key.
+    [Fact]
+    public void Transcript_only_idempotency_key_is_rec_id_txt_transcriptSha()
+    {
+        var rec = new RecordingRef("20260601-notes", audioSha256: "", "m4a", "fr", ready: true,
+            googleTxtSha256: "tsha");
+        Assert.False(rec.HasAudio);
+        Assert.Equal("rec:20260601-notes:txt:tsha", rec.IdempotencyKey);
+    }
+
+    [Fact]
+    public void A_ref_with_neither_audio_nor_transcript_is_rejected()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            new RecordingRef("id", audioSha256: "", "m4a", "fr", ready: true, googleTxtSha256: null));
+    }
+
     // ---- Not eligible: a recording not yet normalized is skipped (no claim) ----
     [Fact]
     public async Task A_queued_recording_is_not_eligible()

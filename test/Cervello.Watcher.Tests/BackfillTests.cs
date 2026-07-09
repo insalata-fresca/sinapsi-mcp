@@ -125,19 +125,64 @@ public sealed class BackfillTests
         Assert.Empty(h.Drive.DownloadedFileIds); // nothing scanned
     }
 
-    // Unpaired singletons in the backlog stay pending; complete pairs still register.
+    // MIXED-cases: complete pairs register AND single-sided files flush as singleton recordings.
+    // (Was: "leaves singletons pending" — now they import as audio-only / transcript-only.)
     [Fact]
-    public async Task Backfill_registers_complete_pairs_and_leaves_singletons_pending()
+    public async Task Backfill_registers_complete_pairs_and_flushes_singletons_as_recordings()
     {
         using var ws = new TempWorkspace();
         var h = new WorkerHarness(ws, FolderId);
         SeedPairs(h, 2); // 2 complete pairs
-        // A lone audio with no transcript sibling.
+        // A lone audio with no transcript sibling → an audio-only recording.
         h.Drive.SeedFile("A-lonely", "Lonely.m4a", "audio/mp4",
             System.Text.Encoding.UTF8.GetBytes("lonely"), parents: new[] { FolderId });
+        // A lone transcript with no audio sibling → a transcript-only recording.
+        h.Drive.SeedFile("T-orphan", "Orphan.txt", "text/plain",
+            System.Text.Encoding.UTF8.GetBytes("orphan transcript"), parents: new[] { FolderId });
 
         await h.Worker.BackfillIfNeededAsync(default);
 
-        Assert.Equal(2, h.Worker.RecordingsNormalized); // only the complete pairs registered
+        // 2 complete pairs + 1 audio-only + 1 transcript-only = 4 recordings registered (none dropped).
+        Assert.Equal(4, h.Worker.RecordingsNormalized);
+    }
+
+    // A genuine pair whose two files are scanned across the same folder listing still PAIRS — it is
+    // NOT flushed as two singletons (the flush runs only AFTER every file is offered).
+    [Fact]
+    public async Task Backfill_pairs_a_two_file_recording_and_does_not_flush_it_as_singletons()
+    {
+        using var ws = new TempWorkspace();
+        var h = new WorkerHarness(ws, FolderId);
+        SeedPairs(h, 1); // exactly one complete pair, both sides in the folder
+
+        await h.Worker.BackfillIfNeededAsync(default);
+
+        Assert.Equal(1, h.Worker.RecordingsNormalized); // ONE paired recording, not two singletons
+    }
+
+    // Idempotent: a second backfill over the same mixed folder registers 0 NEW recordings.
+    [Fact]
+    public async Task Backfill_with_singletons_is_idempotent_on_a_second_run()
+    {
+        using var ws = new TempWorkspace();
+        var h = new WorkerHarness(ws, FolderId);
+        SeedPairs(h, 1);
+        h.Drive.SeedFile("A-lonely", "Lonely.m4a", "audio/mp4",
+            System.Text.Encoding.UTF8.GetBytes("lonely"), parents: new[] { FolderId });
+        h.Drive.SeedFile("T-orphan", "Orphan.txt", "text/plain",
+            System.Text.Encoding.UTF8.GetBytes("orphan"), parents: new[] { FolderId });
+
+        await h.Worker.BackfillIfNeededAsync(default); // 1 pair + 2 singletons = 3
+        Assert.Equal(3, h.Worker.RecordingsNormalized);
+
+        var forced = new WatchWorker(
+            h.Config with { ForceBackfill = true },
+            h.Drive, h.State, h.Downloader, h.Normalizer, h.Manifest, h.Ready,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<WatchWorker>.Instance);
+        forced.SetFolderId(FolderId);
+
+        await forced.BackfillIfNeededAsync(default);
+
+        Assert.Equal(0, forced.RecordingsNormalized); // all 3 already registered (pair + both singletons)
     }
 }

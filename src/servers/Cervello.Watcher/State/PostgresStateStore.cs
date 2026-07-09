@@ -43,6 +43,11 @@ public sealed class PostgresStateStore : IStateStore
             state         TEXT NOT NULL,
             ready_at      TIMESTAMPTZ NOT NULL DEFAULT now()
         );
+        -- MIXED-cases: a transcript-only recording carries an empty audio_sha256 (the NOT NULL columns
+        -- accept "") and is keyed by the drain on its transcript sha. Add the column idempotently so an
+        -- EXISTING live table (created before this change) is migrated in place; ADD COLUMN IF NOT
+        -- EXISTS is a no-op when the column is already present.
+        ALTER TABLE watcher_recording ADD COLUMN IF NOT EXISTS transcript_sha256 TEXT;
         """;
 
     private readonly string _connString;
@@ -166,16 +171,17 @@ public sealed class PostgresStateStore : IStateStore
         await using var cmd = new NpgsqlCommand("""
             INSERT INTO watcher_recording
                 (recording_id, recording_key, basename, audio_sha256, audio_drive_id,
-                 txt_drive_id, recorded_at, state, ready_at)
-            VALUES (@id, @key, @base, @sha, @adid, @tdid, @rec, @state, now())
+                 txt_drive_id, transcript_sha256, recorded_at, state, ready_at)
+            VALUES (@id, @key, @base, @sha, @adid, @tdid, @tsha, @rec, @state, now())
             ON CONFLICT (recording_key) DO NOTHING
             """, c);
         cmd.Parameters.AddWithValue("id", recording.Id);
         cmd.Parameters.AddWithValue("key", recording.RecordingKey);
         cmd.Parameters.AddWithValue("base", recording.Basename);
-        cmd.Parameters.AddWithValue("sha", recording.AudioSha256);
-        cmd.Parameters.AddWithValue("adid", recording.AudioDriveId);
+        cmd.Parameters.AddWithValue("sha", recording.AudioSha256);       // "" for transcript-only
+        cmd.Parameters.AddWithValue("adid", recording.AudioDriveId);     // "" for transcript-only
         cmd.Parameters.AddWithValue("tdid", (object?)recording.TxtDriveId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("tsha", (object?)recording.TranscriptSha256 ?? DBNull.Value);
         cmd.Parameters.AddWithValue("rec", recording.RecordedAt);
         cmd.Parameters.AddWithValue("state", recording.State.ToWire()); // SCHEMAS §5 wire name (E4)
         await cmd.ExecuteNonQueryAsync(ct);

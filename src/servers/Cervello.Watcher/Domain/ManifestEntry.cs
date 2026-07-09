@@ -20,12 +20,13 @@ public sealed record ManifestEntry
     {
         if (string.IsNullOrWhiteSpace(id))
             throw new ArgumentException("ManifestEntry.Id must be non-empty", nameof(id));
-        if (string.IsNullOrWhiteSpace(audioSha256))
-            throw new ArgumentException("ManifestEntry.AudioSha256 must be non-empty", nameof(audioSha256));
+        // audio_sha256 is EMPTY for a transcript-only recording (no audio); the source_drive_id then
+        // points at the transcript's Drive fileId so the §8 entry still references a real Drive source.
+        // A recording with NEITHER an audio sha NOR a source drive id is not a valid §8 record.
         if (string.IsNullOrWhiteSpace(sourceDriveId))
             throw new ArgumentException("ManifestEntry.SourceDriveId must be non-empty", nameof(sourceDriveId));
         Id = id;
-        AudioSha256 = audioSha256;
+        AudioSha256 = audioSha256 ?? "";
         SourceDriveId = sourceDriveId;
         Transcript = transcript;
         GoogleTxt = googleTxt;
@@ -51,11 +52,16 @@ public sealed record ManifestEntry
     /// <summary>Always <c>normalized</c> when written by this stage.</summary>
     public string State { get; }
 
-    /// <summary>Build the canonical §8 entry for a paired recording (D6 field values).</summary>
+    /// <summary>
+    /// Build the canonical §8 entry for a recording (D6 field values). For a transcript-only
+    /// recording (no audio) <c>audio_sha256</c> is empty and <c>source_drive_id</c> falls back to the
+    /// transcript's Drive fileId — the entry still references a real Drive source. <c>google_txt</c>
+    /// carries the transcript Drive id whenever a transcript is present (both + transcript-only).
+    /// </summary>
     public static ManifestEntry ForRecording(Recording r) => new(
         id: r.Id,
-        audioSha256: r.AudioSha256,
-        sourceDriveId: r.AudioDriveId,
+        audioSha256: r.AudioSha256,                             // "" for transcript-only
+        sourceDriveId: r.HasAudio ? r.AudioDriveId : r.TxtDriveId ?? "",
         transcript: $"recordings/transcripts/{r.Id}.md",
         googleTxt: r.TxtDriveId,
         attribution: "pending",

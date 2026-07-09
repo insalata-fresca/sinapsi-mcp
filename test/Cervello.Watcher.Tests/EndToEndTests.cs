@@ -110,4 +110,51 @@ public sealed class EndToEndTests
         Assert.Contains("- id: 20260705-foo", text2);
         Assert.Equal(1, h.Worker.RecordingsNormalized);
     }
+
+    // MIXED-cases (incremental path): a lone audio that stays single-sided across the grace window
+    // (default 2 cycles) is FLUSHED as an audio-only recording — no longer silently held forever.
+    [Fact]
+    public async Task Incremental_lone_audio_flushes_as_audio_only_after_the_grace_window()
+    {
+        using var ws = new TempWorkspace();
+        var h = new WorkerHarness(ws, FolderId); // default SingletonFlushGraceCycles = 2
+        h.Drive.SeedFile("A", "Solo.m4a", "audio/mp4", System.Text.Encoding.UTF8.GetBytes("solo audio"),
+            createdTime: DateTimeOffset.Parse("2026-07-05T09:30:00Z"), parents: new[] { FolderId });
+
+        // Cycle 1: audio arrives; age = 1 (< grace 2) → held, not yet flushed.
+        h.Drive.QueuePage(new[] { h.Drive.Meta("A") });
+        await h.Worker.RunCycleAsync(default);
+        Assert.Equal(0, h.Worker.RecordingsNormalized);
+
+        // Cycle 2: no new files; age reaches 2 → flushed as an audio-only recording.
+        h.Drive.QueuePage(Array.Empty<DriveChange>());
+        await h.Worker.RunCycleAsync(default);
+        Assert.Equal(1, h.Worker.RecordingsNormalized);
+        var text = File.ReadAllText(ws.ManifestPath);
+        Assert.Contains("- id: 20260705-solo", text);
+        Assert.Contains("audio_sha256: " + BlobStore.Sha256Hex(System.Text.Encoding.UTF8.GetBytes("solo audio")), text);
+    }
+
+    // A lone transcript likewise flushes as a transcript-only recording (empty audio_sha256 in §8).
+    [Fact]
+    public async Task Incremental_lone_transcript_flushes_as_transcript_only_after_the_grace_window()
+    {
+        using var ws = new TempWorkspace();
+        var h = new WorkerHarness(ws, FolderId);
+        h.Drive.SeedFile("T", "Notes.txt", "text/plain", System.Text.Encoding.UTF8.GetBytes("just notes"),
+            createdTime: DateTimeOffset.Parse("2026-07-05T09:30:00Z"), parents: new[] { FolderId });
+
+        h.Drive.QueuePage(new[] { h.Drive.Meta("T") });
+        await h.Worker.RunCycleAsync(default); // age 1
+        Assert.Equal(0, h.Worker.RecordingsNormalized);
+
+        h.Drive.QueuePage(Array.Empty<DriveChange>());
+        await h.Worker.RunCycleAsync(default); // age 2 → flush
+        Assert.Equal(1, h.Worker.RecordingsNormalized);
+        var text = File.ReadAllText(ws.ManifestPath);
+        Assert.Contains("- id: 20260705-notes", text);
+        // Transcript-only: empty audio_sha256; the transcript's Drive id is the source_drive_id.
+        Assert.Contains("audio_sha256: \n", text);
+        Assert.Contains("source_drive_id: T", text);
+    }
 }

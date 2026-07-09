@@ -77,6 +77,17 @@ public sealed record WatcherConfig
     /// </summary>
     public required bool ForceBackfill { get; init; }
 
+    /// <summary>
+    /// MIXED-cases: how many INCREMENTAL poll cycles a single-sided (unpaired) staged file waits
+    /// before it is flushed as a single-sided recording (audio-only / transcript-only). This grace
+    /// lets a genuine pair whose two files arrive in SEPARATE cycles still pair before either side is
+    /// prematurely registered as a singleton. From <c>CERVELLO_WATCHER_SINGLETON_FLUSH_GRACE_CYCLES</c>,
+    /// default 2 (fail-closed on a bad value). The BACKFILL path ignores this — it scans the whole
+    /// folder in one pass, so anything unpaired at the end is genuinely single-sided and flushes
+    /// immediately. 0 = flush every incremental cycle (no grace).
+    /// </summary>
+    public required int SingletonFlushGraceCycles { get; init; }
+
     // ---- bounds (fail-closed) ----
     internal const string DefaultGatewayUrl = "http://127.0.0.1:8443/mcp";
     internal const string DefaultWatcherAgent = "agent-cervello-watcher";
@@ -97,6 +108,9 @@ public sealed record WatcherConfig
     internal const int MaxGdriveRetryBackoffMs = 60_000;
 
     internal const int DefaultHealthPort = 8146;
+
+    internal const int DefaultSingletonFlushGraceCycles = 2;
+    internal const int MaxSingletonFlushGraceCycles = 100;
 
     /// <summary>Read config from the process environment (production path).</summary>
     public static WatcherConfig FromEnvironment() => From(Environment.GetEnvironmentVariable);
@@ -134,6 +148,9 @@ public sealed record WatcherConfig
                 "CERVELLO_WATCHER_GDRIVE_RETRY_BACKOFF_MS", DefaultGdriveRetryBackoffMs, 0, MaxGdriveRetryBackoffMs),
             ApplicationName = Env("CERVELLO_WATCHER_APP_NAME", "cervello-watcher"),
             ForceBackfill = ReadBool(getEnv, "CERVELLO_WATCHER_FORCE_BACKFILL", false),
+            SingletonFlushGraceCycles = ReadBoundedInt(getEnv,
+                "CERVELLO_WATCHER_SINGLETON_FLUSH_GRACE_CYCLES",
+                DefaultSingletonFlushGraceCycles, 0, MaxSingletonFlushGraceCycles),
         };
     }
 

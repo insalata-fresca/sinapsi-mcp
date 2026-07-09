@@ -19,11 +19,14 @@ public sealed class Normalizer
 {
     public Recording Normalize(PairedRecording pair)
     {
-        var audioChange = pair.Audio.Change;
-        var when = audioChange.CreatedTime
-            ?? audioChange.ModifiedTime
+        // recorded_at + id are derived from the audio side when present (the ratified anchor), else
+        // from the transcript side (a transcript-only recording). Either way the same basename +
+        // createdTime + content sha yields the same deterministic id (the contract holds per family).
+        var anchor = (pair.Audio ?? pair.Transcript)!.Change;
+        var when = anchor.CreatedTime
+            ?? anchor.ModifiedTime
             ?? throw new InvalidOperationException(
-                $"cannot derive recorded_at: audio '{pair.Basename}' has neither createdTime nor modifiedTime");
+                $"cannot derive recorded_at: '{pair.Basename}' has neither createdTime nor modifiedTime");
 
         var recordedAt = FormatRecordedAt(when);
         var id = $"{when.UtcDateTime:yyyyMMdd}-{Slug(pair.Basename)}";
@@ -31,11 +34,12 @@ public sealed class Normalizer
         return new Recording(
             id: id,
             basename: pair.Basename,
-            audioSha256: pair.Audio.Sha256,
-            audioDriveId: pair.Audio.FileId,
-            txtDriveId: pair.Transcript.FileId,
+            audioSha256: pair.Audio?.Sha256 ?? "",
+            audioDriveId: pair.Audio?.FileId ?? "",
+            txtDriveId: pair.Transcript?.FileId,
             recordedAt: recordedAt,
-            state: PipelineState.Normalized);
+            state: PipelineState.Normalized,
+            transcriptSha256: pair.Transcript?.Sha256);
     }
 
     /// <summary><c>yyyy-MM-ddTHH:mm</c> in UTC (deterministic, minute precision per D5).</summary>
