@@ -186,4 +186,73 @@ public sealed class PostgresStateStore : IStateStore
         cmd.Parameters.AddWithValue("state", recording.State.ToWire()); // SCHEMAS §5 wire name (E4)
         await cmd.ExecuteNonQueryAsync(ct);
     }
+
+    public async Task<IReadOnlyList<Recording>> GetRecordingsByIdAsync(string recordingId, CancellationToken ct)
+    {
+        await using var c = await OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand("""
+            SELECT recording_id, basename, audio_sha256, audio_drive_id, txt_drive_id,
+                   transcript_sha256, recorded_at, state
+            FROM watcher_recording WHERE recording_id = @id
+            """, c);
+        cmd.Parameters.AddWithValue("id", recordingId);
+        var rows = new List<Recording>();
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct))
+        {
+            rows.Add(new Recording(
+                id: r.GetString(0),
+                basename: r.GetString(1),
+                audioSha256: r.IsDBNull(2) ? "" : r.GetString(2),
+                audioDriveId: r.IsDBNull(3) ? "" : r.GetString(3),
+                txtDriveId: r.IsDBNull(4) ? null : r.GetString(4),
+                recordedAt: r.GetString(6),
+                state: PipelineStateWire.Parse(r.GetString(7)),
+                transcriptSha256: r.IsDBNull(5) ? null : r.GetString(5)));
+        }
+        return rows;
+    }
+
+    public async Task UpgradeRecordingAsync(string oldKey, Recording upgraded, CancellationToken ct)
+    {
+        // Replace the single-sided row (stored under oldKey) with the upgraded pair, keyed by its own
+        // (possibly different) key, in ONE transaction so no window shows zero or duplicate rows for the
+        // id. DELETE the old row, then INSERT the upgraded one at state=normalized (the drain re-picks it
+        // up). The INSERT uses ON CONFLICT (recording_key) DO UPDATE so a same-key upgrade (audio-only →
+        // pair, key unchanged) fills the missing side + resets state in place.
+        await using var c = await OpenAsync(ct);
+        await using var tx = await c.BeginTransactionAsync(ct);
+
+        if (upgraded.RecordingKey != oldKey)
+        {
+            await using var del = new NpgsqlCommand(
+                "DELETE FROM watcher_recording WHERE recording_key = @old", c, tx);
+            del.Parameters.AddWithValue("old", oldKey);
+            await del.ExecuteNonQueryAsync(ct);
+        }
+
+        await using var up = new NpgsqlCommand("""
+            INSERT INTO watcher_recording
+                (recording_id, recording_key, basename, audio_sha256, audio_drive_id,
+                 txt_drive_id, transcript_sha256, recorded_at, state, ready_at)
+            VALUES (@id, @key, @base, @sha, @adid, @tdid, @tsha, @rec, @state, now())
+            ON CONFLICT (recording_key) DO UPDATE SET
+                basename = EXCLUDED.basename, audio_sha256 = EXCLUDED.audio_sha256,
+                audio_drive_id = EXCLUDED.audio_drive_id, txt_drive_id = EXCLUDED.txt_drive_id,
+                transcript_sha256 = EXCLUDED.transcript_sha256, recorded_at = EXCLUDED.recorded_at,
+                state = EXCLUDED.state, ready_at = now()
+            """, c, tx);
+        up.Parameters.AddWithValue("id", upgraded.Id);
+        up.Parameters.AddWithValue("key", upgraded.RecordingKey);
+        up.Parameters.AddWithValue("base", upgraded.Basename);
+        up.Parameters.AddWithValue("sha", upgraded.AudioSha256);
+        up.Parameters.AddWithValue("adid", upgraded.AudioDriveId);
+        up.Parameters.AddWithValue("tdid", (object?)upgraded.TxtDriveId ?? DBNull.Value);
+        up.Parameters.AddWithValue("tsha", (object?)upgraded.TranscriptSha256 ?? DBNull.Value);
+        up.Parameters.AddWithValue("rec", upgraded.RecordedAt);
+        up.Parameters.AddWithValue("state", upgraded.State.ToWire());
+        await up.ExecuteNonQueryAsync(ct);
+
+        await tx.CommitAsync(ct);
+    }
 }

@@ -33,19 +33,43 @@ public sealed class YamlManifestStore : IManifestStore
 
     public Task<bool> AppendAsync(ManifestEntry entry, CancellationToken ct)
     {
-        var existing = File.Exists(_path)
-            ? File.ReadAllText(_path)
-            : Header + "[]\n";
-
-        // Normalize CRLF the file might already carry, so our comparisons + writes are LF.
-        existing = existing.Replace("\r\n", "\n");
+        var existing = ReadNormalized();
 
         if (ContainsId(existing, entry.Id))
             return Task.FromResult(false); // no-op, byte-unchanged (we do not rewrite)
 
-        var block = RenderBlock(entry);
-        string updated;
+        return Task.FromResult(WriteAppended(existing, RenderBlock(entry)));
+    }
 
+    public Task<bool> UpsertAsync(ManifestEntry entry, CancellationToken ct)
+    {
+        var existing = ReadNormalized();
+        var block = RenderBlock(entry);
+
+        if (!ContainsId(existing, entry.Id))
+            return Task.FromResult(WriteAppended(existing, block)); // first sight ⇒ plain append
+
+        // The id is present: replace its block. If the current block is byte-identical, it is a
+        // genuine no-op (a re-register of the same sides) and the file stays byte-unchanged.
+        var replaced = ReplaceBlock(existing, entry.Id, block);
+        if (replaced == existing)
+            return Task.FromResult(false);
+
+        File.WriteAllText(_path, replaced, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        return Task.FromResult(true);
+    }
+
+    /// <summary>Read the manifest as LF-normalized text (or a fresh header + empty list when absent).</summary>
+    private string ReadNormalized()
+    {
+        var existing = File.Exists(_path) ? File.ReadAllText(_path) : Header + "[]\n";
+        return existing.Replace("\r\n", "\n");
+    }
+
+    /// <summary>Append <paramref name="block"/> to <paramref name="existing"/> and write; returns true.</summary>
+    private bool WriteAppended(string existing, string block)
+    {
+        string updated;
         // A lone empty flow list `[]` body ⇒ replace it with the first block.
         var emptyList = Regex.Match(existing, @"(?m)^\[\]\s*$");
         if (emptyList.Success)
@@ -66,7 +90,24 @@ public sealed class YamlManifestStore : IManifestStore
             updated = Header + updated;
 
         File.WriteAllText(_path, updated, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-        return Task.FromResult(true);
+        return true;
+    }
+
+    /// <summary>
+    /// Replace the whole block for <paramref name="id"/> (the <c>- id: &lt;id&gt;</c> line through the last
+    /// of its indented fields, before the next <c>- id:</c> / EOF) with <paramref name="newBlock"/>.
+    /// Returns the input unchanged if the block is byte-identical or the id is absent.
+    /// </summary>
+    internal static string ReplaceBlock(string yaml, string id, string newBlock)
+    {
+        // Match "- id: <id>" and everything up to (but not including) the next list item or EOF.
+        var pattern = @"(?m)^-\s*id:\s*" + Regex.Escape(id) + @"\s*\n(?:[ \t]+.*\n?)*";
+        var m = Regex.Match(yaml, pattern);
+        if (!m.Success)
+            return yaml; // id not found as a block head (defensive; caller checks ContainsId first)
+        if (m.Value == newBlock)
+            return yaml; // identical block already present ⇒ byte-unchanged no-op
+        return yaml[..m.Index] + newBlock + yaml[(m.Index + m.Length)..];
     }
 
     /// <summary>Scan for a list item whose <c>id:</c> equals <paramref name="id"/> exactly.</summary>

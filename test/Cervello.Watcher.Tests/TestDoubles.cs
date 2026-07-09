@@ -39,4 +39,7 @@ public sealed class ThrowingManifestStore : IManifestStore
 {
     public Task<bool> AppendAsync(ManifestEntry entry, CancellationToken ct) =>
         throw new InvalidOperationException("manifest write failed (injected)");
+
+    public Task<bool> UpsertAsync(ManifestEntry entry, CancellationToken ct) =>
+        throw new InvalidOperationException("manifest write failed (injected)");
 }
