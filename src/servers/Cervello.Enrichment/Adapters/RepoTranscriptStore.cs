@@ -47,5 +47,23 @@ public sealed class RepoTranscriptStore : ITranscriptStore
         return rel;
     }
 
+    public string AttributionPath(string recordingId)
+    {
+        if (string.IsNullOrWhiteSpace(recordingId))
+            throw new ArgumentException("recordingId must be non-empty", nameof(recordingId));
+        return $"recordings/attributions/{recordingId}.md";
+    }
+
+    public async Task<string> WriteAttributionAsync(string recordingId, string markdown, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(markdown);
+        var rel = AttributionPath(recordingId);
+        var abs = Path.Combine(_repoRoot, rel);
+        // NOT write-once: a fresh drain's corrected + labeled document supersedes the prior one.
+        Directory.CreateDirectory(Path.GetDirectoryName(abs)!);
+        await File.WriteAllTextAsync(abs, markdown, ct).ConfigureAwait(false);
+        return rel;
+    }
+
     private string AbsPath(string recordingId) => Path.Combine(_repoRoot, TranscriptPath(recordingId));
 }

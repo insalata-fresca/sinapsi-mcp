@@ -53,6 +53,7 @@ internal sealed class FakeTranscribeClient(BaseTranscript result) : ITranscribeC
 internal sealed class InMemoryTranscriptStore : ITranscriptStore
 {
     private readonly Dictionary<string, BaseTranscript> _byId = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _attributionById = new(StringComparer.Ordinal);
 
     public string TranscriptPath(string recordingId) => $"recordings/transcripts/{recordingId}.md";
 
@@ -69,4 +70,15 @@ internal sealed class InMemoryTranscriptStore : ITranscriptStore
     }
 
     public BaseTranscript? Read(string recordingId) => _byId.GetValueOrDefault(recordingId);
+
+    public string AttributionPath(string recordingId) => $"recordings/attributions/{recordingId}.md";
+
+    public Task<string> WriteAttributionAsync(string recordingId, string markdown, CancellationToken ct = default)
+    {
+        // NOT write-once — a fresh drain's document supersedes the prior one (mirrors RepoTranscriptStore).
+        _attributionById[recordingId] = markdown;
+        return Task.FromResult(AttributionPath(recordingId));
+    }
+
+    public string? ReadAttribution(string recordingId) => _attributionById.GetValueOrDefault(recordingId);
 }

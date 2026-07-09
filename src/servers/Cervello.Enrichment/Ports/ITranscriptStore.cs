@@ -17,4 +17,20 @@ public interface ITranscriptStore
 
     /// <summary>Persist the base transcript. Returns the repo-relative path written.</summary>
     Task<string> WriteBaseAsync(string recordingId, BaseTranscript transcript, CancellationToken ct = default);
+
+    /// <summary>
+    /// The repo-relative path a recording's corrected + speaker-labeled document lives at (SCHEMAS §8
+    /// manifest <c>attribution:</c> field: <c>recordings/attributions/&lt;id&gt;.md</c>). M5 — distinct
+    /// from the immutable <see cref="TranscriptPath"/> base; this artifact carries the corrected text
+    /// (evidence-gated diffs applied) plus the M4 speaker roster.
+    /// </summary>
+    string AttributionPath(string recordingId);
+
+    /// <summary>
+    /// Persist (create-or-update) the corrected + speaker-labeled markdown at
+    /// <see cref="AttributionPath"/>. Unlike <see cref="WriteBaseAsync"/> this is NOT write-once — a
+    /// later run (fresh correction/attribution) supersedes the prior content, mirroring the base
+    /// transcript's own re-publish-in-place contract. Returns the repo-relative path written.
+    /// </summary>
+    Task<string> WriteAttributionAsync(string recordingId, string markdown, CancellationToken ct = default);
 }
