@@ -43,6 +43,10 @@ internal sealed class HostInMemoryTranscriptStore : ITranscriptStore
         _ids.Add(recordingId);
         return Task.FromResult(TranscriptPath(recordingId));
     }
+
+    public string AttributionPath(string recordingId) => $"recordings/attributions/{recordingId}.md";
+    public Task<string> WriteAttributionAsync(string recordingId, string markdown, CancellationToken ct = default) =>
+        Task.FromResult(AttributionPath(recordingId));
 }
 
 /// <summary>Diarize-embed fake: an EMPTY response (no speakers) by default, or a scripted fault.</summary>

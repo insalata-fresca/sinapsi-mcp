@@ -14,11 +14,16 @@ internal sealed class FakeCorrectionLlm(IReadOnlyList<CorrectionCandidate> propo
     public int Calls { get; private set; }
     public string? LastBaseText { get; private set; }
 
+    /// <summary>The CorrectionContext (glossary + resolved participants) seen on the LAST call — lets a
+    /// pipeline-level test assert on exactly what participant set the stage was handed (M5 wiring).</summary>
+    public CorrectionContext? LastContext { get; private set; }
+
     public Task<IReadOnlyList<CorrectionCandidate>> ProposeAsync(
         string baseText, CorrectionContext context, CancellationToken ct = default)
     {
         Calls++;
         LastBaseText = baseText;
+        LastContext = context;
         return Task.FromResult(proposals);
     }
 }
