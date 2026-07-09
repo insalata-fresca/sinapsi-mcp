@@ -74,24 +74,59 @@ public sealed class DrainWorkerTests
         Assert.True(await ledger.IsClaimedAsync(rec.IdempotencyKey));    // §8 key claimed
     }
 
-    // ── idempotent replay: a claimed key re-leased is a no-op ───────────────────────────────────
+    // ── idempotent replay: a claimed key re-leased re-runs NOTHING but is ADVANCED out of normalized ─
+    // (Incident 2026-07-09: leaving the replay row at `normalized` deadlocked the drain — the lease
+    // re-selected the same earliest row forever. The replay MUST advance to graph_pr_opened, its
+    // already-completed terminal-success state, without re-running enrichment.)
     [Fact]
-    public async Task Idempotent_replay_of_a_claimed_key_is_a_noop()
+    public async Task Idempotent_replay_of_a_claimed_key_reruns_nothing_and_advances_to_graph_pr_opened()
     {
         var queue = new InMemoryNormalizedWorkQueue();
         var ledger = new InMemoryEnrichmentLedger();
         var rec = Rec();
         // Pre-claim the key (as if a previous run already picked it up) but leave the shared row at
-        // normalized (as if the advance never persisted) — the exact replay hazard the ledger guards.
+        // normalized (the exact replay hazard: a self-heal re-backfill reset an already-enriched row).
         Assert.True(await ledger.TryClaimAsync(rec.IdempotencyKey));
         queue.SeedNormalized(rec);
 
         var worker = Worker(Cfg(), queue, ledger);
         await worker.RunCycleAsync(default);
 
-        Assert.Equal(0, worker.RecordingsPickedUp);
+        Assert.Equal(0, worker.RecordingsPickedUp);          // enrichment did NOT re-run
+        Assert.Equal(1, worker.RecordingsReplayed);          // recognised as a replay
+        // The row is advanced OUT of normalized to its terminal-success state — no double-apply, no loop.
+        Assert.Equal(EnrichmentState.GraphPrOpened, queue.StateOf(rec));
+    }
+
+    // ── deadlock break: a replay row does NOT block the rest of the backlog ──────────────────────
+    // The earliest `normalized` row is a replay (claimed in a prior run); a later row is fresh. One
+    // cycle must advance the replay row AND drain the fresh one — never wedge on the replay forever.
+    [Fact]
+    public async Task A_replay_row_is_advanced_and_the_next_normalized_recording_still_drains()
+    {
+        var queue = new InMemoryNormalizedWorkQueue();
+        var ledger = new InMemoryEnrichmentLedger();
+        var replayed = Rec("already-enriched", "sha-old");
+        var fresh = Rec("brand-new", "sha-new");
+        // The replay row's key is already claimed (prior full run); the fresh row is untouched.
+        Assert.True(await ledger.TryClaimAsync(replayed.IdempotencyKey));
+        queue.SeedNormalized(replayed);
+        queue.SeedNormalized(fresh);
+
+        var worker = Worker(Cfg(), queue, ledger);
+        await worker.RunCycleAsync(default);
+
+        // The replay row left normalized (→ terminal success) and the fresh row fully enriched — both
+        // in the SAME cycle. Neither remains normalized, so the queue is drained, not deadlocked.
         Assert.Equal(1, worker.RecordingsReplayed);
-        Assert.Equal(EnrichmentState.Normalized, queue.StateOf(rec)); // untouched — no double-apply
+        Assert.Equal(EnrichmentState.GraphPrOpened, queue.StateOf(replayed));
+        Assert.Equal(1, worker.RecordingsPickedUp);
+        Assert.Equal(EnrichmentState.GraphPrOpened, queue.StateOf(fresh));
+
+        // A second cycle leases NOTHING (convergent) — proves no row is stuck re-looping.
+        var replayedAfterFirst = worker.RecordingsReplayed;
+        await worker.RunCycleAsync(default);
+        Assert.Equal(replayedAfterFirst, worker.RecordingsReplayed); // no re-selection of the replay row
     }
 
     // ── a second cycle over an already-advanced batch does nothing (drain is convergent) ─────────
