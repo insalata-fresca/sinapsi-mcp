@@ -46,6 +46,10 @@ public sealed class WatchWorker : BackgroundService
     public bool Ready { get; private set; }
     public long RecordingsNormalized { get; private set; }
 
+    /// <summary>Count of single-sided rows UPGRADED to a pair (or the missing side filled) this run.
+    /// Surfaced in the end-of-scan summary so a self-heal backfill is observable, not a black box.</summary>
+    public long RecordingsUpgraded { get; private set; }
+
     public WatchWorker(
         WatcherConfig cfg,
         IDriveClient drive,
@@ -242,7 +246,8 @@ public sealed class WatchWorker : BackgroundService
         // Coverage tally — surfaced in the mandatory end-of-scan summary so an under-processing scan
         // (rc33: only 1 of dozens staged) is diagnosable from the log alone, not a black box.
         int listed = files.Count, boundarySkipped = 0, audio = 0, transcript = 0,
-            other = 0, replay = 0, failed = 0;
+            reoffered = 0, other = 0, replay = 0, failed = 0;
+        var upgradedBefore = RecordingsUpgraded;
 
         foreach (var change in files)
         {
@@ -278,6 +283,8 @@ public sealed class WatchWorker : BackgroundService
             {
                 case StageKind.Audio: audio++; break;
                 case StageKind.Transcript: transcript++; break;
+                case StageKind.AudioReplay: audio++; reoffered++; break;
+                case StageKind.TranscriptReplay: transcript++; reoffered++; break;
                 case StageKind.Other: other++; break;
                 case StageKind.ReplaySkipped: replay++; break;
                 case StageKind.Failed: failed++; break;
@@ -291,15 +298,19 @@ public sealed class WatchWorker : BackgroundService
         var singletons = await FlushSingletonsAsync(ct);
 
         var newlyRegistered = RecordingsNormalized - before;
+        var upgraded = RecordingsUpgraded - upgradedBefore;
         var heldPending = _pairer.Pending().Count;
         // MANDATORY end-of-scan summary — the observability the rc33 diagnosis needed. If listed is
         // large but audio+transcript are ~0, the LISTING or CLASSIFY is dropping files (see the
-        // per-file scan DEBUG lines for the reason: 'other' = non-.m4a/.txt, 'replay' = already staged).
+        // per-file scan DEBUG lines for the reason: 'other' = non-.m4a/.txt). Replays are now RE-OFFERED
+        // to the pairer (not dead-ended), so 'reoffered' counts blobs re-paired from the ledger with no
+        // re-download; 'upgraded' counts single-sided rows self-healed into pairs (BACKFILL-SELF-HEAL).
         _log.LogInformation(
-            "backfill summary: listed {Listed}, boundary-skipped {BoundarySkipped}, staged {Audio} audio + {Transcript} transcripts, " +
-            "other {Other}, replay {Replay}, failed {Failed}; registered {New} recordings ({Singletons} singletons), {Held} still held pending",
-            listed, boundarySkipped, audio, transcript, other, replay, failed,
-            newlyRegistered, singletons, heldPending);
+            "backfill summary: listed {Listed}, boundary-skipped {BoundarySkipped}, staged {Audio} audio + {Transcript} transcripts " +
+            "(of which {Reoffered} re-offered replays, no re-download), other {Other}, replay-skipped {Replay}, failed {Failed}; " +
+            "registered {New} recordings ({Singletons} singletons), upgraded {Upgraded} single-sided→pair, {Held} still held pending",
+            listed, boundarySkipped, audio, transcript, reoffered, other, replay, failed,
+            newlyRegistered, singletons, upgraded, heldPending);
 
         // Bootstrap the changes cursor (if absent) so incremental polling continues normally
         // for NEW files. On a force-backfill with an existing cursor, keep the cursor as-is
@@ -312,8 +323,10 @@ public sealed class WatchWorker : BackgroundService
         }
     }
 
-    /// <summary>The classification of a scanned file, for the per-file trace + end-of-scan tally.</summary>
-    internal enum StageKind { Audio, Transcript, Other, ReplaySkipped, Failed }
+    /// <summary>The classification of a scanned file, for the per-file trace + end-of-scan tally.
+    /// <c>*Replay</c> = an already-staged blob RE-OFFERED to the pairer from the ledger (no re-download);
+    /// <c>ReplaySkipped</c> = a replay whose ledger row was too incomplete to re-offer (rare).</summary>
+    internal enum StageKind { Audio, Transcript, AudioReplay, TranscriptReplay, Other, ReplaySkipped, Failed }
 
     /// <summary>
     /// Download the change, pair it, and (if paired) normalize + register. Returns HOW the file was
@@ -325,14 +338,44 @@ public sealed class WatchWorker : BackgroundService
     {
         var name = change.Name ?? change.FileId;
         var outcome = await _downloader.StageAsync(change, ct);
+
+        StagedFile staged;
         if (!outcome.Staged)
         {
-            // Make the drop reason explicit: a non-audio/non-transcript file ("other"), a replay
-            // no-op, or a download failure. Previously ALL of these were a silent `return`.
+            // A replay (already-staged key) is NOT a dead end anymore: the blob is already on disk and
+            // the ledger retains its basename-source, kind, and sha256, so we RECONSTRUCT the StagedFile
+            // from the ledger + this change and re-offer it to the pairer — no re-download. This is the
+            // fix for the rc34 replay-orphan defect: 144 files staged by rc33 were skipped here and never
+            // paired/registered. Everything else (non-audio/-transcript "other", download failure) stays
+            // a genuine non-stage.
+            if (outcome.Reason == "replay-skipped")
+            {
+                var replayed = await ReofferReplayAsync(change, name, ct);
+                if (replayed is null)
+                {
+                    // The ledger row was present-but-incomplete (no staged path/sha) — treat as a plain
+                    // replay skip rather than fabricate a StagedFile. Observable in the tally.
+                    _log.LogWarning("scan {Name} ({FileId}): replay but ledger row lacks staged sha — skipped",
+                        name, change.FileId);
+                    return StageKind.ReplaySkipped;
+                }
+                staged = replayed;
+                _log.LogDebug("scan {Name} ({FileId}): re-offered replay {Kind} basename={Basename} sha={Sha} (no re-download)",
+                    name, change.FileId, staged.Kind, staged.Basename, staged.Sha256);
+                var replayPair = _pairer.Offer(staged);
+                if (replayPair is null)
+                    _log.LogInformation("{Basename} pending (replay) — waiting for its {Missing}",
+                        staged.Basename, staged.Kind == "audio" ? "transcript" : "audio");
+                else
+                    await NormalizeAndRegisterAsync(replayPair, ct);
+                return staged.Kind == "audio" ? StageKind.AudioReplay : StageKind.TranscriptReplay;
+            }
+
+            // Make the remaining drop reasons explicit: a non-audio/non-transcript file ("other") or a
+            // download failure. Previously ALL of these were a silent `return`.
             var kind = outcome.Kind switch
             {
                 "other" => StageKind.Other,
-                _ when outcome.Reason == "replay-skipped" => StageKind.ReplaySkipped,
                 _ => StageKind.Failed,
             };
             _log.LogDebug("scan {Name} ({FileId}): not staged — kind={Kind} state={State} reason={Reason}",
@@ -340,7 +383,7 @@ public sealed class WatchWorker : BackgroundService
             return kind;
         }
 
-        var staged = new StagedFile(
+        staged = new StagedFile(
             Basename: Pairer.BasenameOf(name),
             Kind: outcome.Kind,
             FileId: change.FileId,
@@ -362,17 +405,74 @@ public sealed class WatchWorker : BackgroundService
         return staged.Kind == "audio" ? StageKind.Audio : StageKind.Transcript;
     }
 
-    /// <summary>Assign a deterministic id, dedupe, append one manifest entry, mark ready.</summary>
+    /// <summary>
+    /// Reconstruct the <see cref="StagedFile"/> for a download-REPLAY (a key already in the idempotency
+    /// ledger) WITHOUT re-downloading. The ledger row retains the kind + content sha256 + staged blob
+    /// path recorded by the original download; the basename comes from the current change's name (the
+    /// blob is already on disk at the recorded path). Returns null when the ledger row is present but
+    /// carries no staged sha (a failed/partial prior — nothing to re-offer).
+    /// </summary>
+    private async Task<StagedFile?> ReofferReplayAsync(DriveChange change, string name, CancellationToken ct)
+    {
+        var record = await _state.GetDownloadAsync(change.DriveKey, ct);
+        if (record?.Sha256 is null || string.IsNullOrEmpty(record.Kind))
+            return null;
+        return new StagedFile(
+            Basename: Pairer.BasenameOf(name),
+            Kind: record.Kind,          // "audio" | "transcript" — retained by the ledger
+            FileId: change.FileId,
+            Sha256: record.Sha256,      // the staged blob's content sha (already on disk)
+            Change: change);
+    }
+
+    /// <summary>
+    /// Normalize a pair/singleton, then register it idempotently — with SELF-HEAL of a prior
+    /// single-sided registration:
+    /// <list type="bullet">
+    ///   <item>NOT yet registered under any row for this id ⇒ fresh register (append + upsert + mark).</item>
+    ///   <item>Already registered under the SAME key with the SAME sides ⇒ no-op (idempotent).</item>
+    ///   <item>Registered only as a SINGLE-SIDED row and this result now adds the missing side ⇒
+    ///     UPGRADE the row to the pair (fill the missing side + transcript ref), rewrite the manifest
+    ///     block, and RESET pipeline state to <c>normalized</c> so the drain reprocesses it correctly.</item>
+    /// </list>
+    /// This heals the rc34 mis-registered audio-only singletons into correct pairs on the next backfill.
+    /// </summary>
     public async Task NormalizeAndRegisterAsync(PairedRecording pair, CancellationToken ct)
     {
         var recording = _normalizer.Normalize(pair);
 
-        // Dedupe by rec:<id>:<audio_sha256> — a known recording is a no-op.
+        var existingRows = await _state.GetRecordingsByIdAsync(recording.Id, ct);
+        if (existingRows.Count > 0)
+        {
+            // An identical registration (a row already carries BOTH the sides this result has) ⇒ no-op.
+            if (existingRows.Any(r => SameSides(r, recording)))
+            {
+                _log.LogInformation("recording {Key} already registered with the same sides — no-op",
+                    recording.RecordingKey);
+                return;
+            }
+
+            // A single-sided row exists whose MISSING side this result now supplies ⇒ upgrade it.
+            var upgradable = existingRows.FirstOrDefault(r => IsUpgradeOf(r, recording));
+            if (upgradable is not null)
+            {
+                await _manifest.UpsertAsync(ManifestEntry.ForRecording(recording), ct);
+                await _state.UpgradeRecordingAsync(upgradable.RecordingKey, recording, ct);
+                _ready.Mark(recording.Id); // re-mark so the drain re-picks up the reset row
+                RecordingsUpgraded++;
+                _log.LogInformation(
+                    "upgraded single-sided recording {Id} → pair (old key {Old} → {New}), state reset to normalized",
+                    recording.Id, upgradable.RecordingKey, recording.RecordingKey);
+                return;
+            }
+            // else: rows exist for the id but none matches/upgrades (distinct content) ⇒ fall through
+            // and register this as its own row (deduped by recording_key below).
+        }
+
+        // Belt-and-braces dedupe on the exact key (covers the "distinct content, same id" fall-through).
         if (await _state.RecordingExistsAsync(recording.RecordingKey, ct))
         {
             _log.LogInformation("recording {Key} already registered — no-op", recording.RecordingKey);
-            // The manifest append is itself idempotent (id dedupe) — still safe to call,
-            // but we short-circuit to keep the file byte-unchanged deterministically.
             return;
         }
 
@@ -393,5 +493,39 @@ public sealed class WatchWorker : BackgroundService
         if (_folderId is null)
             return false;
         return change.Parents.Contains(_folderId);
+    }
+
+    /// <summary>True iff the existing row carries the SAME set of sides + content shas as the candidate
+    /// (a genuine re-register ⇒ no-op). Compares audio sha AND transcript sha exactly.</summary>
+    private static bool SameSides(Domain.Recording existing, Domain.Recording candidate) =>
+        existing.AudioSha256 == candidate.AudioSha256 &&
+        (existing.TranscriptSha256 ?? "") == (candidate.TranscriptSha256 ?? "");
+
+    /// <summary>
+    /// True iff <paramref name="candidate"/> is a strict side-UPGRADE of the existing single-sided row:
+    /// the existing row is missing exactly one side that the candidate now supplies, and every side the
+    /// existing row DOES carry is preserved unchanged in the candidate (same sha). Covers audio-only →
+    /// pair and transcript-only → pair; rejects a content change on an already-present side.
+    /// </summary>
+    private static bool IsUpgradeOf(Domain.Recording existing, Domain.Recording candidate)
+    {
+        var exHasAudio = !string.IsNullOrEmpty(existing.AudioSha256);
+        var exHasTx = existing.TranscriptSha256 is not null;
+        var caHasAudio = !string.IsNullOrEmpty(candidate.AudioSha256);
+        var caHasTx = candidate.TranscriptSha256 is not null;
+
+        // The candidate must add at least one side the existing row lacks…
+        var addsAudio = caHasAudio && !exHasAudio;
+        var addsTx = caHasTx && !exHasTx;
+        if (!addsAudio && !addsTx)
+            return false;
+
+        // …and must preserve every side the existing row already carries (no silent content swap).
+        if (exHasAudio && (!caHasAudio || existing.AudioSha256 != candidate.AudioSha256))
+            return false;
+        if (exHasTx && (!caHasTx || existing.TranscriptSha256 != candidate.TranscriptSha256))
+            return false;
+
+        return true;
     }
 }
