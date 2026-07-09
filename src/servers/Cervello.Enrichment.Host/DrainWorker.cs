@@ -118,17 +118,49 @@ public sealed class DrainWorker : BackgroundService
 
             if (outcome.IsReplay)
             {
+                // A replay = the §8 idempotency key was already CLAIMED in a prior run that ran the
+                // recording all the way to its terminal-success state (transcript in git, open-points
+                // recorded). The enrichment itself is NOT re-run (the ledger claim guards that). But we
+                // MUST NOT leave the shared row at `normalized`: the drain lease selects the EARLIEST
+                // `normalized` row (batch-ordered by ready_at), so a claimed-but-still-`normalized` row
+                // is re-selected every cycle FOREVER and no other recording ever drains — a hard queue
+                // deadlock (incident 2026-07-09: a self-heal re-backfill reset 3 already-enriched
+                // recordings to `normalized`, wedging the whole 76-row backlog on the earliest one).
+                //
+                // The correct, idempotent resolution is to ADVANCE the replay row OUT of `normalized`
+                // to `graph_pr_opened` — its already-completed terminal-success state (a legal forward
+                // spine jump, SCHEMAS §5: normalized → graph_pr_opened). This re-runs NO enrichment and
+                // cannot loop: next cycle the lease no longer sees the row and moves to the next
+                // `normalized` recording. Persisting the terminal state converges the shared §5 row to
+                // the reality the ledger already reflects.
                 RecordingsReplayed++;
-                _log.LogInformation("drain {Key}: replay — no-op (idempotency key already claimed)",
-                    recording.IdempotencyKey);
-                return; // idempotent: leave the shared state row untouched
+                await _queue.AdvanceStateAsync(
+                    recording, EnrichmentState.GraphPrOpened,
+                    reason: "replay — idempotency key already claimed (already fully enriched in a prior run)",
+                    ct).ConfigureAwait(false);
+                _log.LogInformation(
+                    "drain {Key}: replay — advanced {From} → {To} (already enriched; no re-run, breaks the drain deadlock)",
+                    recording.IdempotencyKey,
+                    EnrichmentStateMachine.Name(EnrichmentState.Normalized),
+                    EnrichmentStateMachine.Name(EnrichmentState.GraphPrOpened));
+                return;
             }
 
             if (outcome.Status == Pipeline.PipelineStatus.NotEligible)
             {
-                // Not eligible (not normalized / not ready) — leave the row for a later cycle. In the
-                // drain path the lease already filtered to `normalized`, so this is defensive.
-                _log.LogDebug("drain {Key}: not eligible ({Reason})", recording.IdempotencyKey, outcome.Reason);
+                // Not eligible (not normalized / not ready). In the drain path the lease already filtered
+                // to `normalized` and always sets ready=true, so this is UNREACHABLE today — but if it
+                // ever fires we must NOT leave the row at `normalized`, or the lease re-selects the same
+                // earliest row every cycle and re-deadlocks the whole backlog (the exact hazard the
+                // replay branch above fixes). Advance it to `failed_retryable` (a legal §5 exit from any
+                // live spine state) so the row leaves `normalized`; a genuinely-eligible-later recording
+                // is retried under the same idempotency key.
+                RecordingsFailedRetryable++;
+                _log.LogWarning("drain {Key}: not eligible ({Reason}) → failed_retryable (leaves normalized; retried next cycle)",
+                    recording.IdempotencyKey, outcome.Reason);
+                await _queue.AdvanceStateAsync(
+                    recording, EnrichmentState.FailedRetryable,
+                    reason: outcome.Reason ?? "not eligible", ct).ConfigureAwait(false);
                 return;
             }
 
