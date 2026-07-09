@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Cervello.Enrichment;
 using Cervello.Enrichment.Adapters;
 using Cervello.Enrichment.Domain;
+using Cervello.Enrichment.Math;
 using Cervello.Enrichment.Ports;
 using Xunit;
 
@@ -91,6 +92,80 @@ public sealed class PgAdaptersIntegrationTests : IAsyncLifetime
             store.EnrollOrRefineAsync("stranger", v0, ["rec://r#s3"], null, new DateOnly(2026, 7, 3)));
     }
 
+    /// <summary>
+    /// M3 corpus store (design <c>ste/cervello</c> <c>docs/design/autonomous-attribution.md</c>
+    /// §4.1/§5): the real DDL + cosine-cast SQL round-trips a recording's centroids, upserts
+    /// idempotently on <c>(recording_id, cluster_index)</c> — NEVER the diarizer's <c>s1…</c> label —
+    /// and a corpus-wide query returns rows across multiple recordings coexisting. Distinct from
+    /// <c>voiceprints</c> (the confirmed enrolled-person table), proven untouched by this same run
+    /// (below).
+    /// </summary>
+    [Fact]
+    public async Task Recording_voiceprint_store_round_trips_upserts_idempotently_and_queries_the_corpus()
+    {
+        if (!_enabled) return; // opt-in: set CERVELLO_PGVECTOR_IT=1 with a cached pgvector image
+
+        var store = new PgRecordingVoiceprintStore(_cfg);
+        await store.EnsureSchemaAsync();
+
+        // Seed the CONFIRMED enrolled-person store too (its own table), so the "untouched" assertion
+        // below proves the M3 corpus store never mutates it — not merely that the table is absent.
+        var enrolledStore = new PgVoiceprintStore(_cfg, new EnrollmentAllowlist(["guilhem"]));
+        await enrolledStore.EnsureSchemaAsync();
+        await enrolledStore.EnrollOrRefineAsync(
+            "guilhem", TestVectors.Axis(0), ["rec://seed#s1"], null, new DateOnly(2026, 7, 1));
+
+        var v0 = TestVectors.Axis(0);
+        var v1 = TestVectors.Axis(10);
+
+        // Round-trip: persist rec-1's two merged clusters, fetch them back verbatim, ordered by index.
+        await store.PersistAsync("rec-1",
+        [
+            new RecordingVoiceprint("rec-1", 0, v0, "spkrec-ecapa-voxceleb", 4, 20.0, "s1", DateTimeOffset.UtcNow),
+            new RecordingVoiceprint("rec-1", 1, v1, "spkrec-ecapa-voxceleb", 2, 8.5, "s3", DateTimeOffset.UtcNow),
+        ]);
+        var rec1 = await store.GetForRecordingAsync("rec-1");
+        Assert.Equal(2, rec1.Count);
+        Assert.Equal(0, rec1[0].ClusterIndex);
+        Assert.Equal(1, rec1[1].ClusterIndex);
+        Assert.True(Cosine.Similarity(rec1[0].Centroid, v0) > 0.99); // pgvector round-trip preserves the vector
+
+        // Idempotent upsert: re-persisting the SAME (recording_id, cluster_index) key updates in place,
+        // never duplicates — even though the diarizer label changes (labels are never the identity).
+        await store.PersistAsync("rec-1",
+        [
+            new RecordingVoiceprint("rec-1", 0, v0, "spkrec-ecapa-voxceleb", 9, 45.0, "s1-relabelled", DateTimeOffset.UtcNow),
+        ]);
+        var rec1AfterUpsert = await store.GetForRecordingAsync("rec-1");
+        Assert.Equal(2, rec1AfterUpsert.Count); // still 2 rows — upsert, not a duplicate
+        Assert.Equal(9, rec1AfterUpsert.Single(r => r.ClusterIndex == 0).SegmentCount);
+
+        // Corpus-wide query: a DIFFERENT recording coexists; both are returned together.
+        await store.PersistAsync("rec-2",
+        [
+            new RecordingVoiceprint("rec-2", 0, TestVectors.Axis(50), "spkrec-ecapa-voxceleb", 1, 3.0, "s1", DateTimeOffset.UtcNow),
+        ]);
+        var corpus = await store.GetCorpusAsync();
+        Assert.Equal(3, corpus.Count); // rec-1's 2 + rec-2's 1
+        Assert.Contains(corpus, r => r.RecordingId == "rec-1" && r.ClusterIndex == 0);
+        Assert.Contains(corpus, r => r.RecordingId == "rec-1" && r.ClusterIndex == 1);
+        Assert.Contains(corpus, r => r.RecordingId == "rec-2" && r.ClusterIndex == 0);
+
+        // The confirmed enrolled-person table is untouched by this store (design invariant): still
+        // exactly the ONE seeded row, unaffected by all the recording_voiceprints activity above.
+        var enrolledCount = await ScalarCountAsync("voiceprints");
+        Assert.Equal(1, enrolledCount);
+        Assert.NotNull(await enrolledStore.GetAsync("guilhem"));
+    }
+
+    private async Task<long> ScalarCountAsync(string table)
+    {
+        await using var c = new Npgsql.NpgsqlConnection(_cfg.PostgresDsn);
+        await c.OpenAsync();
+        await using var cmd = new Npgsql.NpgsqlCommand($"SELECT COUNT(*) FROM {table}", c);
+        return (long)(await cmd.ExecuteScalarAsync())!;
+    }
+
     [Fact]
     public async Task Open_point_store_enqueue_is_idempotent_and_resolve_is_single_shot()
     {
@@ -149,13 +224,14 @@ public sealed class PgAdaptersIntegrationTests : IAsyncLifetime
             new PgCorrectionMapStore(_cfg),
             new PgVoiceprintStore(_cfg, allow),
             new PgOpenPointStore(_cfg),
+            new PgRecordingVoiceprintStore(_cfg),
         };
         foreach (var init in initializers)
             await init.EnsureSchemaAsync();
 
         foreach (var table in new[]
                  {
-                     "enrichment_ledger", "correction_map",
+                     "enrichment_ledger", "correction_map", "recording_voiceprints",
                      "voiceprints", "voiceprint_tombstones", "voiceprint_enrollment_audio",
                      "open_points",
                  })

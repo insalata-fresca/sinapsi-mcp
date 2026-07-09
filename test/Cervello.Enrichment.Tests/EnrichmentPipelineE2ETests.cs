@@ -73,7 +73,8 @@ public sealed class EnrichmentPipelineE2ETests
             PolicyPhase phase = PolicyPhase.EscalateOnly,
             IDiarizeEmbedClient? diarizeClient = null,
             IReadOnlyList<CorrectionCandidate>? corrections = null,
-            IGitPublisher? gitPublisher = null)
+            IGitPublisher? gitPublisher = null,
+            IRecordingVoiceprintStore? recordingVoiceprints = null)
     {
         var ledger = new InMemoryEnrichmentLedger();
         var ingest = new IngestStage(ledger);
@@ -111,7 +112,7 @@ public sealed class EnrichmentPipelineE2ETests
         var facts = new FakeRecordingFactSource();
         var pipeline = new EnrichmentPipeline(
             ingest, audio, transcribe, diarize, merge, attribution, correction, enrich, apply, facts,
-            gitPublisher);
+            gitPublisher, recordingVoiceprints);
         return (pipeline, pr, points, ledger);
     }
 
@@ -415,6 +416,64 @@ public sealed class EnrichmentPipelineE2ETests
         var m = Assert.Single(pr.LastPr!.Mutations);
         Assert.Contains("guilhem", m.DossierPath);
         Assert.StartsWith("auto://", m.BasisId);
+    }
+
+    // ── M3: every merged cluster's centroid is durably persisted to the corpus store, keyed on ────────
+    // ── (recordingId, clusterIndex) — never the diarizer's per-recording s1… label (design §4.1) ──────
+    [Fact]
+    public async Task Diarize_and_cluster_merge_persists_every_merged_centroid_to_the_corpus_store()
+    {
+        var recordingVoiceprints = new InMemoryRecordingVoiceprintStore();
+        var (pipeline, _, _, _) = await BuildPipelineAsync(recordingVoiceprints: recordingVoiceprints);
+
+        var outcome = await pipeline.RunAsync(Rec(), EnrichmentState.Normalized);
+        Assert.Equal(PipelineStatus.Completed, outcome.Status);
+
+        // DiarizeResponse() synthesises 3 diarizer-local clusters; s1/s2 do NOT merge (orthogonal
+        // synthetic vectors) so 3 merged clusters persist — one row per merged cluster.
+        var persisted = await recordingVoiceprints.GetForRecordingAsync(RecId);
+        Assert.Equal(3, persisted.Count);
+
+        // Keyed by cluster INDEX (list position), never the diarizer's s1/s2/s3 label.
+        Assert.Equal(new[] { 0, 1, 2 }, persisted.Select(p => p.ClusterIndex).ToArray());
+        // The label is carried as descriptive metadata only — still present, but not the identity.
+        Assert.All(persisted, p => Assert.False(string.IsNullOrWhiteSpace(p.MergedSpeakerLabel)));
+        // The corpus-wide view sees the same rows for this single-recording corpus.
+        Assert.Equal(3, (await recordingVoiceprints.GetCorpusAsync()).Count);
+
+        // A second, independent recording persists ALONGSIDE the first — the corpus accumulates,
+        // it does not evict (finding 3.a: this replaces the transient in-memory eviction). Persisted
+        // directly against the same store (the store contract, not a second pipeline run) to isolate
+        // the accumulation assertion from pipeline construction.
+        const string SecondRecId = "20260705-standup2";
+        await recordingVoiceprints.PersistAsync(SecondRecId,
+        [
+            new RecordingVoiceprint(
+                SecondRecId, 0, TestVectors.Axis(77), "spkrec-ecapa-voxceleb", 1, 5.0, "s1", DateTimeOffset.UtcNow),
+        ]);
+        var corpus = await recordingVoiceprints.GetCorpusAsync();
+        Assert.Equal(4, corpus.Count); // rec-1's 3 + rec-2's 1, coexisting
+        Assert.Contains(corpus, r => r.RecordingId == RecId);
+        Assert.Contains(corpus, r => r.RecordingId == SecondRecId);
+    }
+
+    // ── replaying the SAME recording (idempotency key already claimed) does not re-persist — but a ────
+    // ── genuine re-process (fresh ledger, same recording id) UPSERTS rather than duplicating ──────────
+    [Fact]
+    public async Task Reprocessing_the_same_recording_id_upserts_the_corpus_row_not_duplicates()
+    {
+        var recordingVoiceprints = new InMemoryRecordingVoiceprintStore();
+        var (pipeline1, _, _, _) = await BuildPipelineAsync(recordingVoiceprints: recordingVoiceprints);
+        await pipeline1.RunAsync(Rec(), EnrichmentState.Normalized);
+        Assert.Equal(3, (await recordingVoiceprints.GetForRecordingAsync(RecId)).Count);
+
+        // A fresh pipeline instance (fresh ledger ⇒ not a replay short-circuit) re-processing the SAME
+        // recording id must UPSERT the corpus rows by (recordingId, clusterIndex) — not duplicate them.
+        var (pipeline2, _, _, _) = await BuildPipelineAsync(recordingVoiceprints: recordingVoiceprints);
+        await pipeline2.RunAsync(Rec(), EnrichmentState.Normalized);
+
+        var persisted = await recordingVoiceprints.GetForRecordingAsync(RecId);
+        Assert.Equal(3, persisted.Count); // still 3 — idempotent upsert, never duplicated
     }
 
     // ── idempotent replay: a claimed key re-run is a no-op (nothing re-processed) ────────────────────
