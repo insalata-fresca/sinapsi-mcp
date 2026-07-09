@@ -226,6 +226,11 @@ public static class EnrichmentComposition
         services.AddSingleton<ICorrectionMapStore, PgCorrectionMapStore>();
         services.AddSingleton<IOpenPointStore, PgOpenPointStore>();
         services.AddSingleton<IEnrichmentLedger, PgEnrichmentLedger>();
+        // The M3 corpus store (design ste/cervello docs/design/autonomous-attribution.md §4.1/§5):
+        // durably accumulates EVERY recording's per-speaker centroids, distinct from IVoiceprintStore
+        // (the confirmed enrolled-person store, unchanged). Raw material for M4's cross-recording
+        // resolver.
+        services.AddSingleton<IRecordingVoiceprintStore, PgRecordingVoiceprintStore>();
 
         // Every live Pg store owns table(s) that MUST be created on startup. Register each as an
         // ISchemaInitializer (resolving the SAME singleton — no double-construction) so the host
@@ -237,6 +242,8 @@ public static class EnrichmentComposition
         services.AddSingleton<ISchemaInitializer>(sp => (PgCorrectionMapStore)sp.GetRequiredService<ICorrectionMapStore>());
         services.AddSingleton<ISchemaInitializer>(sp => (PgVoiceprintStore)sp.GetRequiredService<IVoiceprintStore>());
         services.AddSingleton<ISchemaInitializer>(sp => (PgOpenPointStore)sp.GetRequiredService<IOpenPointStore>());
+        services.AddSingleton<ISchemaInitializer>(sp =>
+            (PgRecordingVoiceprintStore)sp.GetRequiredService<IRecordingVoiceprintStore>());
 
         // CT-side + git-working-tree stores. The repo working tree + pin/log dirs default to the
         // Watcher's custody root; a host overrides via the matching env before calling.
@@ -337,6 +344,7 @@ public static class EnrichmentComposition
         services.AddSingleton<IOpenPointStore, InMemoryOpenPointStore>();
         services.AddSingleton<IEnrichmentLedger, InMemoryEnrichmentLedger>();
         services.AddSingleton<IBundleStore, InMemoryBundleStore>();
+        services.AddSingleton<IRecordingVoiceprintStore, InMemoryRecordingVoiceprintStore>();
 
         // No live git egress in fake mode: the searchable-substrate publisher is a no-op (the offline
         // slice writes artifacts to the in-memory stores; nothing is pushed to ste/cervello).

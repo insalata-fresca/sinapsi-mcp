@@ -90,6 +90,8 @@ public sealed class EnrichmentCompositionTests
         Assert.IsType<InMemoryOpenPointStore>(sp.GetRequiredService<IOpenPointStore>());
         Assert.IsType<InMemoryCorrectionMapStore>(sp.GetRequiredService<ICorrectionMapStore>());
         Assert.IsType<InMemoryEnrichmentLedger>(sp.GetRequiredService<IEnrichmentLedger>());
+        // M3: the corpus store — distinct from IVoiceprintStore (the confirmed enrolled-person store).
+        Assert.IsType<InMemoryRecordingVoiceprintStore>(sp.GetRequiredService<IRecordingVoiceprintStore>());
         Assert.IsType<StaticBearerProvider>(sp.GetRequiredService<IBearerProvider>());
         // No live git egress offline — the searchable-substrate publisher is a no-op.
         Assert.IsType<NoOpGitPublisher>(sp.GetRequiredService<IGitPublisher>());
@@ -122,6 +124,11 @@ public sealed class EnrichmentCompositionTests
             Assert.IsType<PgOpenPointStore>(sp.GetRequiredService<IOpenPointStore>());
             Assert.IsType<PgCorrectionMapStore>(sp.GetRequiredService<ICorrectionMapStore>());
             Assert.IsType<PgEnrichmentLedger>(sp.GetRequiredService<IEnrichmentLedger>());
+            // M3: the live corpus store resolves too, and the host ensures its schema (below).
+            Assert.IsType<PgRecordingVoiceprintStore>(sp.GetRequiredService<IRecordingVoiceprintStore>());
+            Assert.Contains(
+                sp.GetServices<ISchemaInitializer>(),
+                si => si is PgRecordingVoiceprintStore);
             // The bearer is AUDIENCE-ROUTED: static brain bearer for brain-api, minted JWT elsewhere.
             Assert.IsType<AudienceRoutingBearerProvider>(sp.GetRequiredService<IBearerProvider>());
             // The typed HTTP clients resolve (constructed, no call made).

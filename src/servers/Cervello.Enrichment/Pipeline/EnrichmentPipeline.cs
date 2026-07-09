@@ -27,7 +27,11 @@ namespace Cervello.Enrichment.Pipeline;
 ///   <see cref="SpeakerCluster"/>s (segments + centroid embeddings). A transient sidecar fault →
 ///   <c>failed_retryable</c>; a malformed/undecodable one → <c>failed_terminal</c>.</item>
 /// <item><b>ClusterMerge</b> (<see cref="ClusterMergeStage"/>) — over-split clusters → one
-///   <see cref="MergedCluster"/> per real speaker (the attribution unit).</item>
+///   <see cref="MergedCluster"/> per real speaker (the attribution unit). Immediately after, every
+///   merged cluster's centroid is durably PERSISTED to the <see cref="IRecordingVoiceprintStore"/>
+///   corpus (design <c>ste/cervello</c> <c>docs/design/autonomous-attribution.md</c> §4.1/§5 M3),
+///   keyed by <c>(recordingId, clusterIndex)</c> — never the diarizer's per-recording label. This is
+///   additive/best-effort: a persist failure never fails the drain.</item>
 /// <item><b>Attribution</b> (<see cref="AttributionStage"/>) — merged clusters + the org-chart prior
 ///   + enrolled voiceprints → <see cref="AttributionVerdict"/>s (auto/flag/open/omit). This is the
 ///   diarize→attribution artifact hand-off: the merged-cluster CENTROID (from step 5) is what the
@@ -71,6 +75,7 @@ public sealed class EnrichmentPipeline
     private readonly ApplyStage _apply;
     private readonly IRecordingFactSource _facts;
     private readonly IGitPublisher _gitPublisher;
+    private readonly IRecordingVoiceprintStore _recordingVoiceprints;
     private readonly ILogger _log;
 
     /// <summary>The auto-basis version the applied-timeline mutations carry (lint R9 provenance).</summary>
@@ -91,6 +96,7 @@ public sealed class EnrichmentPipeline
         ApplyStage apply,
         IRecordingFactSource facts,
         IGitPublisher? gitPublisher = null,
+        IRecordingVoiceprintStore? recordingVoiceprints = null,
         ILogger<EnrichmentPipeline>? logger = null)
     {
         _ingest = ingest ?? throw new ArgumentNullException(nameof(ingest));
@@ -106,6 +112,10 @@ public sealed class EnrichmentPipeline
         // Default to a no-op: a test that constructs the pipeline directly (no publisher) stays
         // offline; the live host wires the ForgejoContentsPublisher (searchable-substrate push).
         _gitPublisher = gitPublisher ?? new NoOpGitPublisher();
+        // Default to an in-memory sibling: a test that constructs the pipeline directly without a
+        // corpus store still exercises the persist call (offline), while the live host wires
+        // PgRecordingVoiceprintStore (CT146 pgvector — the M3 corpus build spec).
+        _recordingVoiceprints = recordingVoiceprints ?? new InMemoryRecordingVoiceprintStore();
         _log = logger ?? NullLogger<EnrichmentPipeline>.Instance;
     }
 
@@ -200,6 +210,33 @@ public sealed class EnrichmentPipeline
 
                 // ── 5. CLUSTER MERGE: over-split clusters → one merged unit per real speaker ───────
                 var merged = _merge.Merge(diarize.Clusters);
+
+                // ── 5b. PERSIST THE CORPUS: every merged cluster's centroid → recording_voiceprints
+                //     (design ste/cervello docs/design/autonomous-attribution.md §4.1/§5 M3). This is
+                //     the raw material M4's cross-recording resolver clusters over — previously these
+                //     centroids were transient (DiarizedCentroidEnrollmentSourceProvider, evicted after
+                //     open-point resolution). Keyed on (recordingId, clusterIndex) — the merged-cluster
+                //     LIST POSITION, never MergedCluster.MergedSpeaker (the diarizer's per-recording
+                //     s1… label — not stable across recordings). Best-effort: a persist failure must
+                //     NOT fail the drain (attribution below still runs off the in-memory `merged` list;
+                //     the next run/replay re-persists under the idempotent upsert).
+                try
+                {
+                    await _recordingVoiceprints.PersistAsync(
+                        recording.Id, ToRecordingVoiceprints(recording.Id, merged, diarize.Model!), ct)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex,
+                        "pipeline {Key}: recording-voiceprint corpus persist failed (non-fatal — " +
+                        "attribution continues off the in-memory clusters; a replay re-persists)",
+                        recording.IdempotencyKey);
+                }
 
                 // ── 6. ATTRIBUTION: merged clusters (centroids) → grounded verdicts ───────────────
                 attribution = await _attribution.ResolveAsync(recording.Id, merged, ct).ConfigureAwait(false);
@@ -432,6 +469,38 @@ public sealed class EnrichmentPipeline
     /// <summary>The links the timeline mutations reference (for R4 stub declaration at apply).</summary>
     private static IReadOnlyList<ReferencedLink> BuildReferencedLinks(RecordingFacts facts) =>
         facts.ProposedLinks.Select(l => new ReferencedLink(l.Slug, "person")).ToList();
+
+    /// <summary>
+    /// Project this recording's deterministically-ordered merged clusters (<see cref="ClusterMerge"/>
+    /// sorts by <c>MergedSpeaker</c>) into <see cref="RecordingVoiceprint"/> rows keyed by their LIST
+    /// POSITION (<c>ClusterIndex</c>) — never <c>MergedCluster.MergedSpeaker</c> (design §4.1: the
+    /// diarizer's per-recording label is not stable across recordings). The label is still carried as
+    /// descriptive metadata (<see cref="RecordingVoiceprint.MergedSpeakerLabel"/>). The sidecar's
+    /// reported embed model id (<see cref="DiarizeEmbedModel.Embed"/>) is recorded per row for
+    /// space-compatibility gating (design §4.1 <c>model</c> column) — the SAME response that produced
+    /// these clusters, never a hard-coded/guessed identifier.
+    /// </summary>
+    private static IReadOnlyList<RecordingVoiceprint> ToRecordingVoiceprints(
+        string recordingId, IReadOnlyList<MergedCluster> merged, DiarizeEmbedModel model)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var rows = new List<RecordingVoiceprint>(merged.Count);
+        for (var i = 0; i < merged.Count; i++)
+        {
+            var cluster = merged[i];
+            var duration = cluster.Segments.Sum(s => s.End - s.Start);
+            rows.Add(new RecordingVoiceprint(
+                recordingId: recordingId,
+                clusterIndex: i,
+                centroid: cluster.Centroid,
+                model: model.Embed,
+                segmentCount: cluster.Segments.Count,
+                durationSeconds: duration,
+                mergedSpeakerLabel: cluster.MergedSpeaker,
+                createdAt: now));
+        }
+        return rows;
+    }
 
     private static string FirstDate(RecordingFacts facts) =>
         facts.Dates.Count > 0 ? facts.Dates[0] : DateOnly.FromDateTime(DateTime.UtcNow).ToString("yyyy-MM-dd");
