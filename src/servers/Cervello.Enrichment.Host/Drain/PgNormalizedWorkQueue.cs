@@ -44,8 +44,17 @@ public sealed class PgNormalizedWorkQueue : INormalizedWorkQueue
     // can never strand the backlog. We match BOTH the §5 wire name and the legacy PascalCase.
     // internal (not private) so the host test can pin the write↔read state contract against the
     // Watcher's PipelineState.ToWire() without a live DB — the seam a fake previously hid behind.
+    // The Google .txt content sha (the ratified base) is resolved two ways, COALESCEd:
+    //   1. the watcher_recording.transcript_sha256 column the Watcher now persists directly
+    //      (MIXED-cases: authoritative, present for both + transcript-only recordings); OR
+    //   2. (legacy fallback) the LEFT JOIN to the watcher_download ledger on txt_drive_id — for rows
+    //      written by a PRE-MIXED Watcher build that has no transcript_sha256 populated.
+    // For a TRANSCRIPT-ONLY recording r.audio_sha256 is '' (empty) and the google sha is present, so
+    // the drain constructs a transcript-only RecordingRef keyed rec:<id>:txt:<google_sha>. For an
+    // AUDIO-ONLY recording the google sha is NULL and audio_sha256 is set → an audio-only ref.
     internal const string LeaseSql = """
-        SELECT r.recording_id, r.audio_sha256, d.sha256 AS google_txt_sha
+        SELECT r.recording_id, r.audio_sha256,
+               COALESCE(r.transcript_sha256, d.sha256) AS google_txt_sha
         FROM watcher_recording r
         LEFT JOIN watcher_download d
           ON d.file_id = r.txt_drive_id AND d.kind = 'transcript'
@@ -93,10 +102,20 @@ public sealed class PgNormalizedWorkQueue : INormalizedWorkQueue
         while (await r.ReadAsync(ct))
         {
             var id = r.GetString(0);
-            var sha = r.GetString(1);
+            // audio_sha256 is '' for a transcript-only recording (NOT NULL column, empty string).
+            var sha = r.IsDBNull(1) ? "" : r.GetString(1);
             // The staged Google .txt content sha (the ratified base), or null when the recording has
             // no paired Google transcript / it is not (yet) staged — the base source degrades gracefully.
             var googleTxtSha = r.IsDBNull(2) ? null : r.GetString(2);
+
+            // A row with NEITHER an audio sha NOR a google .txt sha is not enrichable (should never
+            // happen — the Watcher guarantees at least one side). Skip it rather than abort the batch.
+            if (string.IsNullOrWhiteSpace(sha) && string.IsNullOrWhiteSpace(googleTxtSha))
+            {
+                _log.LogWarning("drain skip {Id}: neither audio_sha256 nor a google .txt sha — not enrichable", id);
+                continue;
+            }
+
             // ready == true: the row is at `normalized`, which is precisely the Watcher's
             // "ready for enrichment" terminal (the local ready-marker equivalent, D-side).
             batch.Add(new RecordingRef(id, sha, _format, _language, ready: true, googleTxtSha256: googleTxtSha));

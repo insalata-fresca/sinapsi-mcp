@@ -416,6 +416,151 @@ public sealed class EnrichmentPipelineE2ETests
         return (pipeline, pr, points, ledger);
     }
 
+    // ══════════════════════════════════════════════════════════════════════════════════════════════
+    // MIXED CASES — transcript-only + audio-only recordings (PIPELINE-MIXED-CASES)
+    // ══════════════════════════════════════════════════════════════════════════════════════════════
+
+    /// <summary>A TRANSCRIPT-ONLY recording: a Google .txt sha, NO audio (empty audioSha256).</summary>
+    private static RecordingRef TranscriptOnlyRec() =>
+        new("20260704-notes", audioSha256: "", "m4a", "fr", ready: true, googleTxtSha256: "txtsha-notes");
+
+    /// <summary>An AUDIO-ONLY recording: an audio sha, NO Google .txt (null googleTxtSha256).</summary>
+    private static RecordingRef AudioOnlyRec() =>
+        new("20260704-voicememo", audioSha256: "sha-audio-only", "m4a", "fr", ready: true, googleTxtSha256: null);
+
+    // ── TRANSCRIPT-ONLY: publishes the transcript + derives facts, SKIPS the audio stages, 0 attributions,
+    //    and still advances to graph_pr_opened. No diarize/attribution is even ATTEMPTED (no audio). ─────
+    [Fact]
+    public async Task A_transcript_only_recording_publishes_and_skips_the_audio_stages_reaching_graph_pr_opened()
+    {
+        var ledger = new InMemoryEnrichmentLedger();
+        var store = await EnrolledStore();
+        var pr = new FakeMapPrWriter();
+        var points = new InMemoryOpenPointStore();
+        var publisher = new FakeGitPublisher();
+
+        // An audio source that would THROW if fetched (proves it is never called for transcript-only),
+        // and a diarize client that would THROW-if-empty if called (proves the audio stages are skipped).
+        var audio = new FakeAudioSource(unavailable: true);
+        var diarizeSpy = FakeDiarizeEmbedClient.Returning(DiarizeResponse());
+        var transcriptStore = new InMemoryTranscriptStore();
+
+        var pipeline = new EnrichmentPipeline(
+            new IngestStage(ledger),
+            audio,
+            // The Google .txt IS the base (transcript-only) — read verbatim, published.
+            new BaseTranscribeStage(new FakeBaseTranscriptSource(new BaseTranscript("meeting notes verbatim", "fr")), transcriptStore),
+            new DiarizeEmbedStage(diarizeSpy),
+            new ClusterMergeStage(),
+            new AttributionStage(store, new FilenameParticipantPriorSource(new Dictionary<string, PriorCandidates>()), new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
+            new CorrectionStage(new FakeCorrectionLlm(Array.Empty<CorrectionCandidate>()), new InMemoryCorrectionMapStore(), new FakeReAsrClient(), new CorrectionGrader(PolicyPhase.EscalateOnly)),
+            new EnrichLinkStage(new FakeLinkResolver()),
+            new ApplyStage(new CervelloGraphWriter(pr, new FakeLinkResolver(), new FakePinStore()), points),
+            new FakeRecordingFactSource(),
+            publisher);
+
+        var outcome = await pipeline.RunAsync(TranscriptOnlyRec(), EnrichmentState.Normalized);
+
+        // Reached graph_pr_opened (NOT failed_terminal — a missing audio blob is not fabricated, it is
+        // simply absent because the recording is transcript-only).
+        Assert.Equal(PipelineStatus.Completed, outcome.Status);
+        Assert.Equal(EnrichmentState.GraphPrOpened, outcome.State);
+        Assert.DoesNotContain(EnrichmentState.FailedTerminal, outcome.StateTransitions);
+
+        // The audio-dependent stages were SKIPPED: no audio fetch, no diarize call.
+        Assert.Equal(0, audio.Fetches);
+        Assert.Equal(0, diarizeSpy.Calls);
+
+        // Zero speaker attributions (no audio ⇒ never guessed a speaker).
+        var bundle = Assert.IsType<EnrichmentBundle>(outcome.Bundle);
+        Assert.Empty(bundle.Enrichment.Attribution);
+        var apply = Assert.IsType<ApplyResult>(outcome.Apply);
+        Assert.Equal(0, apply.OpenPoints); // no speaker to escalate
+
+        // The transcript was PUBLISHED (searchable substrate) — the Google .txt persisted verbatim.
+        var req = Assert.Single(publisher.Requests);
+        Assert.Contains($"recordings/transcripts/{req.RecordingId}.md", req.RepoRelativePaths);
+        Assert.Equal("meeting notes verbatim", transcriptStore.Read(req.RecordingId)?.Markdown);
+        // LINT R7: no audio/voiceprint path published.
+        Assert.DoesNotContain(req.RepoRelativePaths, p =>
+            p.Contains("audio", StringComparison.Ordinal) || p.Contains("voiceprint", StringComparison.Ordinal));
+    }
+
+    // ── AUDIO-ONLY: no Google .txt → BaseTranscribe transcribes via CT126 (BaseReTranscribeEnabled),
+    //    THEN the normal audio pipeline (diarize → attribute) runs and it reaches graph_pr_opened. ───────
+    [Fact]
+    public async Task An_audio_only_recording_transcribes_via_ct126_then_diarizes_reaching_graph_pr_opened()
+    {
+        var ledger = new InMemoryEnrichmentLedger();
+        var store = await EnrolledStore();
+        var pr = new FakeMapPrWriter();
+        var points = new InMemoryOpenPointStore();
+
+        // No Google .txt (None) → the CT126 re-transcribe fallback produces the base. reTranscribeEnabled=true
+        // is the config MC must set for audio-only (CERVELLO_BASE_RETRANSCRIBE_ENABLED=true).
+        var ct126 = new FakeTranscribeClient(new BaseTranscript("ct126 transcribed base", "fr"));
+        var diarizeSpy = FakeDiarizeEmbedClient.Returning(DiarizeResponse());
+        var transcriptStore = new InMemoryTranscriptStore();
+
+        var pipeline = new EnrichmentPipeline(
+            new IngestStage(ledger),
+            new FakeAudioSource(SynthAudio),
+            new BaseTranscribeStage(
+                FakeBaseTranscriptSource.None(),          // NO Google .txt for this recording
+                transcriptStore,
+                reTranscribe: ct126,                      // CT126 fallback wired …
+                reTranscribeEnabled: true),               // … and ENABLED (audio-only requires it ON)
+            new DiarizeEmbedStage(diarizeSpy),
+            new ClusterMergeStage(),
+            new AttributionStage(store,
+                new FilenameParticipantPriorSource(new Dictionary<string, PriorCandidates> { ["20260704-voicememo"] = new PriorCandidates(["guilhem"], true) }),
+                new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
+            new CorrectionStage(new FakeCorrectionLlm(Array.Empty<CorrectionCandidate>()), new InMemoryCorrectionMapStore(), new FakeReAsrClient(), new CorrectionGrader(PolicyPhase.EscalateOnly)),
+            new EnrichLinkStage(new FakeLinkResolver("guilhem", "marco", "mara")),
+            new ApplyStage(new CervelloGraphWriter(pr, new FakeLinkResolver("guilhem", "marco", "mara"), new FakePinStore()), points),
+            new FakeRecordingFactSource());
+
+        var outcome = await pipeline.RunAsync(AudioOnlyRec(), EnrichmentState.Normalized);
+
+        Assert.Equal(PipelineStatus.Completed, outcome.Status);
+        Assert.Equal(EnrichmentState.GraphPrOpened, outcome.State);
+
+        // CT126 transcribed the base (no Google .txt) …
+        Assert.Equal(1, ct126.Calls);
+        Assert.Equal("ct126 transcribed base", transcriptStore.Read("20260704-voicememo")?.Markdown);
+        // … and the audio pipeline ran (diarize was called — audio IS present).
+        Assert.Equal(1, diarizeSpy.Calls);
+
+        // Speakers were diarized + attributed (3 clusters → escalate-only → 3 open-points).
+        var apply = Assert.IsType<ApplyResult>(outcome.Apply);
+        Assert.Equal(3, apply.OpenPoints);
+    }
+
+    // ── Guard: an AUDIO recording whose blob is genuinely MISSING still fails terminal (unchanged) —
+    //    the transcript-only skip must NOT mask a real audio-expected-but-absent failure. ───────────────
+    [Fact]
+    public async Task An_audio_recording_with_a_missing_blob_still_fails_terminal_not_skipped()
+    {
+        var ledger = new InMemoryEnrichmentLedger();
+        var store = await EnrolledStore();
+        var pipeline = new EnrichmentPipeline(
+            new IngestStage(ledger),
+            new FakeAudioSource(unavailable: true),       // audio EXPECTED (Rec has a sha) but the blob is gone
+            new BaseTranscribeStage(new FakeBaseTranscriptSource(new BaseTranscript("x", "fr")), new InMemoryTranscriptStore()),
+            new DiarizeEmbedStage(FakeDiarizeEmbedClient.Returning(DiarizeResponse())),
+            new ClusterMergeStage(),
+            new AttributionStage(store, new FilenameParticipantPriorSource(new Dictionary<string, PriorCandidates>()), new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly)),
+            new CorrectionStage(new FakeCorrectionLlm(Array.Empty<CorrectionCandidate>()), new InMemoryCorrectionMapStore(), new FakeReAsrClient(), new CorrectionGrader(PolicyPhase.EscalateOnly)),
+            new EnrichLinkStage(new FakeLinkResolver()),
+            new ApplyStage(new CervelloGraphWriter(new FakeMapPrWriter(), new FakeLinkResolver(), new FakePinStore()), new InMemoryOpenPointStore()),
+            new FakeRecordingFactSource());
+
+        var outcome = await pipeline.RunAsync(Rec(), EnrichmentState.Normalized); // Rec() HAS an audio sha
+
+        Assert.Equal(EnrichmentState.FailedTerminal, outcome.State);
+        Assert.Contains("audio unavailable", outcome.Reason);
+    }
+
     /// <summary>
     /// THE INVARIANT (reused from the E5 acceptance harness). For every mutation in an opened PR: a
     /// non-empty source, a parseable basis, and no fabricated value (every person/value is a known input).

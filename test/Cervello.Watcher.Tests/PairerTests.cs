@@ -25,8 +25,8 @@ public sealed class PairerTests
 
         Assert.NotNull(pair);
         Assert.Equal("Foo", pair!.Basename);
-        Assert.Equal("A", pair.Audio.FileId);
-        Assert.Equal("T", pair.Transcript.FileId);
+        Assert.Equal("A", pair.Audio!.FileId);
+        Assert.Equal("T", pair.Transcript!.FileId);
     }
 
     // ---- Scenario: Lone audio waits for its transcript ----
@@ -63,8 +63,8 @@ public sealed class PairerTests
         var pair = p.Offer(Staged("Foo", "audio", "A"));
 
         Assert.NotNull(pair);
-        Assert.Equal("A", pair!.Audio.FileId);
-        Assert.Equal("T", pair.Transcript.FileId);
+        Assert.Equal("A", pair!.Audio!.FileId);
+        Assert.Equal("T", pair.Transcript!.FileId);
     }
 
     [Fact]
@@ -81,5 +81,70 @@ public sealed class PairerTests
         var p = new Pairer();
         Assert.Null(p.Offer(Staged("Foo", "audio", "A")));
         Assert.Null(p.Offer(Staged("Bar", "transcript", "T"))); // different basename => no pair
+    }
+
+    // ---- MIXED-cases: singleton flush ----
+
+    [Fact]
+    public void FlushSingletons_emits_a_lone_audio_as_an_audio_only_recording()
+    {
+        var p = new Pairer();
+        p.Offer(Staged("Foo", "audio", "A"));
+
+        var singles = p.FlushSingletons();
+
+        var s = Assert.Single(singles);
+        Assert.Equal("Foo", s.Basename);
+        Assert.True(s.HasAudio);
+        Assert.False(s.HasTranscript);
+        Assert.Equal("A", s.Audio!.FileId);
+        Assert.Null(s.Transcript);
+    }
+
+    [Fact]
+    public void FlushSingletons_emits_a_lone_transcript_as_a_transcript_only_recording()
+    {
+        var p = new Pairer();
+        p.Offer(Staged("Foo", "transcript", "T"));
+
+        var s = Assert.Single(p.FlushSingletons());
+        Assert.Equal("Foo", s.Basename);
+        Assert.False(s.HasAudio);
+        Assert.True(s.HasTranscript);
+        Assert.Equal("T", s.Transcript!.FileId);
+        Assert.Null(s.Audio);
+    }
+
+    [Fact]
+    public void FlushSingletons_does_NOT_emit_a_completed_pair()
+    {
+        var p = new Pairer();
+        p.Offer(Staged("Foo", "audio", "A"));
+        p.Offer(Staged("Foo", "transcript", "T")); // Foo is now a complete pair
+
+        Assert.Empty(p.FlushSingletons()); // the pair is not a singleton
+    }
+
+    [Fact]
+    public void FlushSingletons_separates_paired_from_single_sided()
+    {
+        var p = new Pairer();
+        p.Offer(Staged("Both", "audio", "BA"));
+        p.Offer(Staged("Both", "transcript", "BT")); // complete pair
+        p.Offer(Staged("AudioOnly", "audio", "AO")); // single
+        p.Offer(Staged("TxtOnly", "transcript", "TO")); // single
+
+        var singles = p.FlushSingletons();
+
+        Assert.Equal(2, singles.Count);
+        Assert.Contains(singles, s => s.Basename == "AudioOnly" && s.HasAudio && !s.HasTranscript);
+        Assert.Contains(singles, s => s.Basename == "TxtOnly" && !s.HasAudio && s.HasTranscript);
+        Assert.DoesNotContain(singles, s => s.Basename == "Both");
+    }
+
+    [Fact]
+    public void PairedRecording_requires_at_least_one_side()
+    {
+        Assert.Throws<ArgumentException>(() => new PairedRecording("Foo", null, null));
     }
 }
