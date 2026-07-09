@@ -79,6 +79,7 @@ public sealed class EnrichmentPipeline
     private readonly IRecordingFactSource _facts;
     private readonly IGitPublisher _gitPublisher;
     private readonly IRecordingVoiceprintStore _recordingVoiceprints;
+    private readonly ITranscriptStore? _transcriptStore;
     private readonly ILogger _log;
 
     /// <summary>The auto-basis version the applied-timeline mutations carry (lint R9 provenance).</summary>
@@ -100,6 +101,7 @@ public sealed class EnrichmentPipeline
         IRecordingFactSource facts,
         IGitPublisher? gitPublisher = null,
         IRecordingVoiceprintStore? recordingVoiceprints = null,
+        ITranscriptStore? transcriptStore = null,
         ILogger<EnrichmentPipeline>? logger = null)
     {
         _ingest = ingest ?? throw new ArgumentNullException(nameof(ingest));
@@ -119,6 +121,11 @@ public sealed class EnrichmentPipeline
         // corpus store still exercises the persist call (offline), while the live host wires
         // PgRecordingVoiceprintStore (CT146 pgvector — the M3 corpus build spec).
         _recordingVoiceprints = recordingVoiceprints ?? new InMemoryRecordingVoiceprintStore();
+        // M5: OPTIONAL — when a host wires it, the corrected + speaker-labeled document (§5 M5) is
+        // persisted at recordings/attributions/<id>.md alongside the base transcript. When absent (a
+        // test/host that doesn't need the artifact) the corrected+labeled build still runs (in-memory,
+        // for the pipeline outcome / future callers) but nothing is persisted — never a hard dependency.
+        _transcriptStore = transcriptStore;
         _log = logger ?? NullLogger<EnrichmentPipeline>.Instance;
     }
 
@@ -217,14 +224,14 @@ public sealed class EnrichmentPipeline
             IReadOnlyList<AttributionVerdict> attribution;
             if (hasAudio)
             {
-                // ── 4. DIARIZE + EMBED: the SAME audio → per-speaker clusters ─────────────────────
+                // ── 4. DIARIZE + EMBED: the SAME audio → per-speaker clusters ─────────────────
                 var diarize = await _diarize.DiarizeEmbedAsync(recording, audio, ct).ConfigureAwait(false);
                 if (!diarize.Succeeded)
                     // The stage already classified transient (retryable) vs terminal — honour it verbatim.
                     return Fail(recording, state, diarize.FailureState!.Value, transitions,
                         diarize.Reason ?? "diarize-embed failed");
 
-                // ── 5. CLUSTER MERGE: over-split clusters → one merged unit per real speaker ───────
+                // ── 5. CLUSTER MERGE: over-split clusters → one merged unit per real speaker ─────
                 var merged = _merge.Merge(diarize.Clusters);
 
                 // ── 5b. PERSIST THE CORPUS: every merged cluster's centroid → recording_voiceprints
@@ -303,6 +310,19 @@ public sealed class EnrichmentPipeline
             // ── 7. CORRECTION: base transcript + resolved participants → evidence-gated diffs ──────
             //     (base transcript from step 3 + participants derived alongside attribution — the
             //     "prior stages feed correction" hand-off.)
+            // M5 — metadata-informed correction: the participant set handed to CorrectionStage is now
+            // the UNION of (a) facts.Participants (the Brain-API-derived set) and (b) the M4
+            // AttributionStage's OWN resolved persons (enrolled matches + participant-hint named
+            // voices) — real names the attribution stage actually confirmed for THIS recording, not
+            // just what the fact-derivation LLM guessed at. This closes the gap where a mis-transcribed
+            // name matching an attributed speaker (e.g. "Gilan" → the attributed "Guilhem") had no
+            // participant evidence to correct against. AttributionParticipants() below builds this
+            // strictly from AutoApplied/Flagged AttributionVerdicts (never an OpenPoint/omitted one —
+            // those are unconfirmed, never treated as an identity fact); glossary continues to come
+            // from ICorrectionMapStore.GetGlossaryAsync() inside CorrectionStage (unchanged — M5 does
+            // not touch the grader/evidence-gating, only the inputs it grounds against).
+            var correctionParticipants = MergeParticipants(facts.Participants, AttributionParticipants(attribution));
+
             // OPTIONAL-LLM step, GRACEFUL-DEGRADE. Correction is another Brain-API (CT139) Claude call
             // that can 502 / time out. Like fact-derivation it ENHANCES the transcript, it does not gate
             // the drain: a failed correction pass must NOT fail the recording. On failure we LOG a warning
@@ -312,7 +332,7 @@ public sealed class EnrichmentPipeline
             try
             {
                 correction = await _correction
-                    .CorrectAsync(recording.Id, baseTranscript.Markdown, facts.Participants, facts.GarbledSpans, ct)
+                    .CorrectAsync(recording.Id, baseTranscript.Markdown, correctionParticipants, facts.GarbledSpans, ct)
                     .ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -333,7 +353,37 @@ public sealed class EnrichmentPipeline
             }
             var correctionVerdicts = CollectCorrectionVerdicts(correction);
 
-            // ── 8. ENRICH + LINK: verdicts + derived facts → SCHEMAS §6 bundle ────────────────────
+            // ── 7b. SPEAKER LABELS: apply the M4 attribution result to the corrected transcript ─────
+            //     (design §5 M5 "apply speaker labels"). TranscriptLabeler is a pure, additive helper —
+            //     NOT a new correction stage: it mechanically applies the ALREADY-GATED correction.Diffs
+            //     to the base text (never re-decides a diff) and renders a roster strictly from the M4
+            //     AttributionResult (real name for an applied verdict, "Unknown speaker N" for a
+            //     LocalUnknownLabel verdict, NOTHING for an unconfirmed open-point or a plain omit — the
+            //     never-invent floor). Best-effort persist: a store failure never fails the drain (same
+            //     posture as the searchable-substrate publish below).
+            var correctedText = TranscriptLabeler.ApplyDiffs(baseTranscript.Markdown, correction.Diffs);
+            var roster = TranscriptLabeler.BuildRoster(new AttributionResult(attribution, Array.Empty<EnrollmentProposal>()));
+            var labeledDocument = correctedText + TranscriptLabeler.RenderRosterSection(roster);
+            if (_transcriptStore is not null)
+            {
+                try
+                {
+                    await _transcriptStore.WriteAttributionAsync(recording.Id, labeledDocument, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex,
+                        "pipeline {Key}: corrected+labeled transcript persist failed (non-fatal — " +
+                        "drain continues; a replay/rescan re-persists)",
+                        recording.IdempotencyKey);
+                }
+            }
+
+            // ── 8. ENRICH + LINK: verdicts + derived facts → SCHEMAS §6 bundle ──────────────
             var bundleId = recording.Id;
             var enrichInput = new EnrichLinkInput(
                 bundleId: bundleId,
@@ -351,7 +401,7 @@ public sealed class EnrichmentPipeline
             var bundle = await _enrich.EnrichAsync(enrichInput, ct).ConfigureAwait(false);
             state = Advance(state, EnrichmentState.BundleCreated, transitions); // → bundle_created
 
-            // ── 9. APPLY / GRAPH-ADD: route graded facts (dry-run PR / open-points / omit) ────────
+            // ── 9. APPLY / GRAPH-ADD: route graded facts (dry-run PR / open-points / omit) ────
             var applyInput = new ApplyInput(
                 bundleId: bundleId,
                 recordingId: recording.Id,
@@ -401,9 +451,11 @@ public sealed class EnrichmentPipeline
     /// correction have run) only the verbatim transcript (<c>recordings/transcripts/&lt;id&gt;.md</c>)
     /// is pushed, so recall is fast and never gated behind the slower audio/LLM stages; <paramref
     /// name="bundleId"/> is not needed in that case. Otherwise (the stage-10 ENRICHED publish, after
-    /// <c>graph_pr_opened</c>) the full set is pushed: the transcript (now possibly corrected — same
-    /// path, so this second push UPDATES the blob the early call created rather than duplicating it),
-    /// the enrichment bundle (<c>inbox/&lt;id&gt;/{data.json,bundle.md}</c>), and the manifest
+    /// <c>graph_pr_opened</c>) the full set is pushed: the (immutable, write-once) base transcript path
+    /// — a second push over the SAME path, updating the blob the early call created rather than
+    /// duplicating it — the M5 corrected + speaker-labeled document
+    /// (<c>recordings/attributions/&lt;id&gt;.md</c>, when a transcript store is wired), the enrichment
+    /// bundle (<c>inbox/&lt;id&gt;/{data.json,bundle.md}</c>), and the manifest
     /// (<c>recordings/manifest.yaml</c>). <see cref="ForgejoContentsPublisher"/> is a GET-sha →
     /// POST(create)/PUT(update)-by-sha adapter, so the two calls over the SAME transcript path are
     /// idempotent by construction: the first call creates (no prior sha), the second reads the sha the
@@ -420,6 +472,10 @@ public sealed class EnrichmentPipeline
             var paths = new List<string> { $"recordings/transcripts/{recordingId}.md" };
             if (!baseOnly)
             {
+                // M5: the corrected + speaker-labeled document, only when a transcript store persisted
+                // one (offline pipelines with no store wired have nothing at this path to push).
+                if (_transcriptStore is not null)
+                    paths.Add(_transcriptStore.AttributionPath(recordingId));
                 paths.Add($"inbox/{bundleId}/data.json");
                 paths.Add($"inbox/{bundleId}/bundle.md");
                 paths.Add(ManifestPath);
@@ -477,6 +533,53 @@ public sealed class EnrichmentPipeline
         all.AddRange(correction.OpenPoints);
         all.AddRange(correction.Omitted);
         return all;
+    }
+
+    /// <summary>
+    /// M5 — the M4 attribution stage's OWN resolved persons, as <see cref="ResolvedParticipant"/>s the
+    /// correction stage can evidence-gate a name-correction against. Built ONLY from applied verdicts
+    /// (<see cref="AttributionOutcome.AutoApplied"/>/<see cref="AttributionOutcome.Flagged"/>, carrying
+    /// a non-null <see cref="AttributionVerdict.Person"/>) — an <c>OpenPoint</c> (unconfirmed) or a
+    /// plain <c>Omitted</c> contributes nothing (the never-invent floor: an unconfirmed attribution is
+    /// never treated as a participant fact). A resolved participant here carries no confirmed alias
+    /// list of its own (the attribution stage names the canonical person, not a spelling variant), so
+    /// <see cref="ResolvedParticipant.Matches"/> falls back to matching the canonical name only —
+    /// correction of a mis-transcribed spelling of that name still routes through the merge with
+    /// <paramref name="attribution"/>'s sibling <c>facts.Participants</c> aliases when present.
+    /// </summary>
+    private static IReadOnlyList<ResolvedParticipant> AttributionParticipants(
+        IReadOnlyList<AttributionVerdict> attribution)
+    {
+        var result = new List<ResolvedParticipant>();
+        foreach (var v in attribution)
+        {
+            if (v.IsApplied && v.Person is not null)
+                result.Add(new ResolvedParticipant(v.Person, v.Person, Array.Empty<string>()));
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// M5 — the participant set handed to <see cref="Pipeline.Stages.CorrectionStage"/>: the UNION of
+    /// the Brain-API-derived <paramref name="factsParticipants"/> and the M4-attribution-derived
+    /// <paramref name="attributionParticipants"/>, deduplicated by slug (an attribution-derived entry
+    /// never overrides a facts-derived one that already names the same person — it only ADDS people the
+    /// attribution stage confirmed but the fact-derivation pass did not surface, e.g. an enrolled voice
+    /// match with no corresponding participant-hint metadata).
+    /// </summary>
+    private static IReadOnlyList<ResolvedParticipant> MergeParticipants(
+        IReadOnlyList<ResolvedParticipant> factsParticipants,
+        IReadOnlyList<ResolvedParticipant> attributionParticipants)
+    {
+        if (attributionParticipants.Count == 0)
+            return factsParticipants; // no attribution-derived names — nothing to add (common case)
+
+        var merged = new List<ResolvedParticipant>(factsParticipants);
+        var known = new HashSet<string>(factsParticipants.Select(p => p.Slug), StringComparer.Ordinal);
+        foreach (var p in attributionParticipants)
+            if (known.Add(p.Slug))
+                merged.Add(p);
+        return merged;
     }
 
     /// <summary>
