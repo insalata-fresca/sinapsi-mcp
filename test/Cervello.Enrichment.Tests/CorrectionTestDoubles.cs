@@ -24,6 +24,24 @@ internal sealed class FakeCorrectionLlm(IReadOnlyList<CorrectionCandidate> propo
 }
 
 /// <summary>
+/// A correction LLM that always THROWS — simulates the Brain-API (CT139) <c>/v1/enrich/correct</c>
+/// Claude call 502-ing / timing out. Proves the correction pass is GRACEFUL at the orchestrator: a
+/// failed correction is logged and skipped (base transcript left as-is), the drain still reaches
+/// graph_pr_opened rather than failing the recording.
+/// </summary>
+internal sealed class ThrowingCorrectionLlm : ICorrectionLlm
+{
+    public int Calls { get; private set; }
+
+    public Task<IReadOnlyList<CorrectionCandidate>> ProposeAsync(
+        string baseText, CorrectionContext context, CancellationToken ct = default)
+    {
+        Calls++;
+        throw new Adapters.CorrectionLlmException("correction LLM 502: Bad Gateway", retryable: true);
+    }
+}
+
+/// <summary>
 /// Deterministic fake selective-re-ASR client. Returns a scripted clarification per span, and
 /// COUNTS calls so a test can prove re-ASR runs on exactly the garbled spans, never the whole
 /// transcript. No live endpoint, no audio.
