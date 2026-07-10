@@ -54,13 +54,20 @@ public sealed record DiarizedSegment
 }
 
 /// <summary>
-/// The per-speaker centroid embedding: <c>{speaker, vector[192]}</c>. The vector is a
-/// 192-d L2-normalised ECAPA-TDNN output (spec: exactly <see cref="ExpectedDim"/> floats).
+/// The per-speaker centroid embedding: <c>{speaker, vector[256]}</c>. The vector is a
+/// 256-d L2-normalised pyannote/wespeaker-voxceleb-resnet34-LM output (spec: exactly
+/// <see cref="ExpectedDim"/> floats).
 /// </summary>
 public sealed record SpeakerEmbedding
 {
-    /// <summary>The contract-mandated embedding dimensionality (ECAPA-TDNN, 192-d).</summary>
-    public const int ExpectedDim = 192;
+    /// <summary>
+    /// The contract-mandated embedding dimensionality (pyannote speaker-diarization-3.1's
+    /// WeSpeaker embedding, 256-d). Was 192-d (ECAPA-TDNN) prior to the pyannote sidecar rewrite —
+    /// bumping this alone does NOT re-fit <see cref="Policy.DecisionPolicy.DefaultAutoBand"/>; the
+    /// 0.62 auto-apply cut was measured on ECAPA and MUST be re-fit for wespeaker before auto-apply
+    /// (currently dark) is ever enabled.
+    /// </summary>
+    public const int ExpectedDim = 256;
 
     public SpeakerEmbedding(string speaker, IReadOnlyList<float> vector)
     {
@@ -81,7 +88,8 @@ public sealed record SpeakerEmbedding
 
 /// <summary>
 /// The serving-stack identity block — lets the engine gate on model version
-/// (spec: "Model identity is returned"). v1 ungated stack = silero-VAD + ECAPA, dim 192.
+/// (spec: "Model identity is returned"). v1 ungated stack = silero-VAD +
+/// pyannote/wespeaker-voxceleb-resnet34-LM, dim 256.
 /// </summary>
 public sealed record DiarizeEmbedModel
 {

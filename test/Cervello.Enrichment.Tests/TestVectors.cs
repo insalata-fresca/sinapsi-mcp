@@ -3,14 +3,14 @@ using Cervello.Enrichment.Ports;
 namespace Cervello.Enrichment.Tests;
 
 /// <summary>
-/// Synthetic 192-d embedding helpers. NO personal audio and NO real biometric vectors ever
+/// Synthetic 256-d embedding helpers. NO personal audio and NO real biometric vectors ever
 /// appear in these tests — only deterministically constructed synthetic vectors whose pairwise
 /// cosine we control, so we can prove cluster-merge collapses an over-split speaker and never
 /// merges two distinct embeddings.
 /// </summary>
 internal static class TestVectors
 {
-    public const int Dim = SpeakerEmbedding.ExpectedDim; // 192
+    public const int Dim = SpeakerEmbedding.ExpectedDim; // 256
 
     /// <summary>A vector that is 1.0 on axis <paramref name="axis"/> and 0 elsewhere (unit).</summary>
     public static float[] Axis(int axis)

@@ -9,13 +9,13 @@ namespace Cervello.Enrichment.Tests;
 /// diarize-embed-sidecar — the request/response contract as implemented on the engine side,
 /// exercised through the <see cref="IDiarizeEmbedClient"/> seam via a deterministic fake (no
 /// live endpoint, no network, no personal audio). These assert the contract E2a's server must
-/// satisfy: 192-d L2-normalised embeddings, one per speaker; the model identity block; the
+/// satisfy: 256-d L2-normalised embeddings, one per speaker; the model identity block; the
 /// failure classification onto SCHEMAS §5 states.
 /// </summary>
 public sealed class DiarizeEmbedContractTests
 {
     private static readonly DiarizeEmbedModel V1Model =
-        new(vad: "silero-vad", embed: "speechbrain/spkrec-ecapa-voxceleb", dim: 192);
+        new(vad: "silero-vad", embed: "pyannote/wespeaker-voxceleb-resnet34-LM", dim: 256);
 
     private static RecordingRef Rec() => new("20260601-guilhem", "abc123sha", "m4a", "fr", ready: true);
 
@@ -37,7 +37,7 @@ public sealed class DiarizeEmbedContractTests
 
     // ---- Scenario: Diarize + embed a recording ----
     [Fact]
-    public async Task Diarize_embed_returns_segments_and_one_192d_embedding_per_speaker()
+    public async Task Diarize_embed_returns_segments_and_one_256d_embedding_per_speaker()
     {
         var fake = FakeDiarizeEmbedClient.Returning(TwoSpeakerResponse());
         var stage = new DiarizeEmbedStage(fake);
@@ -45,9 +45,9 @@ public sealed class DiarizeEmbedContractTests
         var result = await stage.DiarizeEmbedAsync(Rec(), Audio());
 
         Assert.True(result.Succeeded);
-        // One cluster per distinct speaker, each with a 192-d vector and its own segments.
+        // One cluster per distinct speaker, each with a 256-d vector and its own segments.
         Assert.Equal(2, result.Clusters.Count);
-        Assert.All(result.Clusters, c => Assert.Equal(192, c.Centroid.Count));
+        Assert.All(result.Clusters, c => Assert.Equal(256, c.Centroid.Count));
         var s1 = result.Clusters.Single(c => c.Speaker == "s1");
         Assert.Equal(2, s1.Segments.Count); // s1 speaks twice
         Assert.Equal(1, fake.Calls);
@@ -62,17 +62,17 @@ public sealed class DiarizeEmbedContractTests
 
         Assert.NotNull(result.Model);
         Assert.Equal("silero-vad", result.Model!.Vad);
-        Assert.Equal("speechbrain/spkrec-ecapa-voxceleb", result.Model.Embed);
-        Assert.Equal(192, result.Model.Dim);
+        Assert.Equal("pyannote/wespeaker-voxceleb-resnet34-LM", result.Model.Embed);
+        Assert.Equal(256, result.Model.Dim);
     }
 
-    // ---- Contract invariant: an embedding vector that is not 192-d is rejected at the boundary ----
+    // ---- Contract invariant: an embedding vector that is not 256-d is rejected at the boundary ----
     [Fact]
-    public void An_embedding_that_is_not_192d_is_rejected_by_the_contract_type()
+    public void An_embedding_that_is_not_256d_is_rejected_by_the_contract_type()
     {
         var ex = Assert.Throws<ArgumentException>(() =>
             new SpeakerEmbedding("s1", new float[128]));
-        Assert.Contains("192", ex.Message);
+        Assert.Contains("256", ex.Message);
     }
 
     // ---- Scenario: Client is a swappable seam ----

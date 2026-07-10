@@ -12,7 +12,7 @@ namespace Cervello.Enrichment.Tests;
 /// Biometric-confinement invariants as offline binary properties (spec <c>voiceprint-store</c> →
 /// "Voiceprints never git"; DESIGN §10.4: embeddings never enter git, never leave CT146). We
 /// assert that the OUTPUTS that DO cross the git / map boundary — the attribution verdict and the
-/// dossier <c>voice:</c> line — never carry the 192-d vector, while the vector-bearing
+/// dossier <c>voice:</c> line — never carry the 256-d vector, while the vector-bearing
 /// <see cref="Voiceprint"/> is the store-only (CT146) type.
 /// </summary>
 public sealed class BiometricConfinementTests
@@ -26,7 +26,7 @@ public sealed class BiometricConfinementTests
         var res = await new VoiceprintEnrollment(store).EnrollOnConfirmationAsync(
             "guilhem", TestVectors.Axis(0), ["rec://r1#s1"], 0.83, ConfirmationBasis.Human("op_1"), Day);
 
-        // The dossier line is a short human string, not a serialization of 192 floats.
+        // The dossier line is a short human string, not a serialization of 256 floats.
         Assert.Equal("enrolled 2026-07-01, 1 samples, last-match 0.83", res.DossierVoiceLine);
         Assert.True(res.DossierVoiceLine.Length < 80);
     }

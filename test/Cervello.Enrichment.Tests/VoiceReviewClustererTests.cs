@@ -14,7 +14,7 @@ namespace Cervello.Enrichment.Tests;
 /// deterministic for a fixed input + cutoff; already-enrolled voices are excluded when an enrolled
 /// store is supplied; and nothing is persisted (repeated calls never mutate the corpus store).
 ///
-/// <para>SYNTHETIC 192-d vectors only — no personal audio, no real biometric vector ever appears here.</para>
+/// <para>SYNTHETIC 256-d vectors only — no personal audio, no real biometric vector ever appears here.</para>
 /// </summary>
 public sealed class VoiceReviewClustererTests
 {
@@ -23,7 +23,7 @@ public sealed class VoiceReviewClustererTests
     private static RecordingVoiceprint Row(
         string recordingId, int clusterIndex, float[] centroid,
         int segmentCount = 3, double duration = 12.5, string label = "s1") =>
-        new(recordingId, clusterIndex, centroid, "spkrec-ecapa-voxceleb", segmentCount, duration, label, T0);
+        new(recordingId, clusterIndex, centroid, "pyannote/wespeaker-voxceleb-resnet34-LM", segmentCount, duration, label, T0);
 
     // ── Cluster() — the pure, synchronous grouping step ─────────────────────────────────────
 

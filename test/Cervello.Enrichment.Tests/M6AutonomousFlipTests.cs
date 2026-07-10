@@ -20,7 +20,7 @@ namespace Cervello.Enrichment.Tests;
 ///   <item>(d) an off-§10-allowlist auto-enroll is REFUSED (never written);</item>
 ///   <item>(e) auto-enroll enrolls the CORRECT voiceprint (the hinted voice, tied to the hinted person).</item>
 /// </list>
-/// Synthetic 192-d vectors + in-memory adapters only — no personal audio, no biometric vectors.
+/// Synthetic 256-d vectors + in-memory adapters only — no personal audio, no biometric vectors.
 /// </summary>
 public sealed class M6AutonomousFlipTests
 {

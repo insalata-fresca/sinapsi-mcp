@@ -28,7 +28,7 @@ public sealed class PgVoiceprintNamingCandidateStore : IVoiceprintNamingCandidat
         CREATE TABLE IF NOT EXISTS voiceprint_naming_candidates (
             drive_file_id   TEXT PRIMARY KEY,
             sample_name     TEXT NOT NULL,
-            centroid        vector(192) NOT NULL,
+            centroid        vector(256) NOT NULL,
             source_members  JSONB NOT NULL,
             created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
             resolved        BOOLEAN NOT NULL DEFAULT false

@@ -23,9 +23,9 @@ namespace Cervello.Enrichment.Adapters;
 /// with <c>Invalid data found when processing input</c>. The optional tuning params
 /// (<c>min_segment_ms</c>, <c>window_ms</c>) go on the <b>query string</b>, which is where the sidecar
 /// reads them. The 200 response is
-/// <c>{ segments:[{speaker,start,end}], embeddings:[{speaker,vector[192]}], model:{vad,embed,dim} }</c>.
+/// <c>{ segments:[{speaker,start,end}], embeddings:[{speaker,vector[256]}], model:{vad,embed,dim} }</c>.
 /// The engine maps this onto the strongly-typed <see cref="DiarizeEmbedResponse"/> (which enforces
-/// the 192-d invariant in <see cref="SpeakerEmbedding"/>'s ctor).</para>
+/// the 256-d invariant in <see cref="SpeakerEmbedding"/>'s ctor).</para>
 ///
 /// <para><b>Confinement:</b> audio flows out as a transient request payload only; the adapter
 /// retains nothing after the call returns. Only the derived segments + embeddings are returned.</para>
@@ -131,7 +131,7 @@ public sealed class GatewayDiarizeEmbedClient : IDiarizeEmbedClient
         return wire;
     }
 
-    /// <summary>Map the wire JSON onto the domain response (the 192-d invariant is enforced by the ctors).</summary>
+    /// <summary>Map the wire JSON onto the domain response (the 256-d invariant is enforced by the ctors).</summary>
     private static DiarizeEmbedResponse Map(WireResponse wire)
     {
         if (wire.Segments is null || wire.Embeddings is null || wire.Model is null)
@@ -145,7 +145,7 @@ public sealed class GatewayDiarizeEmbedClient : IDiarizeEmbedClient
         }
         catch (ArgumentException e)
         {
-            // A contract-shape violation from the server (e.g. a non-192-d vector) is terminal — the
+            // A contract-shape violation from the server (e.g. a non-256-d vector) is terminal — the
             // engine never fabricates; it surfaces the exact reason for failed_terminal.
             throw new DiarizeEmbedTerminalException($"diarize-embed response violates the contract: {e.Message}", e);
         }

@@ -22,7 +22,7 @@ public sealed class CorpusReattributorTests
     private const string Basis = "human://rename:file-3";
 
     private static RecordingVoiceprint Row(string rec, int idx, float[] centroid) =>
-        new(rec, idx, centroid, "spkrec-ecapa-voxceleb", 1, 20.0, "s1", T0, [new DiarizedSegment("s1", 0, 20)]);
+        new(rec, idx, centroid, "pyannote/wespeaker-voxceleb-resnet34-LM", 1, 20.0, "s1", T0, [new DiarizedSegment("s1", 0, 20)]);
 
     [Fact] // scenario: only the recording whose centroid matches ≥ auto is requeued + marked for auto-apply
     public async Task Auto_band_match_requeues_and_marks_recent_enrollment()

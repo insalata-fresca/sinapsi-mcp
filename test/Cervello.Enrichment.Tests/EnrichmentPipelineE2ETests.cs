@@ -24,7 +24,7 @@ namespace Cervello.Enrichment.Tests;
 ///   → <c>failed_terminal</c>; and escalate-only holds (a clean 0.90 match still escalates).</item>
 /// </list>
 ///
-/// Synthetic 192-d vectors + scripted fakes only — NO personal audio/data.
+/// Synthetic 256-d vectors + scripted fakes only — NO personal audio/data.
 /// </summary>
 public sealed class EnrichmentPipelineE2ETests
 {
@@ -48,7 +48,7 @@ public sealed class EnrichmentPipelineE2ETests
             new SpeakerEmbedding("s2", TestVectors.TiltedFromAxis(30, 40, 0.95)),// → marco/mara (ambiguous)
             new SpeakerEmbedding("s3", TestVectors.Axis(99)),                    // orthogonal → omit
         ],
-        model: new DiarizeEmbedModel("silero-vad", "ecapa-tdnn", 192));
+        model: new DiarizeEmbedModel("silero-vad", "pyannote/wespeaker-voxceleb-resnet34-LM", 256));
 
     private static async Task<InMemoryVoiceprintStore> EnrolledStore()
     {
@@ -368,7 +368,7 @@ public sealed class EnrichmentPipelineE2ETests
         var empty = new DiarizeEmbedResponse(
             segments: Array.Empty<DiarizedSegment>(),
             embeddings: Array.Empty<SpeakerEmbedding>(),
-            model: new DiarizeEmbedModel("silero-vad", "ecapa-tdnn", 192));
+            model: new DiarizeEmbedModel("silero-vad", "pyannote/wespeaker-voxceleb-resnet34-LM", 256));
 
         var (pipeline, pr, points, _) = await BuildPipelineAsync(
             diarizeClient: FakeDiarizeEmbedClient.Returning(empty));
@@ -499,7 +499,7 @@ public sealed class EnrichmentPipelineE2ETests
         await recordingVoiceprints.PersistAsync(SecondRecId,
         [
             new RecordingVoiceprint(
-                SecondRecId, 0, TestVectors.Axis(77), "spkrec-ecapa-voxceleb", 1, 5.0, "s1", DateTimeOffset.UtcNow),
+                SecondRecId, 0, TestVectors.Axis(77), "pyannote/wespeaker-voxceleb-resnet34-LM", 1, 5.0, "s1", DateTimeOffset.UtcNow),
         ]);
         var corpus = await recordingVoiceprints.GetCorpusAsync();
         Assert.Equal(4, corpus.Count); // rec-1's 3 + rec-2's 1, coexisting

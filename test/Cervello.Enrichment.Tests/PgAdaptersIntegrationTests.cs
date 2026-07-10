@@ -126,8 +126,8 @@ public sealed class PgAdaptersIntegrationTests : IAsyncLifetime
         // Round-trip: persist rec-1's two merged clusters, fetch them back verbatim, ordered by index.
         await store.PersistAsync("rec-1",
         [
-            new RecordingVoiceprint("rec-1", 0, v0, "spkrec-ecapa-voxceleb", 4, 20.0, "s1", DateTimeOffset.UtcNow, rec1Seg0),
-            new RecordingVoiceprint("rec-1", 1, v1, "spkrec-ecapa-voxceleb", 2, 8.5, "s3", DateTimeOffset.UtcNow),
+            new RecordingVoiceprint("rec-1", 0, v0, "pyannote/wespeaker-voxceleb-resnet34-LM", 4, 20.0, "s1", DateTimeOffset.UtcNow, rec1Seg0),
+            new RecordingVoiceprint("rec-1", 1, v1, "pyannote/wespeaker-voxceleb-resnet34-LM", 2, 8.5, "s3", DateTimeOffset.UtcNow),
         ]);
         var rec1 = await store.GetForRecordingAsync("rec-1");
         Assert.Equal(2, rec1.Count);
@@ -153,7 +153,7 @@ public sealed class PgAdaptersIntegrationTests : IAsyncLifetime
         var refinedSeg0 = new DiarizedSegment[] { new("s1", 0.0, 6.0), new("s1", 10.0, 20.0), new("s1", 25.0, 40.0) };
         await store.PersistAsync("rec-1",
         [
-            new RecordingVoiceprint("rec-1", 0, v0, "spkrec-ecapa-voxceleb", 9, 45.0, "s1-relabelled", DateTimeOffset.UtcNow, refinedSeg0),
+            new RecordingVoiceprint("rec-1", 0, v0, "pyannote/wespeaker-voxceleb-resnet34-LM", 9, 45.0, "s1-relabelled", DateTimeOffset.UtcNow, refinedSeg0),
         ]);
         var rec1AfterUpsert = await store.GetForRecordingAsync("rec-1");
         Assert.Equal(2, rec1AfterUpsert.Count); // still 2 rows — upsert, not a duplicate
@@ -166,7 +166,7 @@ public sealed class PgAdaptersIntegrationTests : IAsyncLifetime
         // OWN segments attached (no cross-recording/cross-cluster mixup in the batch attach).
         await store.PersistAsync("rec-2",
         [
-            new RecordingVoiceprint("rec-2", 0, TestVectors.Axis(50), "spkrec-ecapa-voxceleb", 1, 3.0, "s1",
+            new RecordingVoiceprint("rec-2", 0, TestVectors.Axis(50), "pyannote/wespeaker-voxceleb-resnet34-LM", 1, 3.0, "s1",
                 DateTimeOffset.UtcNow, [new DiarizedSegment("s1", 100.0, 103.0)]),
         ]);
         var corpus = await store.GetCorpusAsync();

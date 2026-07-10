@@ -11,7 +11,7 @@ namespace Cervello.Enrichment.Tests;
 /// L1 unit tests for the LIVE <see cref="GatewayDiarizeEmbedClient"/> (E2a's deferred adapter) over
 /// a MOCK HttpClient (no live sidecar, no brain-api, no personal audio). Asserts the request WIRE
 /// FORMAT (path, bearer, RAW audio bytes round-tripping byte-for-byte, <c>audio/&lt;format&gt;</c>
-/// content-type, tuning params on the query string), the 200 response mapping (192-d invariant, model
+/// content-type, tuning params on the query string), the 200 response mapping (256-d invariant, model
 /// block), and the failure classification (4xx→terminal, 5xx/timeout/transport→transient). What L2
 /// verifies live: the real brain-api route + sidecar round-trip, and transient-audio confinement on
 /// CT139.
@@ -40,11 +40,11 @@ public sealed class GatewayDiarizeEmbedClientTests
                           { "speaker": "s2", "start": 4.2, "end": 8.0 } ],
           "embeddings": [ { "speaker": "s1", "vector": [VEC] },
                           { "speaker": "s2", "vector": [VEC] } ],
-          "model": { "vad": "silero-vad", "embed": "speechbrain/spkrec-ecapa-voxceleb", "dim": 192 } }
-        """.Replace("[VEC]", Vec192());
+          "model": { "vad": "silero-vad", "embed": "pyannote/wespeaker-voxceleb-resnet34-LM", "dim": 256 } }
+        """.Replace("[VEC]", Vec256());
 
-    private static string Vec192() =>
-        "[" + string.Join(",", Enumerable.Repeat("0.01", 192)) + "]";
+    private static string Vec256() =>
+        "[" + string.Join(",", Enumerable.Repeat("0.01", 256)) + "]";
 
     private static DiarizeEmbedRequest Req() => new(Audio, "m4a", minSegmentMs: 500, windowMs: 1500);
 
@@ -111,7 +111,7 @@ public sealed class GatewayDiarizeEmbedClientTests
     }
 
     [Fact]
-    public async Task Maps_the_200_response_including_the_192d_vectors_and_model()
+    public async Task Maps_the_200_response_including_the_256d_vectors_and_model()
     {
         var (client, _) = Make(StubHttpMessageHandler.Json(HttpStatusCode.OK, OkBody()));
 
@@ -123,13 +123,13 @@ public sealed class GatewayDiarizeEmbedClientTests
         Assert.Equal(2, res.Embeddings.Count);
         Assert.All(res.Embeddings, e => Assert.Equal(SpeakerEmbedding.ExpectedDim, e.Vector.Count));
         Assert.Equal("silero-vad", res.Model.Vad);
-        Assert.Equal(192, res.Model.Dim);
+        Assert.Equal(256, res.Model.Dim);
     }
 
     [Fact]
-    public async Task A_non_192d_vector_is_a_terminal_contract_violation_not_a_fabrication()
+    public async Task A_non_256d_vector_is_a_terminal_contract_violation_not_a_fabrication()
     {
-        var bad = OkBody().Replace(Vec192(), "[0.1,0.2,0.3]"); // 3-d, violates the contract
+        var bad = OkBody().Replace(Vec256(), "[0.1,0.2,0.3]"); // 3-d, violates the contract
         var (client, _) = Make(StubHttpMessageHandler.Json(HttpStatusCode.OK, bad));
 
         await Assert.ThrowsAsync<DiarizeEmbedTerminalException>(() => client.DiarizeEmbedAsync(Req()));

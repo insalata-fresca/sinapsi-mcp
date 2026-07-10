@@ -22,7 +22,7 @@ namespace Cervello.Enrichment.Adapters;
 /// this key — it never duplicates rows.</para>
 ///
 /// <para><b>pgvector convention (from Sinapsi.Indexer, same as <see cref="PgVoiceprintStore"/>):</b>
-/// the 192-d centroid is written as a text literal <c>'[f1,f2,…]'</c> (invariant culture) and cast
+/// the 256-d centroid is written as a text literal <c>'[f1,f2,…]'</c> (invariant culture) and cast
 /// <c>::vector</c> in SQL; the HNSW cosine index is provisioned for the M4 corpus-wide cross-recording
 /// clusterer to query. No Pgvector NuGet package — Npgsql + the text literal.</para>
 ///
@@ -40,7 +40,7 @@ public sealed class PgRecordingVoiceprintStore : IRecordingVoiceprintStore, ISch
         CREATE TABLE IF NOT EXISTS recording_voiceprints (
             recording_id    TEXT NOT NULL,
             cluster_index   INT NOT NULL,
-            centroid        vector(192) NOT NULL,
+            centroid        vector(256) NOT NULL,
             model           TEXT NOT NULL,
             segment_count   INT NOT NULL,
             duration_seconds DOUBLE PRECISION NOT NULL,

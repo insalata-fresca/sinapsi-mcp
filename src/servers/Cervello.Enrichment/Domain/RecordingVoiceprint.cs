@@ -6,7 +6,7 @@ namespace Cervello.Enrichment.Domain;
 /// One durably-persisted per-recording, per-merged-cluster centroid row — the raw corpus material
 /// M4's cross-recording resolver will cluster over (design doc <c>ste/cervello</c>
 /// <c>docs/design/autonomous-attribution.md</c> §4.1/§5 M3; finding 3.a: the diarize sidecar already
-/// emits per-recording per-speaker 192-d L2-normalised ECAPA centroids, but engine-side they were only
+/// emits per-recording per-speaker 256-d L2-normalised pyannote/wespeaker centroids, but engine-side they were only
 /// held transiently in <see cref="Cervello.Enrichment.DiarizedCentroidEnrollmentSourceProvider"/> and
 /// evicted after open-point resolution — nothing accumulated).
 ///
@@ -79,7 +79,7 @@ public sealed record RecordingVoiceprint
     /// </summary>
     public int ClusterIndex { get; }
 
-    /// <summary>The 192-d L2-normalised ECAPA centroid for this merged cluster (biometric — CT146-only).</summary>
+    /// <summary>The 256-d L2-normalised pyannote/wespeaker centroid for this merged cluster (biometric — CT146-only).</summary>
     public IReadOnlyList<float> Centroid { get; }
 
     /// <summary>The sidecar model id this centroid's vector space belongs to (space-compatibility gating).</summary>
