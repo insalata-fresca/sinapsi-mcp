@@ -114,10 +114,10 @@ public sealed class HostCompositionTests
 
             var initializers = sp.GetServices<ISchemaInitializer>().ToList();
             // One per Pg store: ledger, correction-map, voiceprint, open-points, recording-voiceprint,
-            // voiceprint-naming-candidate (V4) (the recording-voiceprint initializer's SchemaName now
-            // lists TWO tables — the V0 segment child table added alongside it — but it is still ONE
-            // initializer/singleton).
-            Assert.Equal(6, initializers.Count);
+            // voiceprint-naming-candidate (V4), voiceprint-enrollment-consent (V5), voiceprint-recent-
+            // enrollment (V6). (The recording-voiceprint initializer's SchemaName now lists TWO tables —
+            // the V0 segment child table added alongside it — but it is still ONE initializer/singleton.)
+            Assert.Equal(8, initializers.Count);
 
             // Every expected table is covered by some initializer's SchemaName (the voiceprint store
             // owns three tables listed together; the recording-voiceprint store now owns two).
@@ -128,6 +128,7 @@ public sealed class HostCompositionTests
                          "voiceprints", "voiceprint_tombstones", "voiceprint_enrollment_audio",
                          "open_points", "recording_voiceprints", "recording_voiceprint_segments",
                          "voiceprint_naming_candidates",
+                         "voiceprint_enrollment_consent", "voiceprint_recent_enrollment",
                      })
             {
                 Assert.Contains(table, covered);

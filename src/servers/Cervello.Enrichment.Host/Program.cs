@@ -85,6 +85,19 @@ else
 builder.Services.AddSingleton<DrainWorker>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<DrainWorker>());
 
+// ── V5 voiceprint-rename poller (BackgroundService) ──────────────────────────
+//    A dedicated poller (design ste/cervello docs/design/voiceprint-naming.md §7 phase V5) — the
+//    recordings WatchWorker diffs fileId→md5 and can't see a rename; this diffs fileId→name over the
+//    voiceprints/ folder, enrolls the renamed voice, moves it to registry/, and kicks V6. LIVE mode
+//    only: VoiceprintRenameResolver resolves fully only once the V5 seams (IVoiceprintRegistryDrive,
+//    IEnrollmentConsentStore, IRecentEnrollmentStore, IRecordingRequeue) are live-wired by the live
+//    branch — in fake mode IVoiceprintRegistryDrive has no in-engine fake, so the poller runs only live.
+if (engineCfg.UseLiveAdapters)
+{
+    builder.Services.AddSingleton<VoiceprintRenamePollerWorker>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<VoiceprintRenamePollerWorker>());
+}
+
 var app = builder.Build();
 
 // ── migrations on startup ────────────────────────────────────────────────────

@@ -97,6 +97,31 @@ public static class EnrichmentComposition
         // the fake branch to have registered every seam (it does, below).
         services.AddSingleton<Pipeline.VoiceSampleGenerator>();
 
+        // Voiceprint-naming V6 — the corpus re-attributor (design §7 phase V6). Pure compute over the
+        // IRecordingVoiceprintStore corpus + IRecordingRequeue + IRecentEnrollmentStore (all registered
+        // live-vs-fake below); identical in both modes. Uses the SAME DecisionBands the attribution
+        // policy uses (resolved from the registered DecisionPolicy) so the auto/borderline split matches.
+        services.AddSingleton(sp => new Pipeline.CorpusReattributor(
+            sp.GetRequiredService<IRecordingVoiceprintStore>(),
+            sp.GetRequiredService<IRecordingRequeue>(),
+            sp.GetRequiredService<IRecentEnrollmentStore>(),
+            sp.GetRequiredService<DecisionPolicy>().Bands,
+            sp.GetService<ILogger<Pipeline.CorpusReattributor>>()));
+
+        // Voiceprint-naming V5 — the rename → enroll → move → re-attribute resolver (design §7 phase V5).
+        // Reuses VoiceprintEnrollment (the only centroid-write path, registered above) + the §10 consent
+        // store + the registry Drive surface + the candidate store (all live-vs-fake below). Identical in
+        // both modes; the Host wraps it in a BackgroundService poller.
+        services.AddSingleton(sp => new Pipeline.VoiceprintRenameResolver(
+            sp.GetRequiredService<IVoiceprintRegistryDrive>(),
+            sp.GetRequiredService<IVoiceprintNamingCandidateStore>(),
+            sp.GetRequiredService<IEnrollmentConsentStore>(),
+            sp.GetRequiredService<VoiceprintEnrollment>(),
+            sp.GetRequiredService<IRecentEnrollmentStore>(),
+            sp.GetRequiredService<Pipeline.CorpusReattributor>(),
+            sp.GetService<IAccessLog>(),
+            sp.GetService<ILogger<Pipeline.VoiceprintRenameResolver>>()));
+
         return services;
     }
 
@@ -296,6 +321,20 @@ public static class EnrichmentComposition
         services.AddHttpClient<GatewayMcpClient>(c => c.Timeout = timeout);
         services.AddSingleton<IVoiceSampleUploader, GdriveVoiceSampleUploader>();
 
+        // V5 — rename poller + enroll + move-to-registry (design §7 phase V5). The §10 consent store +
+        // the recent-enrollment auto-apply signal are new CT146 Pg tables (ISchemaInitializer, ensured on
+        // startup like every other Pg store); the requeue seam writes the shared watcher_recording row
+        // (owned by the Watcher — never CREATEd here); the registry Drive surface reuses the SAME
+        // GatewayMcpClient + AgentJwtMinter + agent-cervello-watcher identity as the V4 uploader.
+        services.AddSingleton<IEnrollmentConsentStore, PgEnrollmentConsentStore>();
+        services.AddSingleton<ISchemaInitializer>(sp =>
+            (PgEnrollmentConsentStore)sp.GetRequiredService<IEnrollmentConsentStore>());
+        services.AddSingleton<IRecentEnrollmentStore, PgRecentEnrollmentStore>();
+        services.AddSingleton<ISchemaInitializer>(sp =>
+            (PgRecentEnrollmentStore)sp.GetRequiredService<IRecentEnrollmentStore>());
+        services.AddSingleton<IRecordingRequeue, PgRecordingRequeue>();
+        services.AddSingleton<IVoiceprintRegistryDrive, GdriveVoiceprintRegistry>();
+
         // CT-side + git-working-tree stores. The repo working tree + pin/log dirs default to the
         // Watcher's custody root; a host overrides via the matching env before calling.
         var repoRoot = Environment.GetEnvironmentVariable("CERVELLO_REPO_WORKTREE")
@@ -395,8 +434,12 @@ public static class EnrichmentComposition
         // needs those wired supplies them; the DI root registers only the fakes that ship in the
         // engine assembly (the stores + CT-side seams), so a fake-mode graph resolves the storage
         // tier offline. This keeps the engine free of test doubles while proving the wiring.
+        // §10 consent store first (fake) so the in-memory voiceprint store can UNION it into its gate.
+        services.AddSingleton<IEnrollmentConsentStore, InMemoryEnrollmentConsentStore>();
         services.AddSingleton<IVoiceprintStore>(sp =>
-            new InMemoryVoiceprintStore(sp.GetRequiredService<EnrollmentAllowlist>()));
+            new InMemoryVoiceprintStore(
+                sp.GetRequiredService<EnrollmentAllowlist>(),
+                sp.GetRequiredService<IEnrollmentConsentStore>()));
         services.AddSingleton<ICorrectionMapStore, InMemoryCorrectionMapStore>();
         services.AddSingleton<IOpenPointStore, InMemoryOpenPointStore>();
         services.AddSingleton<IEnrichmentLedger, InMemoryEnrichmentLedger>();
@@ -409,6 +452,12 @@ public static class EnrichmentComposition
         // mirroring HostCompositionTests' StubAudioSource pattern.
         services.AddSingleton<IRecordingAudioRefResolver, InMemoryRecordingAudioRefResolver>();
         services.AddSingleton<IVoiceprintNamingCandidateStore, InMemoryVoiceprintNamingCandidateStore>();
+
+        // V5/V6 — the rename resolver + re-attributor seams (offline slice). IVoiceprintRegistryDrive
+        // has no in-engine fake (like the audio/upload ports — its test double lives in the test
+        // project); a fake-mode host that needs VoiceprintRenameResolver supplies it.
+        services.AddSingleton<IRecentEnrollmentStore, InMemoryRecentEnrollmentStore>();
+        services.AddSingleton<IRecordingRequeue, InMemoryRecordingRequeue>();
 
         // No live git egress in fake mode: the searchable-substrate publisher is a no-op (the offline
         // slice writes artifacts to the in-memory stores; nothing is pushed to ste/cervello).

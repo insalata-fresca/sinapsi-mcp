@@ -35,11 +35,17 @@ public sealed class AttributionStage(
     IVoiceprintStore store,
     DecisionPolicy policy,
     IParticipantHintSource? participantHints = null,
+    IRecentEnrollmentStore? recentEnrollment = null,
     ILogger<AttributionStage>? logger = null)
 {
     private readonly IVoiceprintStore _store = store ?? throw new ArgumentNullException(nameof(store));
     private readonly DecisionPolicy _policy = policy ?? throw new ArgumentNullException(nameof(policy));
     private readonly IParticipantHintSource? _hints = participantHints;
+    // V6: the SCOPED "just human-enrolled by rename" signal. When the BEST enrolled match is a slug the
+    // operator just enrolled AND the cosine is ≥ auto band, the verdict AUTO-APPLIES with the
+    // enrollment's human:// basis — even under the global escalate-only phase (§9 fork 2). Optional
+    // (null pre-V6 / in every existing test), so the stage's default behaviour is unchanged.
+    private readonly IRecentEnrollmentStore? _recentEnrollment = recentEnrollment;
     private readonly ILogger _log = logger ?? NullLogger<AttributionStage>.Instance;
 
     /// <summary>Resolve every merged cluster for a recording into a verdict + any enrollment proposals.</summary>
@@ -175,6 +181,31 @@ public sealed class AttributionStage(
         // A voice signal ≥ the reject band counts as an enrolled match for accounting (even if the policy
         // ultimately escalates it). Below reject / nothing enrolled → not accounted for (null person).
         var accounted = best is not null && best.Cosine >= _policy.Bands.RejectBand ? best.PersonSlug : null;
+
+        // V6 SCOPED AUTO-APPLY (§9 fork 2): if the BEST match is a person the operator JUST enrolled by
+        // rename AND it is a SINGLE ≥-auto match (no second ≥-auto contender — an ambiguous voice still
+        // escalates), auto-apply the label carrying the enrollment's human:// basis, bypassing the
+        // escalate-only phase gate. The mark is scoped to this exact slug, so no other attribution is
+        // affected. A borderline (below-auto) match to a just-enrolled print does NOT qualify here — it
+        // falls through to the normal policy, which escalates it (§9 fork 3: borderline never mislabels).
+        if (best is not null
+            && _policy.Bands.IsAuto(best.Cosine)
+            && !(second is not null && _policy.Bands.IsAuto(second.Cosine))
+            && _recentEnrollment is not null)
+        {
+            var humanBasisId = await _recentEnrollment.GetBasisAsync(best.PersonSlug, ct).ConfigureAwait(false);
+            if (humanBasisId is not null && ConfirmationBasis.TryParse(humanBasisId, out var humanBasis)
+                && humanBasis!.Kind == ConfirmationBasisKind.Human)
+            {
+                var reattributeSource = $"rec://{recordingId}#{cluster.MergedSpeaker}";
+                var reattributeVerdict = AttributionVerdict.AutoApplied(
+                    cluster.MergedSpeaker, best.PersonSlug, best.Cosine, reattributeSource, humanBasis);
+                _log.LogInformation(
+                    "attribution {Rec}#{Speaker}: AUTO-APPLIED {Person} @ {Cosine:0.###} via just-enrolled human basis {Basis} (V6 re-attribution)",
+                    recordingId, cluster.MergedSpeaker, best.PersonSlug, best.Cosine, humanBasis.Id);
+                return (reattributeVerdict, accounted);
+            }
+        }
 
         var candidate = new AttributionCandidate(
             mergedSpeaker: cluster.MergedSpeaker,

@@ -60,13 +60,22 @@ public sealed class PgVoiceprintStore : IVoiceprintStore, ISchemaInitializer
 
     private readonly string _connString;
     private readonly EnrollmentAllowlist _allowlist;
+    private readonly IEnrollmentConsentStore? _consent;
     private readonly ILogger _log;
 
-    public PgVoiceprintStore(EnrichmentConfig cfg, EnrollmentAllowlist allowlist, ILogger<PgVoiceprintStore>? log = null)
+    public PgVoiceprintStore(
+        EnrichmentConfig cfg,
+        EnrollmentAllowlist allowlist,
+        IEnrollmentConsentStore? consent = null,
+        ILogger<PgVoiceprintStore>? log = null)
     {
         ArgumentNullException.ThrowIfNull(cfg);
         _connString = cfg.PostgresDsn;
         _allowlist = allowlist ?? throw new ArgumentNullException(nameof(allowlist));
+        // The durable, runtime-mutable §10 consent extension (V5 rename-consent); optional (null pre-V5).
+        // When present its slugs UNION with the static allowlist so a rename-consented person enrolls
+        // without a redeploy. Never REPLACES the static gate; only widens it.
+        _consent = consent;
         _log = log ?? NullLogger<PgVoiceprintStore>.Instance;
     }
 
@@ -146,8 +155,11 @@ public sealed class PgVoiceprintStore : IVoiceprintStore, ISchemaInitializer
         ArgumentNullException.ThrowIfNull(confirmedCentroid);
         ArgumentNullException.ThrowIfNull(sourceSegments);
 
-        // §10 allowlist — hard gate (never a silent skip), identical to the in-memory store.
-        if (!_allowlist.IsAllowed(personSlug))
+        // §10 allowlist — hard gate (never a silent skip), identical to the in-memory store. The static
+        // allowlist is UNIONed with the durable rename-consent store (V5): a person the operator
+        // consented-to-enroll via a Drive rename passes the gate even if not in the deploy-time set.
+        if (!_allowlist.IsAllowed(personSlug)
+            && !(_consent is not null && await _consent.IsConsentedAsync(personSlug, ct).ConfigureAwait(false)))
             throw new EnrollmentNotAllowedException(personSlug);
 
         await using var c = await OpenAsync(ct);
