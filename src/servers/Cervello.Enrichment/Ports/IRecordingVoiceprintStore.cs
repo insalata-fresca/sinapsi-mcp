@@ -37,4 +37,16 @@ public interface IRecordingVoiceprintStore
     /// cross-recording clusterer reads. Ordered by <c>(RecordingId, ClusterIndex)</c> for determinism.
     /// </summary>
     Task<IReadOnlyList<RecordingVoiceprint>> GetCorpusAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Fetch the persisted segment time-ranges for ONE cluster, keyed on <c>(recordingId,
+    /// clusterIndex)</c> — the same identity key as everything else on this port (design
+    /// <c>ste/cervello</c> <c>docs/design/voiceprint-naming.md</c> §1.1/§5, V0). This is what the
+    /// naming surface's representative-segment pick + clip-cutter (a later phase) calls to locate
+    /// "which <c>{start,end}</c> of which recording is this voice". Ordered by <c>Start</c> ascending.
+    /// Returns an empty list for an unknown/absent cluster or a pre-V0 row with no persisted ranges —
+    /// never throws for a missing key.
+    /// </summary>
+    Task<IReadOnlyList<DiarizedSegment>> GetSegmentsAsync(
+        string recordingId, int clusterIndex, CancellationToken ct = default);
 }

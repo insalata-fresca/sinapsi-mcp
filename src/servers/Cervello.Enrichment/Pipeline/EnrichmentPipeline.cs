@@ -31,10 +31,12 @@ namespace Cervello.Enrichment.Pipeline;
 ///   <c>failed_retryable</c>; a malformed/undecodable one → <c>failed_terminal</c>.</item>
 /// <item><b>ClusterMerge</b> (<see cref="ClusterMergeStage"/>) — over-split clusters → one
 ///   <see cref="MergedCluster"/> per real speaker (the attribution unit). Immediately after, every
-///   merged cluster's centroid is durably PERSISTED to the <see cref="IRecordingVoiceprintStore"/>
-///   corpus (design <c>ste/cervello</c> <c>docs/design/autonomous-attribution.md</c> §4.1/§5 M3),
-///   keyed by <c>(recordingId, clusterIndex)</c> — never the diarizer's per-recording label. This is
-///   additive/best-effort: a persist failure never fails the drain.</item>
+///   merged cluster's centroid AND its per-segment <c>{start,end}</c> time-ranges are durably
+///   PERSISTED to the <see cref="IRecordingVoiceprintStore"/> corpus (design <c>ste/cervello</c>
+///   <c>docs/design/autonomous-attribution.md</c> §4.1/§5 M3; ranges added by
+///   <c>docs/design/voiceprint-naming.md</c> §1.1/§5 V0), keyed by <c>(recordingId, clusterIndex)</c>
+///   — never the diarizer's per-recording label. This is additive/best-effort: a persist failure
+///   never fails the drain.</item>
 /// <item><b>Attribution</b> (<see cref="AttributionStage"/>) — merged clusters + the org-chart prior
 ///   + enrolled voiceprints → <see cref="AttributionVerdict"/>s (auto/flag/open/omit). This is the
 ///   diarize→attribution artifact hand-off: the merged-cluster CENTROID (from step 5) is what the
@@ -646,7 +648,11 @@ public sealed class EnrichmentPipeline
     /// descriptive metadata (<see cref="RecordingVoiceprint.MergedSpeakerLabel"/>). The sidecar's
     /// reported embed model id (<see cref="DiarizeEmbedModel.Embed"/>) is recorded per row for
     /// space-compatibility gating (design §4.1 <c>model</c> column) — the SAME response that produced
-    /// these clusters, never a hard-coded/guessed identifier.
+    /// these clusters, never a hard-coded/guessed identifier. <c>cluster.Segments</c> (the union of
+    /// per-speaker <c>{start,end}</c> ranges <see cref="ClusterMerge"/> already carries) is threaded
+    /// straight through to <see cref="RecordingVoiceprint.Segments"/> — voiceprint-naming V0 (design
+    /// <c>ste/cervello</c> <c>docs/design/voiceprint-naming.md</c> §1.1/§5): the store persists them,
+    /// this projection just stops dropping them.
     /// </summary>
     private static IReadOnlyList<RecordingVoiceprint> ToRecordingVoiceprints(
         string recordingId, IReadOnlyList<MergedCluster> merged, DiarizeEmbedModel model)
@@ -665,7 +671,12 @@ public sealed class EnrichmentPipeline
                 segmentCount: cluster.Segments.Count,
                 durationSeconds: duration,
                 mergedSpeakerLabel: cluster.MergedSpeaker,
-                createdAt: now));
+                createdAt: now,
+                // V0 (design ste/cervello docs/design/voiceprint-naming.md §1.1/§5): persist the
+                // per-segment {start,end} ranges alongside the centroid — the same union
+                // MergedCluster.Segments already carries in-flight. Without these the naming
+                // surface's representative-segment pick + clip-cutter cannot locate audio to cut.
+                segments: cluster.Segments));
         }
         return rows;
     }

@@ -476,6 +476,21 @@ public sealed class EnrichmentPipelineE2ETests
         // The corpus-wide view sees the same rows for this single-recording corpus.
         Assert.Equal(3, (await recordingVoiceprints.GetCorpusAsync()).Count);
 
+        // V0 (design ste/cervello docs/design/voiceprint-naming.md §1.1/§5): the per-segment
+        // {start,end} ranges DiarizeResponse() synthesises (s1:0-5, s2:5-10, s3:10-15) are threaded
+        // all the way through diarize → merge → persist, not dropped — this is the exact §1.1 gap
+        // being closed (the store used to keep only segment_count/duration_seconds). GetSegmentsAsync
+        // is the dedicated per-cluster read the naming surface/clip-cutter will call.
+        Assert.All(persisted, p => Assert.NotEmpty(p.Segments));
+        var expectedRanges = new (double Start, double End)[] { (0, 5), (5, 10), (10, 15) };
+        foreach (var (start, end) in expectedRanges)
+            Assert.Contains(persisted, p => p.Segments.Any(s => s.Start == start && s.End == end));
+        foreach (var p in persisted)
+        {
+            var viaGetSegments = await recordingVoiceprints.GetSegmentsAsync(RecId, p.ClusterIndex);
+            Assert.Equal(p.Segments.Count, viaGetSegments.Count);
+        }
+
         // A second, independent recording persists ALONGSIDE the first — the corpus accumulates,
         // it does not evict (finding 3.a: this replaces the transient in-memory eviction). Persisted
         // directly against the same store (the store contract, not a second pipeline run) to isolate

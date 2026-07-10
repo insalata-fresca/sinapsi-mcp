@@ -118,10 +118,15 @@ public sealed class PgAdaptersIntegrationTests : IAsyncLifetime
         var v0 = TestVectors.Axis(0);
         var v1 = TestVectors.Axis(10);
 
+        // V0 (design ste/cervello docs/design/voiceprint-naming.md §1.1/§5): rec-1's first cluster
+        // carries two segment ranges — proves the real DDL/SQL round-trips them, not just the InMemory
+        // contract test.
+        var rec1Seg0 = new DiarizedSegment[] { new("s1", 0.0, 5.0), new("s1", 12.0, 30.5) };
+
         // Round-trip: persist rec-1's two merged clusters, fetch them back verbatim, ordered by index.
         await store.PersistAsync("rec-1",
         [
-            new RecordingVoiceprint("rec-1", 0, v0, "spkrec-ecapa-voxceleb", 4, 20.0, "s1", DateTimeOffset.UtcNow),
+            new RecordingVoiceprint("rec-1", 0, v0, "spkrec-ecapa-voxceleb", 4, 20.0, "s1", DateTimeOffset.UtcNow, rec1Seg0),
             new RecordingVoiceprint("rec-1", 1, v1, "spkrec-ecapa-voxceleb", 2, 8.5, "s3", DateTimeOffset.UtcNow),
         ]);
         var rec1 = await store.GetForRecordingAsync("rec-1");
@@ -129,27 +134,47 @@ public sealed class PgAdaptersIntegrationTests : IAsyncLifetime
         Assert.Equal(0, rec1[0].ClusterIndex);
         Assert.Equal(1, rec1[1].ClusterIndex);
         Assert.True(Cosine.Similarity(rec1[0].Centroid, v0) > 0.99); // pgvector round-trip preserves the vector
+        Assert.Equal(2, rec1[0].Segments.Count);                      // segment ranges round-trip too
+        Assert.Equal(0.0, rec1[0].Segments[0].Start);
+        Assert.Equal(5.0, rec1[0].Segments[0].End);
+        Assert.Equal(12.0, rec1[0].Segments[1].Start);
+        Assert.Equal(30.5, rec1[0].Segments[1].End);
+        Assert.Empty(rec1[1].Segments);                               // cluster 1 was persisted with none
+
+        // GetSegmentsAsync — the dedicated per-cluster read the naming surface/clip-cutter will call.
+        var seg0 = await store.GetSegmentsAsync("rec-1", 0);
+        Assert.Equal(2, seg0.Count);
+        Assert.Equal(5.0, seg0[0].End);
 
         // Idempotent upsert: re-persisting the SAME (recording_id, cluster_index) key updates in place,
         // never duplicates — even though the diarizer label changes (labels are never the identity).
+        // The segment ranges also change (a re-run of diarize-embed need not reproduce the exact same
+        // boundaries) — the wholesale delete-then-insert must leave exactly the NEW set, no stale rows.
+        var refinedSeg0 = new DiarizedSegment[] { new("s1", 0.0, 6.0), new("s1", 10.0, 20.0), new("s1", 25.0, 40.0) };
         await store.PersistAsync("rec-1",
         [
-            new RecordingVoiceprint("rec-1", 0, v0, "spkrec-ecapa-voxceleb", 9, 45.0, "s1-relabelled", DateTimeOffset.UtcNow),
+            new RecordingVoiceprint("rec-1", 0, v0, "spkrec-ecapa-voxceleb", 9, 45.0, "s1-relabelled", DateTimeOffset.UtcNow, refinedSeg0),
         ]);
         var rec1AfterUpsert = await store.GetForRecordingAsync("rec-1");
         Assert.Equal(2, rec1AfterUpsert.Count); // still 2 rows — upsert, not a duplicate
         Assert.Equal(9, rec1AfterUpsert.Single(r => r.ClusterIndex == 0).SegmentCount);
+        var seg0AfterUpsert = await store.GetSegmentsAsync("rec-1", 0);
+        Assert.Equal(3, seg0AfterUpsert.Count);   // reflects the LATEST persist, not a union with the old 2
+        Assert.Equal(6.0, seg0AfterUpsert[0].End);
 
-        // Corpus-wide query: a DIFFERENT recording coexists; both are returned together.
+        // Corpus-wide query: a DIFFERENT recording coexists; both are returned together, each with its
+        // OWN segments attached (no cross-recording/cross-cluster mixup in the batch attach).
         await store.PersistAsync("rec-2",
         [
-            new RecordingVoiceprint("rec-2", 0, TestVectors.Axis(50), "spkrec-ecapa-voxceleb", 1, 3.0, "s1", DateTimeOffset.UtcNow),
+            new RecordingVoiceprint("rec-2", 0, TestVectors.Axis(50), "spkrec-ecapa-voxceleb", 1, 3.0, "s1",
+                DateTimeOffset.UtcNow, [new DiarizedSegment("s1", 100.0, 103.0)]),
         ]);
         var corpus = await store.GetCorpusAsync();
         Assert.Equal(3, corpus.Count); // rec-1's 2 + rec-2's 1
         Assert.Contains(corpus, r => r.RecordingId == "rec-1" && r.ClusterIndex == 0);
         Assert.Contains(corpus, r => r.RecordingId == "rec-1" && r.ClusterIndex == 1);
-        Assert.Contains(corpus, r => r.RecordingId == "rec-2" && r.ClusterIndex == 0);
+        var rec2c0 = corpus.Single(r => r.RecordingId == "rec-2" && r.ClusterIndex == 0);
+        Assert.Equal(100.0, rec2c0.Segments.Single().Start);
 
         // The confirmed enrolled-person table is untouched by this store (design invariant): still
         // exactly the ONE seeded row, unaffected by all the recording_voiceprints activity above.
@@ -232,6 +257,7 @@ public sealed class PgAdaptersIntegrationTests : IAsyncLifetime
         foreach (var table in new[]
                  {
                      "enrichment_ledger", "correction_map", "recording_voiceprints",
+                     "recording_voiceprint_segments",
                      "voiceprints", "voiceprint_tombstones", "voiceprint_enrollment_audio",
                      "open_points",
                  })
