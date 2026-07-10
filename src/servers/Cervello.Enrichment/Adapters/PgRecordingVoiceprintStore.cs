@@ -33,7 +33,7 @@ namespace Cervello.Enrichment.Adapters;
 /// </summary>
 public sealed class PgRecordingVoiceprintStore : IRecordingVoiceprintStore, ISchemaInitializer
 {
-    public string SchemaName => "recording_voiceprints";
+    public string SchemaName => "recording_voiceprints, recording_voiceprint_segments";
 
     private const string Ddl = """
         CREATE EXTENSION IF NOT EXISTS vector;
@@ -50,6 +50,18 @@ public sealed class PgRecordingVoiceprintStore : IRecordingVoiceprintStore, ISch
         );
         CREATE INDEX IF NOT EXISTS idx_recording_voiceprints_centroid
             ON recording_voiceprints USING hnsw (centroid vector_cosine_ops);
+        CREATE TABLE IF NOT EXISTS recording_voiceprint_segments (
+            recording_id    TEXT NOT NULL,
+            cluster_index   INT NOT NULL,
+            seg_order       INT NOT NULL,
+            speaker         TEXT NOT NULL,
+            start_seconds   DOUBLE PRECISION NOT NULL,
+            end_seconds     DOUBLE PRECISION NOT NULL,
+            PRIMARY KEY (recording_id, cluster_index, seg_order),
+            FOREIGN KEY (recording_id, cluster_index)
+                REFERENCES recording_voiceprints (recording_id, cluster_index)
+                ON DELETE CASCADE
+        );
         """;
 
     private readonly string _connString;
@@ -131,6 +143,37 @@ public sealed class PgRecordingVoiceprintStore : IRecordingVoiceprintStore, ISch
             up.Parameters.AddWithValue("label", row.MergedSpeakerLabel);
             up.Parameters.AddWithValue("created", row.CreatedAt);
             await up.ExecuteNonQueryAsync(ct);
+
+            // Replace this cluster's segment ranges wholesale (delete-then-insert) — simplest way to
+            // stay idempotent on a re-process where the segment COUNT itself may change (a re-run of
+            // diarize-embed need not yield the exact same segment boundaries), never leaving stale
+            // rows from a prior persist behind. Same transaction as the parent upsert above — a
+            // cluster's centroid and its segment ranges are never observably out of sync.
+            await using (var del = new NpgsqlCommand("""
+                DELETE FROM recording_voiceprint_segments WHERE recording_id = @rec AND cluster_index = @idx
+                """, c, tx))
+            {
+                del.Parameters.AddWithValue("rec", row.RecordingId);
+                del.Parameters.AddWithValue("idx", row.ClusterIndex);
+                await del.ExecuteNonQueryAsync(ct);
+            }
+
+            for (var i = 0; i < row.Segments.Count; i++)
+            {
+                var seg = row.Segments[i];
+                await using var segCmd = new NpgsqlCommand("""
+                    INSERT INTO recording_voiceprint_segments
+                        (recording_id, cluster_index, seg_order, speaker, start_seconds, end_seconds)
+                    VALUES (@rec, @idx, @ord, @speaker, @start, @end)
+                    """, c, tx);
+                segCmd.Parameters.AddWithValue("rec", row.RecordingId);
+                segCmd.Parameters.AddWithValue("idx", row.ClusterIndex);
+                segCmd.Parameters.AddWithValue("ord", i);
+                segCmd.Parameters.AddWithValue("speaker", seg.Speaker);
+                segCmd.Parameters.AddWithValue("start", seg.Start);
+                segCmd.Parameters.AddWithValue("end", seg.End);
+                await segCmd.ExecuteNonQueryAsync(ct);
+            }
         }
 
         await tx.CommitAsync(ct);
@@ -150,10 +193,15 @@ public sealed class PgRecordingVoiceprintStore : IRecordingVoiceprintStore, ISch
             """, c);
         cmd.Parameters.AddWithValue("rec", recordingId);
         var rows = new List<RecordingVoiceprint>();
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        while (await r.ReadAsync(ct))
-            rows.Add(ReadRow(r));
-        return rows;
+        await using (var r = await cmd.ExecuteReaderAsync(ct))
+        {
+            while (await r.ReadAsync(ct))
+                rows.Add(ReadRow(r));
+        }
+
+        var segsByCluster = await LoadSegmentsAsync(c, "WHERE recording_id = @rec",
+            cmd2 => cmd2.Parameters.AddWithValue("rec", recordingId), ct);
+        return AttachSegments(rows, segsByCluster);
     }
 
     public async Task<IReadOnlyList<RecordingVoiceprint>> GetCorpusAsync(CancellationToken ct = default)
@@ -166,10 +214,36 @@ public sealed class PgRecordingVoiceprintStore : IRecordingVoiceprintStore, ISch
             ORDER BY recording_id ASC, cluster_index ASC
             """, c);
         var rows = new List<RecordingVoiceprint>();
+        await using (var r = await cmd.ExecuteReaderAsync(ct))
+        {
+            while (await r.ReadAsync(ct))
+                rows.Add(ReadRow(r));
+        }
+
+        // Corpus-wide: one extra query for ALL segments (no per-row N+1), grouped in memory by
+        // (recording_id, cluster_index) — the same identity key as everywhere else on this store.
+        var segsByCluster = await LoadSegmentsAsync(c, sql: null, configure: null, ct);
+        return AttachSegments(rows, segsByCluster);
+    }
+
+    public async Task<IReadOnlyList<DiarizedSegment>> GetSegmentsAsync(
+        string recordingId, int clusterIndex, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(recordingId)) return Array.Empty<DiarizedSegment>();
+        await using var c = await OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand("""
+            SELECT speaker, start_seconds, end_seconds
+            FROM recording_voiceprint_segments
+            WHERE recording_id = @rec AND cluster_index = @idx
+            ORDER BY seg_order ASC
+            """, c);
+        cmd.Parameters.AddWithValue("rec", recordingId);
+        cmd.Parameters.AddWithValue("idx", clusterIndex);
+        var segments = new List<DiarizedSegment>();
         await using var r = await cmd.ExecuteReaderAsync(ct);
         while (await r.ReadAsync(ct))
-            rows.Add(ReadRow(r));
-        return rows;
+            segments.Add(new DiarizedSegment(r.GetString(0), r.GetDouble(1), r.GetDouble(2)));
+        return segments;
     }
 
     private static RecordingVoiceprint ReadRow(NpgsqlDataReader r) => new(
@@ -181,6 +255,53 @@ public sealed class PgRecordingVoiceprintStore : IRecordingVoiceprintStore, ISch
         durationSeconds: r.GetDouble(5),
         mergedSpeakerLabel: r.GetString(6),
         createdAt: r.GetFieldValue<DateTimeOffset>(7));
+
+    /// <summary>
+    /// Batch-load segment ranges, optionally filtered by an extra WHERE clause, grouped by
+    /// <c>(recording_id, cluster_index)</c> and ordered by <c>seg_order</c> within each group —
+    /// avoids an N+1 query per <see cref="RecordingVoiceprint"/> row in <see cref="GetForRecordingAsync"/>
+    /// / <see cref="GetCorpusAsync"/>.
+    /// </summary>
+    private static async Task<Dictionary<(string RecordingId, int ClusterIndex), List<DiarizedSegment>>> LoadSegmentsAsync(
+        NpgsqlConnection c, string? sql, Action<NpgsqlCommand>? configure, CancellationToken ct)
+    {
+        var whereClause = sql is null ? "" : sql;
+        await using var cmd = new NpgsqlCommand($"""
+            SELECT recording_id, cluster_index, speaker, start_seconds, end_seconds
+            FROM recording_voiceprint_segments
+            {whereClause}
+            ORDER BY recording_id ASC, cluster_index ASC, seg_order ASC
+            """, c);
+        configure?.Invoke(cmd);
+        var result = new Dictionary<(string, int), List<DiarizedSegment>>();
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct))
+        {
+            var key = (r.GetString(0), r.GetInt32(1));
+            var seg = new DiarizedSegment(r.GetString(2), r.GetDouble(3), r.GetDouble(4));
+            if (!result.TryGetValue(key, out var list))
+                result[key] = list = new List<DiarizedSegment>();
+            list.Add(seg);
+        }
+        return result;
+    }
+
+    private static List<RecordingVoiceprint> AttachSegments(
+        List<RecordingVoiceprint> rows,
+        Dictionary<(string RecordingId, int ClusterIndex), List<DiarizedSegment>> segsByCluster)
+    {
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            var segments = segsByCluster.TryGetValue((row.RecordingId, row.ClusterIndex), out var list)
+                ? (IReadOnlyList<DiarizedSegment>)list
+                : Array.Empty<DiarizedSegment>();
+            rows[i] = new RecordingVoiceprint(
+                row.RecordingId, row.ClusterIndex, row.Centroid, row.Model, row.SegmentCount,
+                row.DurationSeconds, row.MergedSpeakerLabel, row.CreatedAt, segments);
+        }
+        return rows;
+    }
 
     // pgvector text input/output: '[f1,f2,...]' (invariant culture), cast ::vector in SQL.
     private static string VecLiteral(IReadOnlyList<float> v) =>

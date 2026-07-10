@@ -53,4 +53,13 @@ public sealed class InMemoryRecordingVoiceprintStore : IRecordingVoiceprintStore
             .ToList();
         return Task.FromResult<IReadOnlyList<RecordingVoiceprint>>(rows);
     }
+
+    public Task<IReadOnlyList<DiarizedSegment>> GetSegmentsAsync(
+        string recordingId, int clusterIndex, CancellationToken ct = default)
+    {
+        var segments = _rows.TryGetValue((recordingId, clusterIndex), out var row)
+            ? row.Segments
+            : Array.Empty<DiarizedSegment>();
+        return Task.FromResult(segments);
+    }
 }

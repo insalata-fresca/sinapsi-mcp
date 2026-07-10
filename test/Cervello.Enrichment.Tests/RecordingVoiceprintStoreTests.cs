@@ -1,5 +1,6 @@
 using Cervello.Enrichment.Adapters;
 using Cervello.Enrichment.Domain;
+using Cervello.Enrichment.Ports;
 using Xunit;
 
 namespace Cervello.Enrichment.Tests;
@@ -20,9 +21,10 @@ public sealed class RecordingVoiceprintStoreTests
 
     private static RecordingVoiceprint Row(
         string recordingId, int clusterIndex, float[] centroid, string label,
-        int segmentCount = 3, double duration = 12.5, DateTimeOffset? createdAt = null) =>
+        int segmentCount = 3, double duration = 12.5, DateTimeOffset? createdAt = null,
+        IReadOnlyList<DiarizedSegment>? segments = null) =>
         new(recordingId, clusterIndex, centroid, "spkrec-ecapa-voxceleb", segmentCount, duration, label,
-            createdAt ?? T0);
+            createdAt ?? T0, segments);
 
     // ---- round-trip -------------------------------------------------------------------
 
@@ -162,5 +164,114 @@ public sealed class RecordingVoiceprintStoreTests
         var store = new InMemoryRecordingVoiceprintStore();
         await Assert.ThrowsAsync<ArgumentException>(() =>
             store.PersistAsync("rec-1", [Row("rec-OTHER", 0, TestVectors.Axis(0), "s1")]));
+    }
+
+    // ---- V0 segment-range persistence (design ste/cervello docs/design/voiceprint-naming.md §1.1/§5) ----
+
+    [Fact] // scenario: a cluster's segment {start,end} ranges round-trip through persist/get, in order
+    public async Task Persist_then_get_for_recording_round_trips_segment_ranges()
+    {
+        var store = new InMemoryRecordingVoiceprintStore();
+        var segments = new DiarizedSegment[]
+        {
+            new("s1", 0.0, 5.0),
+            new("s1", 12.0, 30.5),
+        };
+        await store.PersistAsync("rec-1", [Row("rec-1", 0, TestVectors.Axis(0), "s1", segments: segments)]);
+
+        var fetched = await store.GetForRecordingAsync("rec-1");
+
+        Assert.Equal(2, fetched[0].Segments.Count);
+        Assert.Equal(0.0, fetched[0].Segments[0].Start);
+        Assert.Equal(5.0, fetched[0].Segments[0].End);
+        Assert.Equal(12.0, fetched[0].Segments[1].Start);
+        Assert.Equal(30.5, fetched[0].Segments[1].End);
+    }
+
+    [Fact] // a row persisted with no segments (legacy/pre-V0, or a caller that omits them) round-trips empty
+    public async Task Persist_with_no_segments_round_trips_an_empty_list()
+    {
+        var store = new InMemoryRecordingVoiceprintStore();
+        await store.PersistAsync("rec-1", [Row("rec-1", 0, TestVectors.Axis(0), "s1")]);
+
+        var fetched = await store.GetForRecordingAsync("rec-1");
+
+        Assert.Empty(fetched[0].Segments);
+    }
+
+    [Fact] // scenario: re-processing the SAME recording (replay) upserts segment ranges too, never duplicates
+    public async Task Repersisting_the_same_recording_upserts_segment_ranges_not_duplicates()
+    {
+        var store = new InMemoryRecordingVoiceprintStore();
+        await store.PersistAsync("rec-1",
+            [Row("rec-1", 0, TestVectors.Axis(0), "s1", segments: [new DiarizedSegment("s1", 0.0, 5.0)])]);
+
+        // Re-process: same (recordingId, clusterIndex) key, a DIFFERENT (refined) segment set —
+        // e.g. a re-run of diarize-embed yields different boundaries. The latest persist wins wholesale.
+        var refinedSegments = new DiarizedSegment[]
+        {
+            new("s1", 0.0, 6.0),
+            new("s1", 10.0, 20.0),
+            new("s1", 25.0, 40.0),
+        };
+        await store.PersistAsync("rec-1",
+            [Row("rec-1", 0, TestVectors.TiltedFromAxis(0, 1, 0.95), "s1", segments: refinedSegments)]);
+
+        var fetched = await store.GetForRecordingAsync("rec-1");
+        Assert.Single(fetched); // still one centroid row — upsert, not a duplicate
+        Assert.Equal(3, fetched[0].Segments.Count); // reflects the LATEST persist, not a union with the old
+        Assert.Equal(6.0, fetched[0].Segments[0].End);
+    }
+
+    [Fact] // segments are retrievable per (recordingId, clusterIndex) via the dedicated read method
+    public async Task GetSegmentsAsync_returns_the_ranges_for_one_cluster_only()
+    {
+        var store = new InMemoryRecordingVoiceprintStore();
+        await store.PersistAsync("rec-1",
+        [
+            Row("rec-1", 0, TestVectors.Axis(0), "s1", segments: [new DiarizedSegment("s1", 1.0, 2.0)]),
+            Row("rec-1", 1, TestVectors.Axis(10), "s2", segments: [new DiarizedSegment("s2", 3.0, 4.0)]),
+        ]);
+
+        var seg0 = await store.GetSegmentsAsync("rec-1", 0);
+        var seg1 = await store.GetSegmentsAsync("rec-1", 1);
+
+        Assert.Single(seg0);
+        Assert.Equal(1.0, seg0[0].Start);
+        Assert.Single(seg1);
+        Assert.Equal(3.0, seg1[0].Start);
+    }
+
+    [Fact] // an unknown (recordingId, clusterIndex) returns empty, never throws
+    public async Task GetSegmentsAsync_for_unknown_cluster_returns_empty()
+    {
+        var store = new InMemoryRecordingVoiceprintStore();
+        await store.PersistAsync("rec-1",
+            [Row("rec-1", 0, TestVectors.Axis(0), "s1", segments: [new DiarizedSegment("s1", 1.0, 2.0)])]);
+
+        Assert.Empty(await store.GetSegmentsAsync("rec-1", 99));
+        Assert.Empty(await store.GetSegmentsAsync("rec-unknown", 0));
+    }
+
+    [Fact] // GetCorpusAsync attaches the right segment ranges to the right cluster across many recordings
+    public async Task GetCorpusAsync_attaches_segments_per_cluster_across_recordings()
+    {
+        var store = new InMemoryRecordingVoiceprintStore();
+        await store.PersistAsync("rec-1",
+        [
+            Row("rec-1", 0, TestVectors.Axis(0), "s1", segments: [new DiarizedSegment("s1", 0.0, 1.0)]),
+            Row("rec-1", 1, TestVectors.Axis(10), "s2", segments: [new DiarizedSegment("s2", 2.0, 3.0)]),
+        ]);
+        await store.PersistAsync("rec-2",
+            [Row("rec-2", 0, TestVectors.Axis(20), "s1", segments: [new DiarizedSegment("s1", 4.0, 5.0)])]);
+
+        var corpus = await store.GetCorpusAsync();
+
+        var rec1c0 = corpus.Single(r => r.RecordingId == "rec-1" && r.ClusterIndex == 0);
+        var rec1c1 = corpus.Single(r => r.RecordingId == "rec-1" && r.ClusterIndex == 1);
+        var rec2c0 = corpus.Single(r => r.RecordingId == "rec-2" && r.ClusterIndex == 0);
+        Assert.Equal(0.0, rec1c0.Segments.Single().Start);
+        Assert.Equal(2.0, rec1c1.Segments.Single().Start);
+        Assert.Equal(4.0, rec2c0.Segments.Single().Start);
     }
 }

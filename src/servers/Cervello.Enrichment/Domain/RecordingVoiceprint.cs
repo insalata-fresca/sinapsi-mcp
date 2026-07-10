@@ -37,7 +37,8 @@ public sealed record RecordingVoiceprint
         int segmentCount,
         double durationSeconds,
         string mergedSpeakerLabel,
-        DateTimeOffset createdAt)
+        DateTimeOffset createdAt,
+        IReadOnlyList<DiarizedSegment>? segments = null)
     {
         if (string.IsNullOrWhiteSpace(recordingId))
             throw new ArgumentException("RecordingVoiceprint.RecordingId must be non-empty", nameof(recordingId));
@@ -66,6 +67,7 @@ public sealed record RecordingVoiceprint
         DurationSeconds = durationSeconds;
         MergedSpeakerLabel = mergedSpeakerLabel;
         CreatedAt = createdAt;
+        Segments = segments ?? Array.Empty<DiarizedSegment>();
     }
 
     public string RecordingId { get; }
@@ -97,4 +99,17 @@ public sealed record RecordingVoiceprint
     public string MergedSpeakerLabel { get; }
 
     public DateTimeOffset CreatedAt { get; }
+
+    /// <summary>
+    /// The per-segment <c>{speaker, start, end}</c> time-ranges (seconds) that contributed to this
+    /// merged cluster — the same union <c>MergedCluster.Segments</c> carries in-flight (design
+    /// <c>ste/cervello</c> <c>docs/design/voiceprint-naming.md</c> §1.1/§5, V0). Persisted so a later
+    /// phase (the naming surface's representative-segment pick + clip-cutter) can locate "which
+    /// <c>{start,end}</c> of which recording is this voice" without re-running the diarizer. Metadata
+    /// only — non-biometric (times, not vectors) — but CT146-side alongside the centroid, never git
+    /// (design §5 confinement note). Never empty for a cluster produced by the live pipeline (a
+    /// merged cluster always has &gt;= 1 source segment); MAY be empty for a hand-built/legacy row
+    /// (pre-V0 persisted rows, or a test row that doesn't need ranges).
+    /// </summary>
+    public IReadOnlyList<DiarizedSegment> Segments { get; }
 }
