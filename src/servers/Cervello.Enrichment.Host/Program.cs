@@ -140,6 +140,17 @@ if (engineCfg.UseLiveAdapters)
     app.MapCapture();
 }
 
+// ── V4 voiceprint-naming sample-generation trigger (design ste/cervello
+//    docs/design/voiceprint-naming.md §7 phase V4) ───────────────────────────────────────────────
+//    Token-gated (the SAME cervello operator bearer as open-points/context-pack). LIVE mode only:
+//    VoiceSampleGenerator resolves fully only once every V4 seam (IAudioSource, IAudioClipCutter,
+//    IVoiceSampleUploader, IRecordingAudioRefResolver, IVoiceprintNamingCandidateStore) is live-wired
+//    by AddCervelloEnrichment's live branch — in fake mode a fake-mode host would need to supply
+//    IAudioSource/IAudioClipCutter/IVoiceSampleUploader itself (no in-engine fakes for those, by the
+//    same convention as the diarize/transcribe ports), so the route maps only when live.
+if (engineCfg.UseLiveAdapters)
+    app.MapVoiceSamples(engineCfg);
+
 app.Urls.Add($"http://{hostCfg.HealthHost}:{hostCfg.HealthPort}");
 app.Run();
 

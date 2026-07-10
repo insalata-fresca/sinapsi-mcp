@@ -169,6 +169,34 @@ public sealed record EnrichmentConfig
     /// </summary>
     public required double VoiceReviewCutoff { get; init; }
 
+    // ── voiceprint naming — V4 sample generation ─────────────────────────────────
+    /// <summary>
+    /// Max unknown voices to generate a Drive sample for (<c>CERVELLO_VOICE_SAMPLES_MAX</c>), design
+    /// <c>ste/cervello</c> <c>docs/design/voiceprint-naming.md</c> §7 phase V4 (default 15, matching
+    /// V1's own <c>maxCandidates</c> default: "the operator's ~15").
+    /// </summary>
+    public required int VoiceSamplesMax { get; init; }
+
+    /// <summary>
+    /// The Drive folder id for <c>cervello/recordings/voiceprints/</c> (<c>CERVELLO_VOICEPRINTS_DRIVE_FOLDER_ID</c>).
+    /// When set, <see cref="Adapters.GdriveVoiceSampleUploader"/> uploads directly into it; when unset
+    /// the uploader create-if-absent resolves + caches a <c>voiceprints</c> folder at Drive root via
+    /// <c>gdrive_create_folder</c> (a fallback for local/offline exercising only — production always
+    /// sets this to the operator's real folder id).
+    /// </summary>
+    public required string VoiceprintsDriveFolderId { get; init; }
+
+    /// <summary>
+    /// The scoped agentgateway machine identity V4's Drive upload calls mint a bearer for
+    /// (<c>CERVELLO_VOICEPRINTS_WATCHER_AGENT</c>). Deliberately the SAME identity
+    /// <c>Cervello.Watcher</c> already uses to read Drive (<c>agent-cervello-watcher</c>), not a new
+    /// one — design §8 widens that identity's existing grant rather than minting a second one.
+    /// </summary>
+    public required string VoiceprintsWatcherAgent { get; init; }
+
+    /// <summary>The CT121-mcp-gateway MCP endpoint the voice-sample uploader calls gdrive_* tools through.</summary>
+    public required string GdriveGatewayUrl { get; init; }
+
     // ── HTTP ceilings ────────────────────────────────────────────────────────────
     /// <summary>Per-request ceiling (seconds) applied to the outbound HttpClients.</summary>
     public required int HttpTimeoutSeconds { get; init; }
@@ -189,6 +217,12 @@ public sealed record EnrichmentConfig
     internal const int DefaultPackBudget = 30_000;
     internal const int MinPackBudget = 2_000;
     internal const int MaxPackBudget = 200_000;
+
+    // Matches VoiceReviewClusterer's own default maxCandidates ("the operator's ~15").
+    internal const int DefaultVoiceSamplesMax = 15;
+    internal const int MaxVoiceSamplesMax = 100;
+    internal const string DefaultVoiceprintsWatcherAgent = "agent-cervello-watcher";
+    internal const string DefaultGdriveGatewayUrl = "http://127.0.0.1:8443/mcp";
 
     /// <summary>Read config from the process environment (production path).</summary>
     public static EnrichmentConfig FromEnvironment() => From(Environment.GetEnvironmentVariable);
@@ -230,6 +264,10 @@ public sealed record EnrichmentConfig
             PackBudgetDefault = ReadBoundedInt(getEnv, "CERVELLO_PACK_BUDGET_DEFAULT", DefaultPackBudget, MinPackBudget, MaxPackBudget),
             VoiceReviewCutoff = ReadBoundedDouble(
                 getEnv, "CERVELLO_VOICE_REVIEW_CUT", Pipeline.VoiceReviewClusterer.DefaultReviewCutoff, 0.0, 1.0),
+            VoiceSamplesMax = ReadBoundedInt(getEnv, "CERVELLO_VOICE_SAMPLES_MAX", DefaultVoiceSamplesMax, 1, MaxVoiceSamplesMax),
+            VoiceprintsDriveFolderId = getEnv("CERVELLO_VOICEPRINTS_DRIVE_FOLDER_ID") ?? "",
+            VoiceprintsWatcherAgent = Env("CERVELLO_VOICEPRINTS_WATCHER_AGENT", DefaultVoiceprintsWatcherAgent),
+            GdriveGatewayUrl = ReadHttpUrl(getEnv, "CERVELLO_GDRIVE_GATEWAY_URL", DefaultGdriveGatewayUrl),
             HttpTimeoutSeconds = ReadBoundedInt(getEnv,
                 "CERVELLO_ENRICHMENT_HTTP_TIMEOUT_SECONDS", DefaultHttpTimeoutSeconds, 1, MaxHttpTimeoutSeconds),
         };

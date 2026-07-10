@@ -7,6 +7,7 @@ using Cervello.Enrichment.Ports;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Sinapsi.AgentJwt;
+using Sinapsi.Mcp;
 
 namespace Cervello.Enrichment;
 
@@ -87,6 +88,14 @@ public static class EnrichmentComposition
         services.AddSingleton(sp => new Pipeline.VoiceReviewClusterer(
             sp.GetRequiredService<IRecordingVoiceprintStore>(),
             sp.GetRequiredService<IVoiceprintStore>()));
+
+        // Voiceprint-naming V4 — sample generation orchestration (design ste/cervello
+        // docs/design/voiceprint-naming.md §7 phase V4). IAudioClipCutter (V2, needs IProcessRunner)
+        // and IVoiceprintNamingCandidateStore / IRecordingAudioRefResolver / IVoiceSampleUploader
+        // (live-vs-fake) are registered by the live/fake branches below; VoiceSampleGenerator itself
+        // is identical in both modes, so it is wired once here — resolving it in fake mode requires
+        // the fake branch to have registered every seam (it does, below).
+        services.AddSingleton<Pipeline.VoiceSampleGenerator>();
 
         return services;
     }
@@ -268,6 +277,25 @@ public static class EnrichmentComposition
         services.AddSingleton<ISchemaInitializer>(sp =>
             (PgRecordingVoiceprintStore)sp.GetRequiredService<IRecordingVoiceprintStore>());
 
+        // V4 — voiceprint-naming sample generation. The candidate map is a new CT146 pgvector table
+        // (ISchemaInitializer, ensured on startup like every other Pg store); the audio-ref resolver
+        // is a second, independent read-only query over the Watcher's own watcher_recording table
+        // (creates/owns nothing). The clip cutter needs IProcessRunner (real ffmpeg subprocess); the
+        // uploader reuses the SAME GatewayMcpClient + AgentJwtMinter + agent-cervello-watcher identity
+        // registered above for CT126/forgejo egress — just a different tool surface (gdrive, not
+        // speaches/forgejo), so no new HttpClient is registered.
+        services.AddSingleton<IRecordingAudioRefResolver, PgRecordingAudioRefResolver>();
+        services.AddSingleton<IVoiceprintNamingCandidateStore, PgVoiceprintNamingCandidateStore>();
+        services.AddSingleton<ISchemaInitializer>(sp =>
+            (PgVoiceprintNamingCandidateStore)sp.GetRequiredService<IVoiceprintNamingCandidateStore>());
+        services.AddSingleton<IProcessRunner, SubprocessRunner>();
+        services.AddSingleton<IAudioClipCutter, FfmpegAudioClipCutter>();
+        // A dedicated typed HttpClient<GatewayMcpClient> for the uploader (same construction as the
+        // Watcher's own Program.cs registration) — kept separate from the CT126/forgejo/brain-api
+        // clients above since it targets the gdrive tool surface via the gateway, not those base URLs.
+        services.AddHttpClient<GatewayMcpClient>(c => c.Timeout = timeout);
+        services.AddSingleton<IVoiceSampleUploader, GdriveVoiceSampleUploader>();
+
         // CT-side + git-working-tree stores. The repo working tree + pin/log dirs default to the
         // Watcher's custody root; a host overrides via the matching env before calling.
         var repoRoot = Environment.GetEnvironmentVariable("CERVELLO_REPO_WORKTREE")
@@ -374,6 +402,13 @@ public static class EnrichmentComposition
         services.AddSingleton<IEnrichmentLedger, InMemoryEnrichmentLedger>();
         services.AddSingleton<IBundleStore, InMemoryBundleStore>();
         services.AddSingleton<IRecordingVoiceprintStore, InMemoryRecordingVoiceprintStore>();
+
+        // V4 — voiceprint-naming sample generation (offline slice). IAudioSource / IAudioClipCutter
+        // have no in-engine fake (same convention as the diarize/transcribe ports — their test doubles
+        // live in the test project); a fake-mode host that needs VoiceSampleGenerator supplies them,
+        // mirroring HostCompositionTests' StubAudioSource pattern.
+        services.AddSingleton<IRecordingAudioRefResolver, InMemoryRecordingAudioRefResolver>();
+        services.AddSingleton<IVoiceprintNamingCandidateStore, InMemoryVoiceprintNamingCandidateStore>();
 
         // No live git egress in fake mode: the searchable-substrate publisher is a no-op (the offline
         // slice writes artifacts to the in-memory stores; nothing is pushed to ste/cervello).
