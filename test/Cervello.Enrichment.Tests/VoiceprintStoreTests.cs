@@ -8,7 +8,7 @@ namespace Cervello.Enrichment.Tests;
 
 /// <summary>
 /// The voiceprint store enroll/refine + deletion-runbook + allowlist invariants (spec
-/// <c>voiceprint-store</c>; DESIGN §10; OPERATIONS §7). SYNTHETIC 192-d vectors only — no
+/// <c>voiceprint-store</c>; DESIGN §10; OPERATIONS §7). SYNTHETIC 256-d vectors only — no
 /// personal audio, no real biometric vector ever appears here.
 /// </summary>
 public sealed class VoiceprintStoreTests
@@ -33,7 +33,7 @@ public sealed class VoiceprintStoreTests
         Assert.False(res.WasRefine);
         Assert.Equal(1, res.Print.SampleCount);
         Assert.Equal("enrolled 2026-07-01, 1 samples", res.DossierVoiceLine);
-        Assert.DoesNotContain("192", res.DossierVoiceLine); // no vector / dimension leaked
+        Assert.DoesNotContain("256", res.DossierVoiceLine); // no vector / dimension leaked
         Assert.DoesNotContain("[", res.DossierVoiceLine);   // no array of floats
     }
 

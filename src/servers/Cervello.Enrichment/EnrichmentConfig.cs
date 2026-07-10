@@ -39,6 +39,10 @@ public sealed record EnrichmentConfig
     /// Graded auto-apply gate. FALSE (default) = escalate-only: the decision policy sends every
     /// band to an open-point (no auto-write), regardless of cosine. TRUE = the P5 graded bands
     /// (auto ≥0.62 / review / reject) — enabled ONLY after the operator's held-out validation.
+    /// NOTE (pyannote/wespeaker migration, 256-d): the 0.62 cut was measured on the retired 192-d
+    /// ECAPA embedding space. It is NOT re-fit for the 256-d wespeaker embedding — that re-fit
+    /// (<see cref="Harness.ThresholdRefitHarness"/>) MUST run before this flag is ever flipped true
+    /// against wespeaker vectors. Currently dark (false) fleet-wide, so no live impact yet.
     /// </summary>
     public required bool GradedAutoApply { get; init; }
 

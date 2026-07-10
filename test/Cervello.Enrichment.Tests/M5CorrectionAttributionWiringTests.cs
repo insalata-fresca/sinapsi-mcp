@@ -24,7 +24,7 @@ namespace Cervello.Enrichment.Tests;
 ///   OMITTED, never invented.</item>
 /// </list>
 ///
-/// Synthetic 192-d vectors + scripted fakes only — no personal audio/data.
+/// Synthetic 256-d vectors + scripted fakes only — no personal audio/data.
 /// </summary>
 public sealed class M5CorrectionAttributionWiringTests
 {
@@ -45,7 +45,7 @@ public sealed class M5CorrectionAttributionWiringTests
             new SpeakerEmbedding("s1", TestVectors.TiltedFromAxis(0, 5, 0.9)), // → guilhem (clean, auto band)
             new SpeakerEmbedding("s2", TestVectors.Axis(99)),                   // orthogonal → no match, no hint
         ],
-        model: new DiarizeEmbedModel("silero-vad", "ecapa-tdnn", 192));
+        model: new DiarizeEmbedModel("silero-vad", "pyannote/wespeaker-voxceleb-resnet34-LM", 256));
 
     private static async Task<InMemoryVoiceprintStore> EnrolledStore()
     {

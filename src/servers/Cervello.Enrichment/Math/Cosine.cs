@@ -2,7 +2,7 @@ namespace Cervello.Enrichment.Math;
 
 /// <summary>
 /// Cosine similarity over speaker-embedding vectors. Vectors from the sidecar are
-/// L2-normalised ECAPA outputs, but this computes a full cosine (divides by norms) so it
+/// L2-normalised pyannote/wespeaker outputs, but this computes a full cosine (divides by norms) so it
 /// is correct for synthetic test vectors too — and returns 0 for a degenerate zero vector
 /// rather than NaN.
 /// </summary>

@@ -13,7 +13,7 @@ namespace Cervello.Enrichment.Tests;
 /// (the same contract <see cref="Adapters.PgRecordingVoiceprintStore"/> honours; that adapter's SQL is
 /// covered by the opt-in offline pgvector IT in <c>PgAdaptersIntegrationTests</c>).
 ///
-/// <para>SYNTHETIC 192-d vectors only — no personal audio, no real biometric vector ever appears here.</para>
+/// <para>SYNTHETIC 256-d vectors only — no personal audio, no real biometric vector ever appears here.</para>
 /// </summary>
 public sealed class RecordingVoiceprintStoreTests
 {
@@ -23,7 +23,7 @@ public sealed class RecordingVoiceprintStoreTests
         string recordingId, int clusterIndex, float[] centroid, string label,
         int segmentCount = 3, double duration = 12.5, DateTimeOffset? createdAt = null,
         IReadOnlyList<DiarizedSegment>? segments = null) =>
-        new(recordingId, clusterIndex, centroid, "spkrec-ecapa-voxceleb", segmentCount, duration, label,
+        new(recordingId, clusterIndex, centroid, "pyannote/wespeaker-voxceleb-resnet34-LM", segmentCount, duration, label,
             createdAt ?? T0, segments);
 
     // ---- round-trip -------------------------------------------------------------------
@@ -46,7 +46,7 @@ public sealed class RecordingVoiceprintStoreTests
         Assert.Equal(0, fetched[0].ClusterIndex);
         Assert.Equal(1, fetched[1].ClusterIndex);
         Assert.Equal(rows[0].Centroid, fetched[0].Centroid);
-        Assert.Equal("spkrec-ecapa-voxceleb", fetched[0].Model);
+        Assert.Equal("pyannote/wespeaker-voxceleb-resnet34-LM", fetched[0].Model);
         Assert.Equal(4, fetched[0].SegmentCount);
         Assert.Equal(20.0, fetched[0].DurationSeconds);
         Assert.Equal("s1", fetched[0].MergedSpeakerLabel); // descriptive metadata only, not the key

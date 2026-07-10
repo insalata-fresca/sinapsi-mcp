@@ -16,7 +16,7 @@ namespace Cervello.Enrichment.Adapters;
 /// running-centroid weighted refine, §10 allowlist hard-gate, OPERATIONS §7 deletion runbook +
 /// tombstone (so lint R8 "no re-attribution after deletion" holds).
 ///
-/// <para><b>pgvector convention (from Sinapsi.Indexer):</b> the 192-d centroid is written as a text
+/// <para><b>pgvector convention (from Sinapsi.Indexer):</b> the 256-d centroid is written as a text
 /// literal <c>'[f1,f2,…]'</c> (invariant culture) and cast <c>::vector</c> in SQL; matching uses the
 /// cosine-distance operator <c>&lt;=&gt;</c> (cosine similarity = <c>1 - distance</c>). No Pgvector
 /// NuGet package — Npgsql + the text literal, the established homelab pattern.</para>
@@ -35,7 +35,7 @@ public sealed class PgVoiceprintStore : IVoiceprintStore, ISchemaInitializer
         CREATE EXTENSION IF NOT EXISTS vector;
         CREATE TABLE IF NOT EXISTS voiceprints (
             person_slug     TEXT PRIMARY KEY,
-            centroid        vector(192) NOT NULL,
+            centroid        vector(256) NOT NULL,
             sample_count    INT NOT NULL,
             enrolled_at     DATE NOT NULL,
             last_match      DOUBLE PRECISION,

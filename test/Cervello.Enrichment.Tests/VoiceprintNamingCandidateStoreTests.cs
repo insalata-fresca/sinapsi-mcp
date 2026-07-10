@@ -9,7 +9,7 @@ namespace Cervello.Enrichment.Tests;
 /// <c>docs/design/voiceprint-naming.md</c> §7 phase V4, §4.4) against
 /// <see cref="InMemoryVoiceprintNamingCandidateStore"/> — the same contract
 /// <see cref="Adapters.PgVoiceprintNamingCandidateStore"/> honours (its SQL is asserted by review, no
-/// live DB in this suite). SYNTHETIC 192-d vectors only.
+/// live DB in this suite). SYNTHETIC 256-d vectors only.
 /// </summary>
 public sealed class VoiceprintNamingCandidateStoreTests
 {
@@ -83,7 +83,7 @@ public sealed class VoiceprintNamingCandidateStoreTests
     }
 
     [Fact]
-    public void Candidate_requires_192_d_centroid()
+    public void Candidate_requires_256_d_centroid()
     {
         Assert.Throws<ArgumentException>(() => new VoiceprintNamingCandidate(
             "unknown_01", "drive-1", new float[10], [new VoiceReviewMember("rec-1", 0, 1, 1)], T0));

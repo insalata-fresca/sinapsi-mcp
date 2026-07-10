@@ -61,7 +61,7 @@ public sealed record VoiceprintNamingCandidate
     /// <summary>The Drive file id — stable across a rename; the resolution key V5's poller looks up by.</summary>
     public string DriveFileId { get; }
 
-    /// <summary>The 192-d merged centroid this sample was cut from (CT146-only; never leaves this store).</summary>
+    /// <summary>The 256-d merged centroid this sample was cut from (CT146-only; never leaves this store).</summary>
     public IReadOnlyList<float> Centroid { get; }
 
     /// <summary>Every contributing <c>(recordingId, clusterIndex)</c> row this voice's centroid was merged from.</summary>

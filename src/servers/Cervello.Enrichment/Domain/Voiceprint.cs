@@ -4,7 +4,7 @@ namespace Cervello.Enrichment.Domain;
 
 /// <summary>
 /// An enrolled voiceprint row exactly as the <c>voiceprint-store</c> spec declares it:
-/// <c>{person_slug, vector (192-d), sample_count, enrolled_at, last_match, source_segments[]}</c>.
+/// <c>{person_slug, vector (256-d), sample_count, enrolled_at, last_match, source_segments[]}</c>.
 /// The vector is a running centroid over that person's confirmed segments.
 ///
 /// <para>Confinement (spec + DESIGN §10.4): this type models the CT146 pgvector row. The vector
@@ -43,7 +43,7 @@ public sealed record Voiceprint
 
     public string PersonSlug { get; }
 
-    /// <summary>The 192-d running centroid (biometric — CT146-only).</summary>
+    /// <summary>The 256-d running centroid (biometric — CT146-only).</summary>
     public IReadOnlyList<float> Centroid { get; }
 
     /// <summary>How many confirmed samples the centroid was averaged from.</summary>

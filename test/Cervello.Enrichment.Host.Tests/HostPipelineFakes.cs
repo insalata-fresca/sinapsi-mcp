@@ -64,7 +64,7 @@ internal sealed class HostFakeDiarizeEmbedClient : IDiarizeEmbedClient
         return Task.FromResult(new DiarizeEmbedResponse(
             Array.Empty<DiarizedSegment>(),
             Array.Empty<SpeakerEmbedding>(),
-            new DiarizeEmbedModel("silero-vad", "ecapa-tdnn", 192)));
+            new DiarizeEmbedModel("silero-vad", "pyannote/wespeaker-voxceleb-resnet34-LM", 256)));
     }
 }
 

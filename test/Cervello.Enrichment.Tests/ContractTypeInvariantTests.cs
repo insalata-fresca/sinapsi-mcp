@@ -22,19 +22,19 @@ public sealed class ContractTypeInvariantTests
     }
 
     [Fact]
-    public void SpeakerEmbedding_requires_exactly_192_dims()
+    public void SpeakerEmbedding_requires_exactly_256_dims()
     {
-        Assert.Throws<ArgumentException>(() => new SpeakerEmbedding("s1", new float[191]));
-        Assert.Throws<ArgumentException>(() => new SpeakerEmbedding("s1", new float[193]));
-        var ok = new SpeakerEmbedding("s1", new float[192]);
-        Assert.Equal(192, ok.Vector.Count);
+        Assert.Throws<ArgumentException>(() => new SpeakerEmbedding("s1", new float[255]));
+        Assert.Throws<ArgumentException>(() => new SpeakerEmbedding("s1", new float[257]));
+        var ok = new SpeakerEmbedding("s1", new float[256]);
+        Assert.Equal(256, ok.Vector.Count);
     }
 
     [Fact]
     public void DiarizeEmbedModel_requires_non_empty_vad_and_embed()
     {
-        Assert.Throws<ArgumentException>(() => new DiarizeEmbedModel("", "e", 192));
-        Assert.Throws<ArgumentException>(() => new DiarizeEmbedModel("v", "", 192));
+        Assert.Throws<ArgumentException>(() => new DiarizeEmbedModel("", "e", 256));
+        Assert.Throws<ArgumentException>(() => new DiarizeEmbedModel("v", "", 256));
     }
 
     [Fact]
@@ -48,11 +48,11 @@ public sealed class ContractTypeInvariantTests
     }
 
     [Fact]
-    public void MergedCluster_requires_members_and_192d_centroid()
+    public void MergedCluster_requires_members_and_256d_centroid()
     {
         var seg = new[] { new DiarizedSegment("s1", 0, 1) };
         Assert.Throws<ArgumentException>(() =>
-            new MergedCluster("s1", Array.Empty<string>(), new float[192], seg));
+            new MergedCluster("s1", Array.Empty<string>(), new float[256], seg));
         Assert.Throws<ArgumentException>(() =>
             new MergedCluster("s1", new[] { "s1" }, new float[100], seg));
     }

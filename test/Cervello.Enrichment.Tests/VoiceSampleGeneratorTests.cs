@@ -12,7 +12,7 @@ namespace Cervello.Enrichment.Tests;
 /// → persist candidate, against FAKE seams (no ffmpeg, no gateway, no Postgres). Exercises the
 /// never-fabricate skip paths and the regenerate-replaces-unresolved-only contract.
 ///
-/// SYNTHETIC 192-d vectors + synthetic bytes only — no personal audio, no real biometric vector.
+/// SYNTHETIC 256-d vectors + synthetic bytes only — no personal audio, no real biometric vector.
 /// </summary>
 public sealed class VoiceSampleGeneratorTests
 {
@@ -60,7 +60,7 @@ public sealed class VoiceSampleGeneratorTests
         var corpus = new InMemoryRecordingVoiceprintStore();
         var segs = new List<DiarizedSegment> { new("s1", 0.0, 20.0) }; // 20s run — above the 1s min window
         await corpus.PersistAsync("rec-1", [
-            new RecordingVoiceprint("rec-1", 0, TestVectors.Axis(0), "spkrec-ecapa-voxceleb", 1, 20.0, "s1", T0, segs),
+            new RecordingVoiceprint("rec-1", 0, TestVectors.Axis(0), "pyannote/wespeaker-voxceleb-resnet34-LM", 1, 20.0, "s1", T0, segs),
         ]);
 
         var audio = new InMemoryRecordingAudioRefResolver()

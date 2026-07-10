@@ -31,7 +31,7 @@ public sealed class M6AutoEnrollPipelineTests
             new SpeakerEmbedding("s1", TestVectors.TiltedFromAxis(0, 5, 0.9)),
             new SpeakerEmbedding("s2", TestVectors.Axis(30)),
         ],
-        model: new DiarizeEmbedModel("silero-vad", "ecapa-tdnn", 192));
+        model: new DiarizeEmbedModel("silero-vad", "pyannote/wespeaker-voxceleb-resnet34-LM", 256));
 
     // The STORE's §10 allowlist is the union of everyone consented — always includes guilhem (so the
     // test can SEED his enrolled voiceprint) plus whatever the coordinator is allowed to auto-enroll.
