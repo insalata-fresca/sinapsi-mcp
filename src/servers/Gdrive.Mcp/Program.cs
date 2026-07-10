@@ -13,6 +13,10 @@ var drive = await DriveClientFactory.CreateAsync(cfg, CancellationToken.None);
 builder.Services.AddSingleton(drive);
 // Backs download_to_url: short-lived capability tickets for the /gdrive-dl/{token} stream endpoint.
 builder.Services.AddSingleton<DownloadTicketStore>();
+// Outbound fetch client for upload_from_url — the MCP host pulls the source bytes and streams
+// them into Drive. Its per-request Timeout is left infinite here; the tool bounds the whole
+// fetch+upload with a linked CTS from GDRIVE_MCP_UPLOAD_TIMEOUT_SECONDS.
+builder.Services.AddHttpClient("gdrive-fetch", c => c.Timeout = Timeout.InfiniteTimeSpan);
 
 builder
     .AddSinapsiMcpServer("gdrive-mcp", "0.1.0")

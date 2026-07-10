@@ -1,3 +1,6 @@
+using System.Net;
+using System.Net.Sockets;
+
 namespace Gdrive.Mcp;
 
 // ---------------------------------------------------------------------------
@@ -58,6 +61,49 @@ internal static class GdriveValidation
     /// decoded binary — comfortably past a ~30s voice clip while refusing an
     /// unbounded blob before a single `Convert.FromBase64String` call runs.</summary>
     internal const int MaxBase64ContentLength = 40 * 1024 * 1024;
+
+    /// <summary>Upper bound on a source URL for <c>upload_from_url</c>. RFC-practical
+    /// URLs are short; 2 KiB refuses a pathological blob before any fetch.</summary>
+    internal const int MaxUrlLength = 2_048;
+
+    /// <summary>
+    /// Validate the REQUIRED source URL for <c>upload_from_url</c>: the address the
+    /// MCP host will fetch server-side. Enforces required/non-empty, a length cap,
+    /// no control chars, an absolute <c>http</c>/<c>https</c> URL, and a minimal
+    /// SSRF guard — a literal <b>link-local / cloud-metadata</b> host
+    /// (169.254.0.0/16 incl. 169.254.169.254, or IPv6 fe80::/10) and the
+    /// unspecified address are refused. Private/LAN and loopback targets are
+    /// deliberately ALLOWED: the whole point is to fetch from homelab hosts
+    /// (10.x/192.168.x) and localhost services. DNS names that resolve to a blocked
+    /// range are not caught here — the agentgateway PEP authz is the primary
+    /// control (only trusted identities may call this tool). Returns <c>null</c>
+    /// when valid.
+    /// </summary>
+    internal static string? ValidateFetchUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return "url is required";
+        if (url.Length > MaxUrlLength)
+            return $"url too long ({url.Length} chars; max {MaxUrlLength})";
+        if (ContainsControlOrNewline(url))
+            return "url contains control characters";
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            return "url is not a valid absolute URL";
+        if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+            return "url scheme must be http or https";
+
+        if (IPAddress.TryParse(uri.Host, out var ip))
+        {
+            if (ip.Equals(IPAddress.Any) || ip.Equals(IPAddress.IPv6Any))
+                return "url host must not be the unspecified address";
+            var b = ip.GetAddressBytes();
+            if (ip.AddressFamily == AddressFamily.InterNetwork && b[0] == 169 && b[1] == 254)
+                return "url host must not be a link-local / metadata address";
+            if (ip.AddressFamily == AddressFamily.InterNetworkV6 && b[0] == 0xfe && (b[1] & 0xc0) == 0x80)
+                return "url host must not be a link-local address";
+        }
+        return null;
+    }
 
     /// <summary>
     /// Validate REQUIRED base64-encoded binary content for <c>upload_file</c>.

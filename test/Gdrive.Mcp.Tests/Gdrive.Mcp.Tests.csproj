@@ -27,6 +27,7 @@
          without referencing the Web (Sdk.Web) server project. No feed needed. -->
     <Compile Include="../../src/servers/Gdrive.Mcp/DriveTools.cs" />
     <Compile Include="../../src/servers/Gdrive.Mcp/DriveDownload.cs" />
+    <Compile Include="../../src/servers/Gdrive.Mcp/UploadStream.cs" />
     <Compile Include="../../src/servers/Gdrive.Mcp/GdriveConfig.cs" />
     <Compile Include="../../src/servers/Gdrive.Mcp/GdriveValidation.cs" />
     <Compile Include="../../src/servers/Gdrive.Mcp/GdriveErrors.cs" />
