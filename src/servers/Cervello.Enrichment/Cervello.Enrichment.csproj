@@ -29,12 +29,23 @@
          HttpClient. Bearer minting is the in-repo Sinapsi.AgentJwt (agent-free machine
          identity), same as the Watcher — the bearer is resolved at RUNTIME on-CT, never from
          agent context. -->
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
+    <!-- V4 (voiceprint-naming sample generation) added a ProjectReference to Sinapsi.Mcp
+         (GdriveVoiceSampleUploader calls the gdrive MCP's create_folder/upload_file/delete_file
+         tools through the CT121 agentgateway, reusing the SAME GatewayMcpClient
+         Cervello.Watcher's McpGdriveClient already depends on). Sinapsi.Mcp -> ModelContextProtocol
+         1.3.0 transitively requires Microsoft.Extensions.{Logging,DependencyInjection}.Abstractions /
+         Options >= 10.0.7 (the same versions Cervello.Watcher — a Sdk.Web project with no explicit
+         pins — already resolves to); bumped these three explicit pins from 8.0.x to 10.0.7 to match
+         and avoid an NU1605 package-downgrade error. Microsoft.Extensions.Http has no matching 10.0.7
+         release on nuget.org as of this build — left at its prior compatible version; the higher
+         Abstractions packages satisfy its own minimum requirement. -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.7" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.7" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.1" />
-    <PackageReference Include="Microsoft.Extensions.Options" Version="8.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.7" />
     <PackageReference Include="Npgsql" Version="8.0.3" />
     <ProjectReference Include="../../libs/Sinapsi.AgentJwt/Sinapsi.AgentJwt.csproj" />
+    <ProjectReference Include="../../libs/Sinapsi.Mcp/Sinapsi.Mcp.csproj" />
   </ItemGroup>
 
 </Project>

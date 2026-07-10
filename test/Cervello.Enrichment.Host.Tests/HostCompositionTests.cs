@@ -101,9 +101,10 @@ public sealed class HostCompositionTests
     // assert the LIVE composition registers one per Pg store and that, together, they cover every
     // expected table (enrichment_ledger, correction_map, voiceprints[+tombstones+enrollment_audio],
     // open_points, recording_voiceprints[+recording_voiceprint_segments — voiceprint-naming V0] [M3
-    // corpus store]). Each initializer resolves to the SAME singleton the pipeline uses — so ensuring
-    // it creates the exact table the CorrectionStage/etc. read. Construction-only: no DB touched (the
-    // testcontainer path in the engine suite exercises the real DDL when it can run offline).
+    // corpus store], voiceprint_naming_candidates [voiceprint-naming V4]). Each initializer resolves
+    // to the SAME singleton the pipeline uses — so ensuring it creates the exact table the
+    // CorrectionStage/etc. read. Construction-only: no DB touched (the testcontainer path in the
+    // engine suite exercises the real DDL when it can run offline).
     [Fact]
     public void Live_composition_registers_a_schema_initializer_for_every_pg_adapter_table()
     {
@@ -112,10 +113,11 @@ public sealed class HostCompositionTests
             var sp = Build(live: true);
 
             var initializers = sp.GetServices<ISchemaInitializer>().ToList();
-            // One per Pg store: ledger, correction-map, voiceprint, open-points, recording-voiceprint
-            // (the recording-voiceprint initializer's SchemaName now lists TWO tables — the V0 segment
-            // child table added alongside it — but it is still ONE initializer/singleton).
-            Assert.Equal(5, initializers.Count);
+            // One per Pg store: ledger, correction-map, voiceprint, open-points, recording-voiceprint,
+            // voiceprint-naming-candidate (V4) (the recording-voiceprint initializer's SchemaName now
+            // lists TWO tables — the V0 segment child table added alongside it — but it is still ONE
+            // initializer/singleton).
+            Assert.Equal(6, initializers.Count);
 
             // Every expected table is covered by some initializer's SchemaName (the voiceprint store
             // owns three tables listed together; the recording-voiceprint store now owns two).
@@ -125,6 +127,7 @@ public sealed class HostCompositionTests
                          "enrichment_ledger", "correction_map",
                          "voiceprints", "voiceprint_tombstones", "voiceprint_enrollment_audio",
                          "open_points", "recording_voiceprints", "recording_voiceprint_segments",
+                         "voiceprint_naming_candidates",
                      })
             {
                 Assert.Contains(table, covered);
@@ -137,6 +140,7 @@ public sealed class HostCompositionTests
             Assert.Contains(sp.GetRequiredService<IVoiceprintStore>(), initializers.Cast<object>());
             Assert.Contains(sp.GetRequiredService<IOpenPointStore>(), initializers.Cast<object>());
             Assert.Contains(sp.GetRequiredService<IRecordingVoiceprintStore>(), initializers.Cast<object>());
+            Assert.Contains(sp.GetRequiredService<IVoiceprintNamingCandidateStore>(), initializers.Cast<object>());
         }
         finally
         {
