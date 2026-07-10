@@ -44,6 +44,29 @@ public sealed record GdriveConfig
     /// treated as a config error, not honoured.</summary>
     internal const int MaxHttpTimeoutSeconds = 3_600;
 
+    /// <summary>Whole-operation ceiling (seconds) for <c>upload_from_url</c>: the
+    /// server-side fetch + streamed Drive upload is bounded by a single linked
+    /// CTS, so a slow/hung source cannot pin the request forever. Larger default
+    /// than the per-request Drive timeout because a multi-hundred-MB upload is a
+    /// legitimately long single operation.</summary>
+    public required int UploadTimeoutSeconds { get; init; }
+
+    /// <summary>Hard ceiling (bytes) on what <c>upload_from_url</c> will pull from
+    /// a source URL into Drive — enforced both against a declared Content-Length
+    /// and against the actual bytes streamed (a source that omits/lies about its
+    /// length is still bounded).</summary>
+    public required long UploadMaxBytes { get; init; }
+
+    /// <summary>Default whole-operation ceiling for <c>upload_from_url</c>.</summary>
+    internal const int DefaultUploadTimeoutSeconds = 600;
+
+    /// <summary>Upper bound on a configurable <c>upload_from_url</c> ceiling. 2 h is
+    /// past any legitimate single upload; larger is treated as a config error.</summary>
+    internal const int MaxUploadTimeoutSeconds = 7_200;
+
+    /// <summary>Default <c>upload_from_url</c> size cap: 2 GiB.</summary>
+    internal const long DefaultUploadMaxBytes = 2L * 1024 * 1024 * 1024;
+
     public static GdriveConfig FromEnvironment()
     {
         var home = Environment.GetEnvironmentVariable("HOME") ?? "/home/app";
@@ -68,7 +91,45 @@ public sealed record GdriveConfig
                 ? ttl
                 : 600,
             HttpTimeoutSeconds = ReadHttpTimeoutSeconds(),
+            UploadTimeoutSeconds = ReadUploadTimeoutSeconds(),
+            UploadMaxBytes = ReadUploadMaxBytes(),
         };
+    }
+
+    /// <summary>Bounds the whole <c>upload_from_url</c> operation. Canonical name
+    /// <c>GDRIVE_MCP_UPLOAD_TIMEOUT_SECONDS</c>. Fail-closed: non-numeric / &lt;=0 /
+    /// above <see cref="MaxUploadTimeoutSeconds"/> throws, naming the env var.</summary>
+    private static int ReadUploadTimeoutSeconds()
+    {
+        const string envVar = "GDRIVE_MCP_UPLOAD_TIMEOUT_SECONDS";
+        var raw = Environment.GetEnvironmentVariable(envVar);
+        if (string.IsNullOrEmpty(raw))
+            return DefaultUploadTimeoutSeconds;
+
+        if (!int.TryParse(raw, out var s) || s <= 0 || s > MaxUploadTimeoutSeconds)
+            throw new InvalidOperationException(
+                $"{envVar}='{raw}' is invalid: expected an integer in 1..{MaxUploadTimeoutSeconds} s " +
+                $"(default {DefaultUploadTimeoutSeconds}).");
+
+        return s;
+    }
+
+    /// <summary>Size cap for <c>upload_from_url</c>. Canonical name
+    /// <c>GDRIVE_MCP_UPLOAD_MAX_BYTES</c>. Fail-closed: non-numeric / &lt;=0 throws,
+    /// naming the env var.</summary>
+    private static long ReadUploadMaxBytes()
+    {
+        const string envVar = "GDRIVE_MCP_UPLOAD_MAX_BYTES";
+        var raw = Environment.GetEnvironmentVariable(envVar);
+        if (string.IsNullOrEmpty(raw))
+            return DefaultUploadMaxBytes;
+
+        if (!long.TryParse(raw, out var n) || n <= 0)
+            throw new InvalidOperationException(
+                $"{envVar}='{raw}' is invalid: expected a positive integer byte count " +
+                $"(default {DefaultUploadMaxBytes}).");
+
+        return n;
     }
 
     /// <summary>

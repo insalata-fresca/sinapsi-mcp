@@ -6,7 +6,7 @@ using Xunit;
 namespace Gdrive.Mcp.Tests;
 
 /// <summary>
-/// Parity guard: <see cref="DriveTools"/> must declare exactly the 12 Drive tools by name,
+/// Parity guard: <see cref="DriveTools"/> must declare exactly the 13 Drive tools by name,
 /// each carrying both an <see cref="McpServerToolAttribute"/> and a description. A dropped
 /// or renamed tool fails the test gate.
 /// </summary>
@@ -18,6 +18,7 @@ public sealed class ToolSurfaceTests
         "download_file", "download_file_base64", "download_to_url",
         "create_file", "update_file", "delete_file",
         "create_folder", "upload_file", "move_file",
+        "upload_from_url",
     };
 
     private static IEnumerable<(string name, MethodInfo m)> ToolMethods() =>
@@ -34,10 +35,17 @@ public sealed class ToolSurfaceTests
     }
 
     [Fact]
-    public void ExposesExactlyTheTwelveTools()
+    public void ExposesExactlyTheThirteenTools()
     {
         var names = ToolMethods().Select(t => t.name).OrderBy(n => n).ToArray();
         Assert.Equal(Expected.OrderBy(n => n).ToArray(), names);
+    }
+
+    [Fact]
+    public void UploadFromUrl_IsExposed()
+    {
+        // The server-side-streaming upload path — no bytes through the model context.
+        Assert.Contains("upload_from_url", ToolMethods().Select(t => t.name).ToHashSet());
     }
 
     [Fact]

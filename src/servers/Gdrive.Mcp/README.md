@@ -57,7 +57,8 @@ Architecturally it is a handful of small seams:
 | `update_file` | **yes** | **Rename and/or replace content** of an existing file. |
 | `delete_file` | **yes** | **Trash (default) or permanently delete** a file. |
 | `create_folder` | **yes** | Create a Drive folder, optional parent folder. |
-| `upload_file` | **yes** | **Binary** upload — base64 in, decoded, uploaded verbatim. |
+| `upload_file` | **yes** | **Binary** upload — base64 in, decoded, uploaded verbatim (capped: base64 goes through the model context). |
+| `upload_from_url` | **yes** | **Best for big files IN:** the host fetches a URL server-side and streams it into a Drive resumable upload — no base64 through context, no size cap. Mirror of `download_to_url`. |
 | `move_file` | **yes** | Move a file between folders via `AddParents`/`RemoveParents`. |
 
 `update_file` + `delete_file` are the two a typical managed connector lacks and the reason

@@ -323,6 +323,61 @@ public sealed class DriveTools
         catch (Exception e) { return Err(e.Message); }
     }
 
+    // Resumable-upload chunk buffered per round-trip for upload_from_url. A multiple of the
+    // Google client's 256 KiB minimum; 8 MiB keeps memory bounded (constant, one chunk at a time)
+    // while making good throughput on a large file.
+    private const int UploadChunkBytes = 8 * 1024 * 1024;
+
+    [McpServerTool(Name = "upload_from_url")]
+    [Description("Best path for large binaries INTO Drive (the mirror of download_to_url): the MCP host fetches the bytes from a source URL server-side and streams them straight into a Drive resumable upload (constant memory) — NO base64 ever passes through the model context, so there is no transport size cap. The url must be reachable FROM THE MCP BACKEND HOST over http/https (e.g. a homelab file-server, a build-artifact endpoint, or a presigned link); it CANNOT fetch a file that only exists on the caller's own device. For small in-context content use create_file (UTF-8 text) or upload_file (base64); use this for anything more than a few MB or any file already reachable at a URL. Returns the new file's id + metadata.")]
+    public static async Task<object> UploadFromUrl(
+        DriveService drive,
+        IHttpClientFactory httpFactory,
+        GdriveConfig cfg,
+        [Description("File name to create in Drive.")] string name,
+        [Description("Source URL the MCP host will fetch (http/https), reachable from the backend.")] string url,
+        [Description("MIME type of the content, e.g. application/pdf.")] string mimeType,
+        [Description("Optional parent folder id.")] string? folderId = null)
+    {
+        if (GdriveValidation.ValidateName(name) is { } nameErr) return Err(nameErr);
+        if (GdriveValidation.ValidateFetchUrl(url) is { } urlErr) return Err(urlErr);
+        if (GdriveValidation.ValidateMimeType(mimeType) is { } mimeErr) return Err(mimeErr);
+        if (GdriveValidation.ValidateFolderId(folderId) is { } folderErr) return Err(folderErr);
+
+        try
+        {
+            // One CTS bounds the whole fetch + streamed upload — the per-request HttpClient timeout
+            // is infinite (see Program.cs) so a legitimately long large upload isn't torn mid-stream.
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(cfg.UploadTimeoutSeconds));
+            var ct = cts.Token;
+
+            using var http = httpFactory.CreateClient("gdrive-fetch");
+            using var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
+            if (!resp.IsSuccessStatusCode)
+                return Err($"source fetch failed: HTTP {(int)resp.StatusCode}");
+
+            if (resp.Content.Headers.ContentLength is long declared && declared > cfg.UploadMaxBytes)
+                return Err($"source is {declared} bytes; exceeds max {cfg.UploadMaxBytes} (GDRIVE_MCP_UPLOAD_MAX_BYTES)");
+
+            var meta = new DriveData.File { Name = name, MimeType = mimeType };
+            if (!string.IsNullOrWhiteSpace(folderId)) meta.Parents = new List<string> { folderId };
+
+            await using var src = await resp.Content.ReadAsStreamAsync(ct);
+            // Bound the ACTUAL bytes streamed too — a source that omits/lies about Content-Length
+            // still cannot push an unbounded upload (BoundedStream throws past the ceiling).
+            await using var bounded = new BoundedStream(src, cfg.UploadMaxBytes);
+
+            var req = drive.Files.Create(meta, bounded, mimeType);
+            req.Fields = FileFields;
+            req.ChunkSize = UploadChunkBytes;
+            var progress = await req.UploadAsync(ct);
+            if (progress.Exception is not null) return Err(progress.Exception.Message);
+            return Summarize(req.ResponseBody);
+        }
+        catch (OperationCanceledException) { return Err($"upload timed out after {cfg.UploadTimeoutSeconds}s"); }
+        catch (Exception e) { return Err(e.Message); }
+    }
+
     [McpServerTool(Name = "move_file")]
     [Description("Move a file between Drive folders via Files.Update AddParents/RemoveParents. Supply destFolderId to add a new parent and/or removeFolderId to detach an old one (at least one is required). Returns the file's updated metadata (including its new parents list).")]
     public static async Task<object> MoveFile(
