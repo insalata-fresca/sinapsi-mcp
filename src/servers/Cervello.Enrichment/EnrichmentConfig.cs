@@ -158,6 +158,17 @@ public sealed record EnrichmentConfig
     /// <summary>Default context-pack char budget (design §5.1: 30000; MC Q7: a sane bounded default, tunable).</summary>
     public required int PackBudgetDefault { get; init; }
 
+    // ── voiceprint naming — V1 one-shot review clustering ────────────────────────
+    /// <summary>
+    /// The cross-recording review-cluster cosine cutoff (<c>CERVELLO_VOICE_REVIEW_CUT</c>) for
+    /// <see cref="Pipeline.VoiceReviewClusterer"/> (design <c>ste/cervello</c>
+    /// <c>docs/design/voiceprint-naming.md</c> §7 phase V1). Deliberately configurable, not a
+    /// constant: the design notes cross-recording same-speaker cosine runs lower/noisier than the
+    /// within-recording merge cutoff and MUST be fit on the operator's real corpus at P5, not
+    /// assumed. Default 0.58 is a starting point.
+    /// </summary>
+    public required double VoiceReviewCutoff { get; init; }
+
     // ── HTTP ceilings ────────────────────────────────────────────────────────────
     /// <summary>Per-request ceiling (seconds) applied to the outbound HttpClients.</summary>
     public required int HttpTimeoutSeconds { get; init; }
@@ -217,6 +228,8 @@ public sealed record EnrichmentConfig
             IndexerBaseUrl = ReadHttpUrl(getEnv, "CERVELLO_INDEXER_BASE_URL", DefaultIndexerBaseUrl),
             IndexerSearchToken = getEnv("CERVELLO_INDEXER_SEARCH_TOKEN") ?? "",
             PackBudgetDefault = ReadBoundedInt(getEnv, "CERVELLO_PACK_BUDGET_DEFAULT", DefaultPackBudget, MinPackBudget, MaxPackBudget),
+            VoiceReviewCutoff = ReadBoundedDouble(
+                getEnv, "CERVELLO_VOICE_REVIEW_CUT", Pipeline.VoiceReviewClusterer.DefaultReviewCutoff, 0.0, 1.0),
             HttpTimeoutSeconds = ReadBoundedInt(getEnv,
                 "CERVELLO_ENRICHMENT_HTTP_TIMEOUT_SECONDS", DefaultHttpTimeoutSeconds, 1, MaxHttpTimeoutSeconds),
         };
@@ -286,6 +299,18 @@ public sealed record EnrichmentConfig
         if (!int.TryParse(raw, out var v) || v < min || v > max)
             throw new InvalidOperationException(
                 $"{envVar}='{raw}' is invalid: expected an integer in {min}..{max} (default {dflt}).");
+        return v;
+    }
+
+    /// <summary>Fail-closed bounded double: non-numeric / out-of-range throws naming the var.</summary>
+    private static double ReadBoundedDouble(Func<string, string?> getEnv, string envVar, double dflt, double min, double max)
+    {
+        var raw = getEnv(envVar);
+        if (string.IsNullOrEmpty(raw))
+            return dflt;
+        if (!double.TryParse(raw, System.Globalization.CultureInfo.InvariantCulture, out var v) || v < min || v > max)
+            throw new InvalidOperationException(
+                $"{envVar}='{raw}' is invalid: expected a number in {min}..{max} (default {dflt}).");
         return v;
     }
 }
