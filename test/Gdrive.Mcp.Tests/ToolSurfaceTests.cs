@@ -6,7 +6,7 @@ using Xunit;
 namespace Gdrive.Mcp.Tests;
 
 /// <summary>
-/// Parity guard: <see cref="DriveTools"/> must declare exactly the 9 Drive tools by name,
+/// Parity guard: <see cref="DriveTools"/> must declare exactly the 12 Drive tools by name,
 /// each carrying both an <see cref="McpServerToolAttribute"/> and a description. A dropped
 /// or renamed tool fails the test gate.
 /// </summary>
@@ -17,6 +17,7 @@ public sealed class ToolSurfaceTests
         "list_files", "search_files", "get_file_metadata",
         "download_file", "download_file_base64", "download_to_url",
         "create_file", "update_file", "delete_file",
+        "create_folder", "upload_file", "move_file",
     };
 
     private static IEnumerable<(string name, MethodInfo m)> ToolMethods() =>
@@ -33,7 +34,7 @@ public sealed class ToolSurfaceTests
     }
 
     [Fact]
-    public void ExposesExactlyTheNineTools()
+    public void ExposesExactlyTheTwelveTools()
     {
         var names = ToolMethods().Select(t => t.name).OrderBy(n => n).ToArray();
         Assert.Equal(Expected.OrderBy(n => n).ToArray(), names);
@@ -57,5 +58,17 @@ public sealed class ToolSurfaceTests
         var names = ToolMethods().Select(t => t.name).ToHashSet();
         Assert.Contains("update_file", names);
         Assert.Contains("delete_file", names);
+    }
+
+    [Fact]
+    public void TheThreeV3VoiceprintNamingTools_AreExposed()
+    {
+        // create_folder + upload_file + move_file — added for docs/design/voiceprint-naming.md
+        // §7/§8 V3: provisioning cervello/recordings/voiceprints/{,registry/}, uploading a
+        // representative audio clip, and moving a named clip into registry/.
+        var names = ToolMethods().Select(t => t.name).ToHashSet();
+        Assert.Contains("create_folder", names);
+        Assert.Contains("upload_file", names);
+        Assert.Contains("move_file", names);
     }
 }
