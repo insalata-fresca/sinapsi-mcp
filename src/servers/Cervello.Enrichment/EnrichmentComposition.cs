@@ -80,6 +80,14 @@ public static class EnrichmentComposition
         else
             AddFakeAdapters(services);
 
+        // Voiceprint-naming V1 — the one-shot review clusterer (design ste/cervello
+        // docs/design/voiceprint-naming.md §7 phase V1). Pure read-only compute over the
+        // IRecordingVoiceprintStore + IVoiceprintStore already registered above (either branch);
+        // identical in live + fake mode. Never writes; safe to resolve in any composition.
+        services.AddSingleton(sp => new Pipeline.VoiceReviewClusterer(
+            sp.GetRequiredService<IRecordingVoiceprintStore>(),
+            sp.GetRequiredService<IVoiceprintStore>()));
+
         return services;
     }
 
