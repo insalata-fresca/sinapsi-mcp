@@ -8,7 +8,15 @@
 # Runtime deps: aspnet + ca-certificates (outbound HTTPS to the CT121 agentgateway /
 # brain-api / CT126 speaches / forgejo — the engine's live adapters) + git (the
 # repo-side stores + the forgejo map-PR writer shell `git` against a CT-local working
-# tree of ste/cervello). Runs non-root (uid 10047 — one above the Watcher's 10046, the
+# tree of ste/cervello) + ffmpeg (voiceprint-naming V2, design ste/cervello
+# docs/design/voiceprint-naming.md §7: FfmpegAudioClipCutter cuts a ~30s representative
+# clip from a recording's staged audio ON CT146, so the audio never has to transit to the
+# CT139 diarize-embed sidecar just to be sliced — §1.4 "reuse the sidecar — rejected:
+# widens the audio's transit surface for no benefit". Mirrors how
+# services/cervello-diarize-embed/Containerfile already installs ffmpeg for the sidecar's
+# own decode step; this is the SAME package, added to the image (not the Ansible role) so
+# it travels with the release and stays reproducible — parity with every other runtime dep
+# here). Runs non-root (uid 10047 — one above the Watcher's 10046, the
 # two cervello workers co-reside on CT146). This binary opens NO NATS connection
 # (invariant 3 / D8) and needs no NATS seed. No secret is baked: the agent-cervello-
 # enrichment JWK + the Postgres password arrive agent-free from Infisical /ct146/cervello/.
@@ -27,7 +35,7 @@ WORKDIR /app
 # git: the repo-side stores + the forgejo map-PR writer shell out to `git`.
 # ca-certificates: outbound HTTPS to the CT121 agentgateway / brain-api / CT126 / forgejo.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git ca-certificates \
+    && apt-get install -y --no-install-recommends git ca-certificates ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app .
 # Non-root by default (rootless-podman friendly). The Quadlet may override the user at
