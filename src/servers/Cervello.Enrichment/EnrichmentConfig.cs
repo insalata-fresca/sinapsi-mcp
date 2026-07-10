@@ -216,6 +216,18 @@ public sealed record EnrichmentConfig
     /// </summary>
     public required int VoiceprintsPollSeconds { get; init; }
 
+    /// <summary>
+    /// The V6 recent-enrollment auto-apply WINDOW in minutes (<c>CERVELLO_RECENT_ENROLLMENT_TTL_MINUTES</c>,
+    /// default 180 = 3 h). A just-enrolled print's scoped auto-apply signal (design §7 V6, §9 fork 2)
+    /// authorises <see cref="Pipeline.Stages.AttributionStage"/> to auto-apply an auto-band corpus match
+    /// for THIS person ONLY within this window of the enrollment — long enough to cover the propagation
+    /// drain, far short of "days/weeks later". Past the window the mark is STALE and MUST NOT authorise
+    /// auto-apply: a later unrelated ≥-auto match to that slug ESCALATES under escalate-only instead of
+    /// being auto-labelled (the write-safety bound — a false-accept at threshold weeks later never
+    /// silently gets the <c>human://</c> basis). Fail-closed 1..10080 (a week ceiling).
+    /// </summary>
+    public required int RecentEnrollmentTtlMinutes { get; init; }
+
     // ── HTTP ceilings ────────────────────────────────────────────────────────────
     /// <summary>Per-request ceiling (seconds) applied to the outbound HttpClients.</summary>
     public required int HttpTimeoutSeconds { get; init; }
@@ -247,6 +259,12 @@ public sealed record EnrichmentConfig
     internal const int DefaultVoiceprintsPollSeconds = 60;
     internal const int MinVoiceprintsPollSeconds = 10;
     internal const int MaxVoiceprintsPollSeconds = 3_600;
+
+    // V6 recent-enrollment auto-apply window: default 180min (3h — covers the propagation drain, far
+    // short of days/weeks); fail-closed 1..10080 (a week ceiling).
+    internal const int DefaultRecentEnrollmentTtlMinutes = 180;
+    internal const int MinRecentEnrollmentTtlMinutes = 1;
+    internal const int MaxRecentEnrollmentTtlMinutes = 10_080;
 
     /// <summary>Read config from the process environment (production path).</summary>
     public static EnrichmentConfig FromEnvironment() => From(Environment.GetEnvironmentVariable);
@@ -296,6 +314,9 @@ public sealed record EnrichmentConfig
             VoiceprintsPollSeconds = ReadBoundedInt(getEnv,
                 "CERVELLO_VOICEPRINTS_POLL_SECONDS", DefaultVoiceprintsPollSeconds,
                 MinVoiceprintsPollSeconds, MaxVoiceprintsPollSeconds),
+            RecentEnrollmentTtlMinutes = ReadBoundedInt(getEnv,
+                "CERVELLO_RECENT_ENROLLMENT_TTL_MINUTES", DefaultRecentEnrollmentTtlMinutes,
+                MinRecentEnrollmentTtlMinutes, MaxRecentEnrollmentTtlMinutes),
             HttpTimeoutSeconds = ReadBoundedInt(getEnv,
                 "CERVELLO_ENRICHMENT_HTTP_TIMEOUT_SECONDS", DefaultHttpTimeoutSeconds, 1, MaxHttpTimeoutSeconds),
         };

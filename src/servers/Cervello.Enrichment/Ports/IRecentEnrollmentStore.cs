@@ -16,20 +16,30 @@ namespace Cervello.Enrichment.Ports;
 /// the operator named. Borderline (below-auto) matches STILL escalate (§9 fork 3) — this signal only
 /// authorises the auto band for the just-enrolled person.</para>
 ///
-/// <para><b>Bounded lifetime.</b> The mark is set at enroll time and cleared once the re-attribution
-/// requeue that consumed it has been driven through the drain (V6 clears it after the requeue), so a
-/// FUTURE, unrelated recording that happens to match <c>marco</c> later routes through the normal
-/// policy again (the auto-apply is for THIS re-attribution pass, not forever). Confinement: person
-/// slugs only, never a centroid.</para>
+/// <para><b>Bounded lifetime — the write-safety invariant (the load-bearing bound).</b> A mark
+/// authorises auto-apply ONLY for the enrollment's OWN propagation pass, then EXPIRES by TTL.
+/// <see cref="GetBasisAsync"/> returns the basis ONLY if the mark was set within a bounded window
+/// (config <c>CERVELLO_RECENT_ENROLLMENT_TTL_MINUTES</c>, e.g. 3 h — long enough for the propagation
+/// drain to run, far short of days/weeks). A mark OLDER than the TTL is INERT and returns null, so a
+/// later unrelated ≥-auto match to that slug — INCLUDING a false-accept at the 0.62 threshold weeks
+/// later — ESCALATES under escalate-only, never silently gets the <c>human://</c> basis. The TTL
+/// survives restarts and needs no drain-completion coupling (which is out of this component's scope),
+/// so it is the authoritative expiry.</para>
+///
+/// <para>There is deliberately NO explicit-clear method: clearing at requeue time would defeat the
+/// propagation (the drain re-run that consumes the mark is asynchronous + later), and clearing at
+/// drain-completion belongs to a future DrainWorker hook, not this signal. The TTL is the whole bound.
+/// Confinement: person slugs + a timestamp only, never a centroid.</para>
 /// </summary>
 public interface IRecentEnrollmentStore
 {
-    /// <summary>Mark <paramref name="personSlug"/> as just human-enrolled, carrying the enrollment's <c>human://</c> basis id (idempotent).</summary>
+    /// <summary>Mark <paramref name="personSlug"/> as just human-enrolled (timestamped now), carrying the enrollment's <c>human://</c> basis id (idempotent — refreshes the timestamp).</summary>
     Task MarkAsync(string personSlug, string humanBasisId, CancellationToken ct = default);
 
-    /// <summary>The <c>human://</c> basis id if <paramref name="personSlug"/> is currently a just-enrolled print, else null.</summary>
+    /// <summary>
+    /// The <c>human://</c> basis id if <paramref name="personSlug"/> is a just-enrolled print whose mark
+    /// is STILL WITHIN the TTL window, else null. A mark older than the TTL (or absent) returns null —
+    /// it MUST NOT authorise an auto-apply (the write-safety bound).
+    /// </summary>
     Task<string?> GetBasisAsync(string personSlug, CancellationToken ct = default);
-
-    /// <summary>Clear the just-enrolled mark for <paramref name="personSlug"/> (after V6's requeue is driven through). No-op if absent.</summary>
-    Task ClearAsync(string personSlug, CancellationToken ct = default);
 }

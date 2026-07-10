@@ -130,4 +130,48 @@ public sealed class CorpusReattributorTests
         var verdict = Assert.Single(result.Verdicts);
         Assert.Equal(AttributionOutcome.OpenPoint, verdict.Outcome); // escalated, never auto-applied
     }
+
+    // ── the MC write-safety BLOCKER regression: a STALE mark must NOT auto-apply a future match ──────
+
+    [Fact] // scenario: mark(marco) → within TTL auto-applies, but PAST TTL a NEW ≥auto match ESCALATES
+    public async Task AttributionStage_escalates_a_future_match_after_the_recent_enrollment_ttl_elapses()
+    {
+        var consent = new InMemoryEnrollmentConsentStore();
+        var store = new InMemoryVoiceprintStore(EnrollmentAllowlist.Empty, consent);
+        await consent.AddConsentAsync("marco", Basis);
+        await store.EnrollOrRefineAsync("marco", TestVectors.Axis(5), ["rec://r#s1"], null, new DateOnly(2026, 7, 10));
+
+        // A mutable clock: the mark is set at T0; the clock later advances PAST the TTL before the match.
+        var clock = new DateTimeOffset(2026, 7, 10, 12, 0, 0, TimeSpan.Zero);
+        var recent = new InMemoryRecentEnrollmentStore(TimeSpan.FromHours(3), () => clock);
+        await recent.MarkAsync("marco", Basis); // marked at T0
+
+        var policy = new DecisionPolicy(DecisionBands.Default, PolicyPhase.EscalateOnly);
+        var stage = new AttributionStage(store, policy, participantHints: null, recentEnrollment: recent);
+        var cluster = new MergedCluster("s1", ["s1"], TestVectors.Axis(5), [new DiarizedSegment("s1", 0, 20)]); // cosine 1.0 → ≥auto
+
+        // WITHIN the window → the propagation pass DOES auto-apply (the single-pass contract still holds).
+        clock = clock.AddHours(2);
+        var within = await stage.ResolveAsync("rec-propagation", [cluster]);
+        Assert.Equal(AttributionOutcome.AutoApplied, Assert.Single(within.Verdicts).Outcome);
+
+        // PAST the TTL (a brand-new, unrelated recording — here 4 h later, in prod possibly weeks) → ESCALATE.
+        clock = clock.AddHours(2); // now T0 + 4h > 3h TTL
+        var later = await stage.ResolveAsync("rec-unrelated-future", [cluster]);
+        Assert.Equal(AttributionOutcome.OpenPoint, Assert.Single(later.Verdicts).Outcome); // stale mark inert — escalate-only holds
+    }
+
+    [Fact] // scenario: the store itself expires a stale mark — GetBasisAsync returns null past the TTL
+    public async Task RecentEnrollmentStore_expires_a_stale_mark()
+    {
+        var clock = new DateTimeOffset(2026, 7, 10, 12, 0, 0, TimeSpan.Zero);
+        var store = new InMemoryRecentEnrollmentStore(TimeSpan.FromMinutes(180), () => clock);
+        await store.MarkAsync("marco", Basis);
+
+        clock = clock.AddMinutes(179);
+        Assert.Equal(Basis, await store.GetBasisAsync("marco")); // still within window
+
+        clock = clock.AddMinutes(2); // now 181 min > 180 min TTL
+        Assert.Null(await store.GetBasisAsync("marco"));         // stale → inert, never authorises auto-apply
+    }
 }

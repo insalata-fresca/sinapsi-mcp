@@ -25,12 +25,14 @@ public sealed class PgRecentEnrollmentStore : IRecentEnrollmentStore, ISchemaIni
         """;
 
     private readonly string _connString;
+    private readonly int _ttlMinutes;
     private readonly ILogger _log;
 
     public PgRecentEnrollmentStore(EnrichmentConfig cfg, ILogger<PgRecentEnrollmentStore>? log = null)
     {
         ArgumentNullException.ThrowIfNull(cfg);
         _connString = cfg.PostgresDsn;
+        _ttlMinutes = cfg.RecentEnrollmentTtlMinutes;
         _log = log ?? NullLogger<PgRecentEnrollmentStore>.Instance;
     }
 
@@ -85,19 +87,16 @@ public sealed class PgRecentEnrollmentStore : IRecentEnrollmentStore, ISchemaIni
     {
         if (string.IsNullOrWhiteSpace(personSlug)) return null;
         await using var c = await OpenAsync(ct);
-        await using var cmd = new NpgsqlCommand(
-            "SELECT human_basis FROM voiceprint_recent_enrollment WHERE person_slug = @s", c);
+        // Write-safety bound (§9 fork 2 / MC pass): return the basis ONLY if the mark is STILL WITHIN the
+        // TTL window (enrolled_at >= now() - ttl). A stale mark returns null — it must NOT authorise an
+        // auto-apply, so a later unrelated ≥-auto match to this slug escalates under escalate-only.
+        await using var cmd = new NpgsqlCommand("""
+            SELECT human_basis FROM voiceprint_recent_enrollment
+            WHERE person_slug = @s
+              AND enrolled_at >= now() - make_interval(mins => @ttl)
+            """, c);
         cmd.Parameters.AddWithValue("s", personSlug);
+        cmd.Parameters.AddWithValue("ttl", _ttlMinutes);
         return await cmd.ExecuteScalarAsync(ct) as string;
-    }
-
-    public async Task ClearAsync(string personSlug, CancellationToken ct = default)
-    {
-        if (string.IsNullOrWhiteSpace(personSlug)) return;
-        await using var c = await OpenAsync(ct);
-        await using var cmd = new NpgsqlCommand(
-            "DELETE FROM voiceprint_recent_enrollment WHERE person_slug = @s", c);
-        cmd.Parameters.AddWithValue("s", personSlug);
-        await cmd.ExecuteNonQueryAsync(ct);
     }
 }
