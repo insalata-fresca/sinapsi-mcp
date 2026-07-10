@@ -197,6 +197,25 @@ public sealed record EnrichmentConfig
     /// <summary>The CT121-mcp-gateway MCP endpoint the voice-sample uploader calls gdrive_* tools through.</summary>
     public required string GdriveGatewayUrl { get; init; }
 
+    // ── voiceprint naming — V5 rename poller + registry ──────────────────────────
+    /// <summary>
+    /// The Drive folder id for <c>cervello/recordings/voiceprints/registry/</c>
+    /// (<c>CERVELLO_VOICEPRINTS_REGISTRY_DRIVE_FOLDER_ID</c>), the durable human-owned reference set a
+    /// renamed+enrolled sample is MOVED into (design <c>ste/cervello</c>
+    /// <c>docs/design/voiceprint-naming.md</c> §7 phase V5, §6.5; documented value
+    /// <c>1qbL_O2hcIpDisT6S-vbWHQGRpR7e6DqY</c>). When set, V5's move targets it directly; when unset
+    /// the registry adapter create-if-absent resolves a <c>registry</c> subfolder under the voiceprints
+    /// parent (a fallback for local/offline exercising only).
+    /// </summary>
+    public required string VoiceprintsRegistryDriveFolderId { get; init; }
+
+    /// <summary>
+    /// The V5 rename-poller interval in seconds (<c>CERVELLO_VOICEPRINTS_POLL_SECONDS</c>, default 60,
+    /// design §7 V5 / §6.1). Each cycle lists the <c>voiceprints/</c> folder, diffs <c>fileId→name</c>
+    /// against the unresolved candidate rows, and enrolls+moves any renamed sample. Fail-closed 10..3600.
+    /// </summary>
+    public required int VoiceprintsPollSeconds { get; init; }
+
     // ── HTTP ceilings ────────────────────────────────────────────────────────────
     /// <summary>Per-request ceiling (seconds) applied to the outbound HttpClients.</summary>
     public required int HttpTimeoutSeconds { get; init; }
@@ -223,6 +242,11 @@ public sealed record EnrichmentConfig
     internal const int MaxVoiceSamplesMax = 100;
     internal const string DefaultVoiceprintsWatcherAgent = "agent-cervello-watcher";
     internal const string DefaultGdriveGatewayUrl = "http://127.0.0.1:8443/mcp";
+
+    // V5 rename poller: default 60s cycle (design §7 V5); fail-closed 10..3600.
+    internal const int DefaultVoiceprintsPollSeconds = 60;
+    internal const int MinVoiceprintsPollSeconds = 10;
+    internal const int MaxVoiceprintsPollSeconds = 3_600;
 
     /// <summary>Read config from the process environment (production path).</summary>
     public static EnrichmentConfig FromEnvironment() => From(Environment.GetEnvironmentVariable);
@@ -268,6 +292,10 @@ public sealed record EnrichmentConfig
             VoiceprintsDriveFolderId = getEnv("CERVELLO_VOICEPRINTS_DRIVE_FOLDER_ID") ?? "",
             VoiceprintsWatcherAgent = Env("CERVELLO_VOICEPRINTS_WATCHER_AGENT", DefaultVoiceprintsWatcherAgent),
             GdriveGatewayUrl = ReadHttpUrl(getEnv, "CERVELLO_GDRIVE_GATEWAY_URL", DefaultGdriveGatewayUrl),
+            VoiceprintsRegistryDriveFolderId = getEnv("CERVELLO_VOICEPRINTS_REGISTRY_DRIVE_FOLDER_ID") ?? "",
+            VoiceprintsPollSeconds = ReadBoundedInt(getEnv,
+                "CERVELLO_VOICEPRINTS_POLL_SECONDS", DefaultVoiceprintsPollSeconds,
+                MinVoiceprintsPollSeconds, MaxVoiceprintsPollSeconds),
             HttpTimeoutSeconds = ReadBoundedInt(getEnv,
                 "CERVELLO_ENRICHMENT_HTTP_TIMEOUT_SECONDS", DefaultHttpTimeoutSeconds, 1, MaxHttpTimeoutSeconds),
         };

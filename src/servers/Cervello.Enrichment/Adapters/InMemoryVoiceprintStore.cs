@@ -15,10 +15,16 @@ namespace Cervello.Enrichment.Adapters;
 /// "only in CT146 pgvector". A synthetic vector is all that ever enters it in tests; no personal
 /// audio, no biometric vector is committed to git. Enrollment is hard-gated by the §10 allowlist.</para>
 /// </summary>
-public sealed class InMemoryVoiceprintStore(EnrollmentAllowlist allowlist) : IVoiceprintStore
+public sealed class InMemoryVoiceprintStore(
+    EnrollmentAllowlist allowlist, IEnrollmentConsentStore? consent = null) : IVoiceprintStore
 {
     private readonly EnrollmentAllowlist _allowlist =
         allowlist ?? throw new ArgumentNullException(nameof(allowlist));
+
+    // The durable, runtime-mutable §10 consent extension (V5 rename-consent). Optional (null in every
+    // pre-V5 test) — when present its slugs UNION with the static allowlist so a rename-consented
+    // person enrolls without a redeploy. Never REPLACES the static gate; only widens it.
+    private readonly IEnrollmentConsentStore? _consent = consent;
 
     private readonly Dictionary<string, Voiceprint> _prints = new(StringComparer.Ordinal);
     private readonly HashSet<string> _deleted = new(StringComparer.Ordinal);
@@ -41,7 +47,7 @@ public sealed class InMemoryVoiceprintStore(EnrollmentAllowlist allowlist) : IVo
     public Task<Voiceprint?> GetAsync(string personSlug, CancellationToken ct = default) =>
         Task.FromResult(_prints.GetValueOrDefault(personSlug));
 
-    public Task<Voiceprint> EnrollOrRefineAsync(
+    public async Task<Voiceprint> EnrollOrRefineAsync(
         string personSlug,
         IReadOnlyList<float> confirmedCentroid,
         IReadOnlyList<string> sourceSegments,
@@ -54,8 +60,11 @@ public sealed class InMemoryVoiceprintStore(EnrollmentAllowlist allowlist) : IVo
         ArgumentNullException.ThrowIfNull(confirmedCentroid);
         ArgumentNullException.ThrowIfNull(sourceSegments);
 
-        // §10 allowlist — hard gate. A refused enrollment throws (never a silent skip).
-        if (!_allowlist.IsAllowed(personSlug))
+        // §10 allowlist — hard gate. A refused enrollment throws (never a silent skip). The static
+        // allowlist is UNIONed with the durable rename-consent store (V5): a person the operator
+        // consented-to-enroll via a Drive rename passes the gate even if not in the deploy-time set.
+        if (!_allowlist.IsAllowed(personSlug)
+            && !(_consent is not null && await _consent.IsConsentedAsync(personSlug, ct).ConfigureAwait(false)))
             throw new EnrollmentNotAllowedException(personSlug);
 
         // A deletion tombstone is cleared by a fresh operator-confirmed enrollment (re-consent):
@@ -84,7 +93,7 @@ public sealed class InMemoryVoiceprintStore(EnrollmentAllowlist allowlist) : IVo
         }
 
         _prints[personSlug] = updated;
-        return Task.FromResult(updated);
+        return updated;
     }
 
     public Task<bool> DeleteAsync(string personSlug, CancellationToken ct = default)
