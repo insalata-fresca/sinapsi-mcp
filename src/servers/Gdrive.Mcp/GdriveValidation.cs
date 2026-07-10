@@ -52,6 +52,58 @@ internal static class GdriveValidation
     /// single request off the large-object heap unexpectedly.</summary>
     internal const int MaxContentBytes = 10 * 1024 * 1024;
 
+    /// <summary>Upper bound on the base64 TEXT accepted by <c>upload_file</c>.
+    /// Base64 inflates bytes ~1.33x, so this ceiling (the encoded string length,
+    /// not the decoded byte count) still bounds a request to a modest ~30 MiB of
+    /// decoded binary — comfortably past a ~30s voice clip while refusing an
+    /// unbounded blob before a single `Convert.FromBase64String` call runs.</summary>
+    internal const int MaxBase64ContentLength = 40 * 1024 * 1024;
+
+    /// <summary>
+    /// Validate REQUIRED base64-encoded binary content for <c>upload_file</c>.
+    /// Checks required/non-empty, a length ceiling on the encoded TEXT (cheap,
+    /// before decoding), and well-formedness via a real
+    /// <see cref="Convert.FromBase64String"/> attempt (rejects padding errors,
+    /// invalid characters, wrong length) so a malformed blob never reaches Drive.
+    /// Returns <c>null</c> when valid.
+    /// </summary>
+    internal static string? ValidateBase64Content(string? contentBase64)
+    {
+        if (string.IsNullOrWhiteSpace(contentBase64))
+            return "contentBase64 is required";
+        if (contentBase64.Length > MaxBase64ContentLength)
+            return $"contentBase64 too long ({contentBase64.Length} chars; max {MaxBase64ContentLength})";
+        try
+        {
+            Convert.FromBase64String(contentBase64);
+        }
+        catch (FormatException)
+        {
+            return "contentBase64 is not well-formed base64";
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Validate a REQUIRED parent folder id — used by <c>move_file</c>'s
+    /// <c>destFolderId</c>/<c>removeFolderId</c>, where (unlike the optional
+    /// <see cref="ValidateFolderId"/> used elsewhere) at least one parent must be
+    /// supplied for the move to mean anything. <paramref name="field"/> names the
+    /// parameter in the returned reason. Returns <c>null</c> when valid.
+    /// </summary>
+    internal static string? ValidateRequiredParentId(string? folderId, string field)
+    {
+        if (string.IsNullOrWhiteSpace(folderId))
+            return $"{field} is required";
+        if (folderId.Length > MaxIdLength)
+            return $"{field} too long ({folderId.Length} chars; max {MaxIdLength})";
+        if (ContainsControlOrNewline(folderId))
+            return $"{field} contains control characters";
+        if (folderId[0] == '-')
+            return $"{field} must not start with '-'";
+        return null;
+    }
+
     /// <summary>
     /// Validate a required Drive file id (the <c>fileId</c> parameter shared by
     /// most tools). Returns <c>null</c> when valid, otherwise a reason.

@@ -7,7 +7,7 @@ using DriveData = Google.Apis.Drive.v3.Data;
 namespace Gdrive.Mcp;
 
 // ---------------------------------------------------------------------------
-// Google Drive CRUD surface (9 tools). Hardening patterns (mirroring the
+// Google Drive CRUD surface (12 tools). Hardening patterns (mirroring the
 // StepCa.Mcp exemplar for an HTTP-backed server):
 //   * Every tool validates its parameters via GdriveValidation BEFORE any HTTP
 //     call is issued, returning a structured {ok:false, error} envelope on bad
@@ -28,6 +28,8 @@ public sealed class DriveTools
 {
     private const string FileFields =
         "id,name,mimeType,modifiedTime,createdTime,size,parents,owners(displayName,emailAddress),trashed,webViewLink";
+
+    private const string FolderMimeType = "application/vnd.google-apps.folder";
 
     // Uniform structured-error envelope. Callers can rely on ok==false + a
     // sanitised error string for EVERY failure path (validation and upstream).
@@ -263,6 +265,87 @@ public sealed class DriveTools
             }
 
             var req = drive.Files.Update(meta, fileId);
+            req.Fields = FileFields;
+            return Summarize(await req.ExecuteAsync());
+        }
+        catch (Exception e) { return Err(e.Message); }
+    }
+
+    [McpServerTool(Name = "create_folder")]
+    [Description("Create a new Drive folder (application/vnd.google-apps.folder). Optionally place it inside a parent folder. Returns the new folder's id + metadata.")]
+    public static async Task<object> CreateFolder(
+        DriveService drive,
+        [Description("Folder name.")] string name,
+        [Description("Optional parent folder id. Omit to create at Drive root.")] string? parentFolderId = null)
+    {
+        if (GdriveValidation.ValidateName(name) is { } nameErr) return Err(nameErr);
+        if (GdriveValidation.ValidateFolderId(parentFolderId) is { } folderErr) return Err(folderErr);
+
+        try
+        {
+            var meta = new DriveData.File { Name = name, MimeType = FolderMimeType };
+            if (!string.IsNullOrWhiteSpace(parentFolderId)) meta.Parents = new List<string> { parentFolderId };
+
+            var req = drive.Files.Create(meta);
+            req.Fields = FileFields;
+            return Summarize(await req.ExecuteAsync());
+        }
+        catch (Exception e) { return Err(e.Message); }
+    }
+
+    [McpServerTool(Name = "upload_file")]
+    [Description("Upload BINARY content to Drive, losslessly: pass base64 in, it is decoded and uploaded verbatim. Use for non-text artifacts (audio clips, images, archives) that create_file (UTF-8 text only) cannot carry. Optionally place it in a parent folder. Returns the new file's id + metadata.")]
+    public static async Task<object> UploadFile(
+        DriveService drive,
+        [Description("File name.")] string name,
+        [Description("Base64-encoded file content (decoded byte-exact before upload).")] string contentBase64,
+        [Description("MIME type of the decoded content, e.g. audio/mp4 or audio/wav.")] string mimeType,
+        [Description("Optional parent folder id.")] string? folderId = null)
+    {
+        if (GdriveValidation.ValidateName(name) is { } nameErr) return Err(nameErr);
+        if (GdriveValidation.ValidateBase64Content(contentBase64) is { } contentErr) return Err(contentErr);
+        if (GdriveValidation.ValidateMimeType(mimeType) is { } mimeErr) return Err(mimeErr);
+        if (GdriveValidation.ValidateFolderId(folderId) is { } folderErr) return Err(folderErr);
+
+        try
+        {
+            var meta = new DriveData.File { Name = name, MimeType = mimeType };
+            if (!string.IsNullOrWhiteSpace(folderId)) meta.Parents = new List<string> { folderId };
+
+            var bytes = Convert.FromBase64String(contentBase64);
+            using var stream = new MemoryStream(bytes);
+            var req = drive.Files.Create(meta, stream, mimeType);
+            req.Fields = FileFields;
+            var progress = await req.UploadAsync();
+            if (progress.Exception is not null) return Err(progress.Exception.Message);
+            return Summarize(req.ResponseBody);
+        }
+        catch (Exception e) { return Err(e.Message); }
+    }
+
+    [McpServerTool(Name = "move_file")]
+    [Description("Move a file between Drive folders via Files.Update AddParents/RemoveParents. Supply destFolderId to add a new parent and/or removeFolderId to detach an old one (at least one is required). Returns the file's updated metadata (including its new parents list).")]
+    public static async Task<object> MoveFile(
+        DriveService drive,
+        [Description("The Drive file id to move.")] string fileId,
+        [Description("Folder id to add as a new parent. Provide this and/or removeFolderId.")] string? destFolderId = null,
+        [Description("Folder id to remove as a parent. Provide this and/or destFolderId.")] string? removeFolderId = null)
+    {
+        if (GdriveValidation.ValidateFileId(fileId) is { } idErr) return Err(idErr);
+        if (string.IsNullOrWhiteSpace(destFolderId) && string.IsNullOrWhiteSpace(removeFolderId))
+            return Err("at least one of destFolderId or removeFolderId is required");
+        if (!string.IsNullOrWhiteSpace(destFolderId) &&
+            GdriveValidation.ValidateRequiredParentId(destFolderId, "destFolderId") is { } destErr)
+            return Err(destErr);
+        if (!string.IsNullOrWhiteSpace(removeFolderId) &&
+            GdriveValidation.ValidateRequiredParentId(removeFolderId, "removeFolderId") is { } remErr)
+            return Err(remErr);
+
+        try
+        {
+            var req = drive.Files.Update(new DriveData.File(), fileId);
+            if (!string.IsNullOrWhiteSpace(destFolderId)) req.AddParents = destFolderId;
+            if (!string.IsNullOrWhiteSpace(removeFolderId)) req.RemoveParents = removeFolderId;
             req.Fields = FileFields;
             return Summarize(await req.ExecuteAsync());
         }

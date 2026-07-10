@@ -4,7 +4,7 @@ A self-hosted **Google Drive CRUD MCP server**. Many managed Drive connectors ex
 read/search/download/create — they have **no `update` and no `delete`**, and a third-party
 connector can't be extended. This server owns the full file lifecycle, talking to Drive via
 the official [`Google.Apis.Drive.v3`](https://www.nuget.org/packages/Google.Apis.Drive.v3)
-.NET client and exposing a 9-tool surface over streamable HTTP at `/mcp`.
+.NET client and exposing a 12-tool surface over streamable HTTP at `/mcp`.
 
 It holds **no deployment topology in source** — credential paths, the listen address, the
 externally-reachable download base URL, and every timeout are supplied by environment
@@ -15,7 +15,7 @@ ratified `StepCa.Mcp` exemplar, adapted for an HTTP-backed (rather than subproce
 ## Contents
 
 - [Overview](#overview)
-- [Tool surface](#tool-surface-9)
+- [Tool surface](#tool-surface-12)
 - [Per-tool reference](#per-tool-reference)
 - [Configuration](#configuration)
 - [Run](#run)
@@ -41,9 +41,9 @@ Architecturally it is a handful of small seams:
 | Validation | `GdriveValidation.cs` | One throw-free `Validate*` method per tool parameter; returns `null` or a human-readable reason. |
 | Errors | `GdriveErrors.cs` | `Sanitize(...)` — redacts key material / OAuth tokens / credentials and length-caps every surfaced error string. |
 | Download | `DriveDownload.cs` | Ranged base64 media plumbing + the short-lived capability-ticket store + the `GET /gdrive-dl/{token}` streaming endpoint. |
-| Tools | `DriveTools.cs` | The 9 MCP tools. Validates input first, calls the Drive client, routes every error string through `Sanitize`. |
+| Tools | `DriveTools.cs` | The 12 MCP tools. Validates input first, calls the Drive client, routes every error string through `Sanitize`. |
 
-## Tool surface (9)
+## Tool surface (12)
 
 | Tool | Mutates | What it does |
 |------|:-------:|--------------|
@@ -56,9 +56,15 @@ Architecturally it is a handful of small seams:
 | `create_file` | **yes** | Create a file with text content, optional parent folder. |
 | `update_file` | **yes** | **Rename and/or replace content** of an existing file. |
 | `delete_file` | **yes** | **Trash (default) or permanently delete** a file. |
+| `create_folder` | **yes** | Create a Drive folder, optional parent folder. |
+| `upload_file` | **yes** | **Binary** upload — base64 in, decoded, uploaded verbatim. |
+| `move_file` | **yes** | Move a file between folders via `AddParents`/`RemoveParents`. |
 
 `update_file` + `delete_file` are the two a typical managed connector lacks and the reason
-this server exists.
+this server exists. `create_folder` + `upload_file` + `move_file` were added for
+`docs/design/voiceprint-naming.md` §7/§8 (`ste/cervello`) — provisioning a Drive folder tree,
+uploading a binary audio clip (`create_file` is UTF-8 text only), and moving a named clip
+between folders (`update_file` has no `parents` support).
 
 ## Per-tool reference
 
@@ -110,6 +116,21 @@ success shapes below are unchanged from the tool's behaviour.
 - **Params:** `fileId` (required), `permanent` (default false → trash).
 - **Returns:** `{ fileId, deleted: "trashed", name, trashed }` (trash) or `{ fileId, deleted: "permanent" }`.
 - **Errors:** invalid `fileId` → `{ ok:false, error }`.
+
+### `create_folder` (mutates)
+- **Params:** `name` (required), `parentFolderId?`.
+- **Returns:** the created folder's summary object (`mimeType` = `application/vnd.google-apps.folder`).
+- **Errors:** invalid `name` / bad `parentFolderId` → `{ ok:false, error }`.
+
+### `upload_file` (mutates)
+- **Params:** `name` (required), `contentBase64` (required, base64-encoded binary; well-formedness checked before decode), `mimeType` (required), `folderId?`.
+- **Returns:** the created file's summary object. The decoded bytes are uploaded verbatim (byte-exact) — this is the binary counterpart of `create_file`, which is UTF-8 text only.
+- **Errors:** invalid `name` / malformed or oversize `contentBase64` / bad `mimeType` / bad `folderId` → `{ ok:false, error }`.
+
+### `move_file` (mutates)
+- **Params:** `fileId` (required), `destFolderId?` (folder to add as a parent), `removeFolderId?` (folder to remove as a parent) — at least one of the two is required.
+- **Returns:** the moved file's summary object (including its updated `parents` list).
+- **Errors:** invalid `fileId` / neither `destFolderId` nor `removeFolderId` supplied / bad `destFolderId` / bad `removeFolderId` → `{ ok:false, error }`.
 
 ## Configuration
 
@@ -231,6 +252,10 @@ account:
 
 - **`GdriveValidationTests`** — the full accept/reject matrix for every `Validate*` method
   (required/empty, length caps, control chars incl. the C# `\0` NUL escape, leading-`-`).
+- **`GdriveValidationV3Tests`** — the same accept/reject matrix for the two V3 validators:
+  `ValidateBase64Content` (valid, empty→required, oversize, malformed base64) and
+  `ValidateRequiredParentId` (valid, empty/null, oversize, control chars, leading-`-`,
+  field-name-aware messages).
 - **`GdriveConfigHardeningTests`** — the fail-closed config matrix for
   `GDRIVE_MCP_HTTP_TIMEOUT_SECONDS`: default, ceiling, and a THROW naming the var on
   `0` / negative / non-numeric / fractional / over-ceiling values.
@@ -246,5 +271,9 @@ account:
   - an **upstream error body carrying a fake secret is redacted** — proven with a fake
     transport that returns a 403 whose body embeds a token, asserting the tool's error string
     is `[redacted]`, not the raw secret.
+- **`DriveToolGuardV3Tests`** — the same two legs for `create_folder`/`upload_file`/`move_file`,
+  plus a **byte-exact upload proof**: a `FakeDrive.Capturing` transport records the raw request
+  body, and the test asserts the original (pre-base64) bytes appear in it verbatim — proving
+  `upload_file` doesn't mangle, truncate, or re-encode the decoded binary.
 - **`GdriveConfigTests`**, **`DownloadTicketStoreTests`**, **`ToolSurfaceTests`** — the
-  pre-existing neutral-config, capability-ticket, and 9-tool parity guards.
+  pre-existing neutral-config, capability-ticket, and 12-tool parity guards.
