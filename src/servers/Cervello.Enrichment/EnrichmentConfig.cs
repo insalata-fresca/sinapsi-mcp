@@ -68,8 +68,22 @@ public sealed record EnrichmentConfig
     /// <summary>Base URL of the CT126 speaches service (:8000) for base transcription + re-ASR.</summary>
     public required string Ct126BaseUrl { get; init; }
 
-    /// <summary>Correct-language config handed to CT126 base transcription (e.g. <c>fr</c>, <c>en</c>).</summary>
+    /// <summary>
+    /// Correct-language config handed to CT126 base transcription (e.g. <c>fr</c>, <c>en</c>), or
+    /// <c>auto</c> (the default) to OMIT the language field entirely so speaches auto-detects it per
+    /// recording — the corpus is multilingual (Italian-dominant + French/other), so a single forced
+    /// language mis-transcribes most of it. <see cref="Adapters.Ct126TranscribeClient"/> treats
+    /// null/empty/<c>auto</c> identically.
+    /// </summary>
     public required string TranscribeLanguage { get; init; }
+
+    /// <summary>
+    /// The speaches model id (<c>CERVELLO_TRANSCRIBE_MODEL</c>) sent as the REQUIRED <c>model</c>
+    /// multipart field on <c>POST /v1/audio/transcriptions</c> — speaches is OpenAI-compatible and
+    /// rejects a request with no <c>model</c> field with HTTP 422 Unprocessable Entity. Must match a
+    /// model speaches has actually loaded on CT126 (default: <c>Systran/faster-whisper-large-v3</c>).
+    /// </summary>
+    public required string TranscribeModel { get; init; }
 
     /// <summary>
     /// OPTIONAL CT126 base RE-TRANSCRIPTION fallback. FALSE (default) = the ratified posture: the
@@ -152,7 +166,8 @@ public sealed record EnrichmentConfig
     internal const string DefaultBrainApiBaseUrl = "http://127.0.0.1:8081";
     internal const string DefaultEnrichmentAgent = "agent-cervello-enrichment";
     internal const string DefaultCt126BaseUrl = "http://10.42.0.126:8000";
-    internal const string DefaultTranscribeLanguage = "fr";
+    internal const string DefaultTranscribeLanguage = "auto";
+    internal const string DefaultTranscribeModel = "Systran/faster-whisper-large-v3";
     internal const string DefaultForgejoBaseUrl = "https://forgejo.insalata-fresca.ch";
     internal const string DefaultForgejoRepo = "ste/cervello";
     internal const string DefaultForgejoBaseBranch = "main";
@@ -187,6 +202,7 @@ public sealed record EnrichmentConfig
             BrainBearerToken = getEnv("CERVELLO_BRAIN_BEARER_TOKEN") ?? "",
             Ct126BaseUrl = ReadHttpUrl(getEnv, "CERVELLO_CT126_BASE_URL", DefaultCt126BaseUrl),
             TranscribeLanguage = Env("CERVELLO_TRANSCRIBE_LANGUAGE", DefaultTranscribeLanguage),
+            TranscribeModel = Env("CERVELLO_TRANSCRIBE_MODEL", DefaultTranscribeModel),
             BaseReTranscribeEnabled = ReadBool(getEnv, "CERVELLO_BASE_RETRANSCRIBE_ENABLED", false),
             ReAsrEnabled = ReadBool(getEnv, "CERVELLO_REASR_ENABLED", false),
             PostgresDsn = ReadPostgresDsn(getEnv),

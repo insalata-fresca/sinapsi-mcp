@@ -16,14 +16,23 @@ namespace Cervello.Enrichment.Tests;
 public sealed class Ct126ClientsTests
 {
     private static readonly byte[] Audio = [0x11, 0x22, 0x33];
+    private const string TestModel = "Systran/faster-whisper-large-v3";
+
+    /// <summary>Minimal live-mode-shaped config with a fixed TranscribeModel (+ optional language).</summary>
+    private static EnrichmentConfig Cfg(string language = "auto") => EnrichmentConfig.From(
+        new Dictionary<string, string?>
+        {
+            ["CERVELLO_TRANSCRIBE_MODEL"] = TestModel,
+            ["CERVELLO_TRANSCRIBE_LANGUAGE"] = language,
+        });
 
     // ── base transcription ────────────────────────────────────────────────────
     [Fact]
-    public async Task Transcribe_posts_multipart_with_language_and_maps_text()
+    public async Task Transcribe_posts_multipart_with_model_and_language_and_maps_text()
     {
         var handler = StubHttpMessageHandler.Json(HttpStatusCode.OK, """{ "text": "bonjour le monde" }""");
         var http = new HttpClient(handler) { BaseAddress = new Uri("http://ct126.test") };
-        var client = new Ct126TranscribeClient(http, new StaticBearerProvider("t"));
+        var client = new Ct126TranscribeClient(http, new StaticBearerProvider("t"), Cfg());
 
         var res = await client.TranscribeAsync(Audio, "m4a", "fr");
 
@@ -31,10 +40,34 @@ public sealed class Ct126ClientsTests
         Assert.EndsWith(Ct126TranscribeClient.RoutePath, req.Uri!.AbsolutePath);
         Assert.Equal("Bearer", req.AuthScheme);
         Assert.StartsWith("multipart/form-data", req.ContentType);
+        Assert.Contains("name=model", req.Body);
+        Assert.Contains(TestModel, req.Body);                // configured model part present
+        Assert.Contains("name=language", req.Body);
         Assert.Contains("fr", req.Body);                    // language part present
         Assert.Contains("response_format", req.Body);       // json format part present
         Assert.Equal("bonjour le monde", res.Markdown);
         Assert.Equal("fr", res.Language);                   // language echoed onto the substrate
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("auto")]
+    [InlineData("AUTO")]
+    public async Task Transcribe_omits_language_field_when_unset_or_auto(string? language)
+    {
+        var handler = StubHttpMessageHandler.Json(HttpStatusCode.OK, """{ "text": "ciao mondo" }""");
+        var http = new HttpClient(handler) { BaseAddress = new Uri("http://ct126.test") };
+        var client = new Ct126TranscribeClient(http, new StaticBearerProvider("t"), Cfg());
+
+        var res = await client.TranscribeAsync(Audio, "m4a", language!);
+
+        var req = Assert.Single(handler.Requests);
+        Assert.Contains("name=model", req.Body);        // model always present
+        Assert.DoesNotContain("name=language", req.Body); // language field omitted → auto-detect
+        Assert.Equal("ciao mondo", res.Markdown);
+        Assert.Equal(Ct126TranscribeClient.AutoLanguage, res.Language);
     }
 
     [Fact]
@@ -43,12 +76,12 @@ public sealed class Ct126ClientsTests
         var http500 = new HttpClient(StubHttpMessageHandler.Status(HttpStatusCode.BadGateway))
         { BaseAddress = new Uri("http://ct126.test") };
         await Assert.ThrowsAsync<TranscribeTransientException>(() =>
-            new Ct126TranscribeClient(http500, new StaticBearerProvider("t")).TranscribeAsync(Audio, "m4a", "fr"));
+            new Ct126TranscribeClient(http500, new StaticBearerProvider("t"), Cfg()).TranscribeAsync(Audio, "m4a", "fr"));
 
         var http422 = new HttpClient(StubHttpMessageHandler.Status(HttpStatusCode.UnprocessableEntity))
         { BaseAddress = new Uri("http://ct126.test") };
         await Assert.ThrowsAsync<TranscribeTerminalException>(() =>
-            new Ct126TranscribeClient(http422, new StaticBearerProvider("t")).TranscribeAsync(Audio, "m4a", "fr"));
+            new Ct126TranscribeClient(http422, new StaticBearerProvider("t"), Cfg()).TranscribeAsync(Audio, "m4a", "fr"));
     }
 
     // ── selective re-ASR ──────────────────────────────────────────────────────
