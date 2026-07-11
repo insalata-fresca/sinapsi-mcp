@@ -37,16 +37,20 @@ Architecturally it is a few small seams:
 | Validation | `CouncilValidation.cs` | Fail-fast input guard: one `Validate*` per tool param, returns `string?` (null = ok), never throws. |
 | Errors | `CouncilErrors.cs` | `Sanitize`: redact key material / credentials + length-cap every surfaced upstream string. |
 | Tools | `ConsultTool.cs` | The 2 MCP tools; validate input first, dispatch/poll the job, return the JSON envelope. |
-| Orchestration | `CouncilService.cs` | Parallel member fan-out (claude via the agent backend; gemini/chatgpt via the MCP gateway) + synthesis. |
+| Orchestration | `CouncilService.cs` | Parallel member fan-out (claude + gemini via the agent backend; chatgpt via the MCP gateway) + synthesis. |
 | Job store | `ConsultJob.cs` | Detached background job + in-memory registry (1h retention); guarded snapshot for the poll. |
 
-The claude member runs against an HTTP agent backend (`POST /v1/sessions`,
-`POST .../messages`, `DELETE ...`); gemini calls `gemini_research` and polls
-`gemini_get_status` through the MCP gateway; chatgpt calls `codex_codex` through
-the same gateway in a read-only sandbox. Each member authenticates with its own
-RFC 7523 JWT-bearer identity minted by the in-repo
-[`Sinapsi.AgentJwt`](../../libs/Sinapsi.AgentJwt) library (not a vendored copy),
-and the MCP calls go through the in-repo
+The **claude** member runs against an HTTP agent backend (`POST /v1/sessions`,
+`POST .../messages`, `DELETE ...`). The **gemini** member runs the **`agy`** engine
+(Antigravity CLI) through the SAME agent backend: it creates a HEADLESS session
+(`engine=agy`, which the backend treats as the autonomous governance class),
+injects the prompt via the non-blocking `POST .../prompt` lane (agy runs the turn
+synchronously — one short-lived `agy --print` per inject), then reads the reply off
+the `.../events` SSE transcript (assistant text blocks). The **chatgpt** member calls
+`codex_codex` through the MCP gateway in a read-only sandbox. Each member
+authenticates with its own RFC 7523 JWT-bearer identity minted by the in-repo
+[`Sinapsi.AgentJwt`](../../libs/Sinapsi.AgentJwt) library (not a vendored copy), and
+the gateway call goes through the in-repo
 [`Sinapsi.Mcp`](../../libs/Sinapsi.Mcp) `GatewayMcpClient` — both by
 `ProjectReference`, so the server builds with only nuget.org.
 
@@ -85,8 +89,8 @@ infrastructure. No value is baked to any specific deployment.
 
 | Env var | Required | Default | Purpose |
 |---------|:--------:|---------|---------|
-| `AGENT_BACKEND_URL` | no | `http://127.0.0.1:8088` | Agent backend the `claude-research` member + the synthesis pass spawn sessions on. |
-| `GATEWAY_URL` | no | `http://127.0.0.1:8443/mcp` | MCP gateway the gemini/chatgpt members call through. |
+| `AGENT_BACKEND_URL` | no | `http://127.0.0.1:8088` | Agent backend the `claude-research` + `gemini-research` (agy) members + the synthesis pass spawn sessions on. |
+| `GATEWAY_URL` | no | `http://127.0.0.1:8443/mcp` | MCP gateway the `chatgpt-research` member calls through. |
 | `AGENT_MODEL` | no | `claude-sonnet-4-6` | Model the `claude-research` session is created with. |
 | `SAGE_TIMEOUT_MS` | no | `1800000` (30 min) | Per-outbound-call ceiling (a safety net for a hung backend). Must be an integer in `1..7200000` ms; a non-numeric, `<= 0`, or out-of-range value **fails startup**. |
 | `SAGE_MEMBER_TIMEOUT_MS` | no | `1500000` (25 min) | Per-member wall-clock deadline. Same `1..7200000` ms validation; **fails startup** on an invalid value. |

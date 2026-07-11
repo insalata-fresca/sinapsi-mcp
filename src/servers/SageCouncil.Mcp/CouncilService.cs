@@ -209,84 +209,160 @@ public sealed class CouncilService(HttpClient http, GatewayMcpClient gateway, Ag
         finally { await DeleteSessionAsync(jwt, sessionId).ConfigureAwait(false); }
     }
 
-    // ---- Member: gemini-research (gateway → gemini_research, a deep-research
-    // mode). It is an async tool: gemini_research spawns a task and returns a
-    // task_id; we poll gemini_get_status until done/failed. Depth is mapped from
-    // the consult focus. Contract: task_id; status ∈ running|done|failed; result
-    // holds the final text. ----
+    // ---- Member: gemini-research (agy engine via the brain-api front door) ----
+    // The Gemini engine now runs through `agy` (Antigravity CLI), driven on the SAME
+    // brain-api agent-backend the claude member uses (opt.BackendUrl). The prior
+    // gemini-mcp `gemini_research`/`gemini_get_status` gateway path is DEAD (the
+    // gemini-cli exits OrProjectIdError), so this member no longer touches the gateway.
+    //
+    // A headless (agy) session is EVENTS-ONLY on the front door: create it with
+    // engine=agy (→ class=autonomous, derived from the default transport), inject the
+    // prompt via the non-blocking POST /prompt lane (agy runs the turn synchronously —
+    // one short-lived `agy --print` per inject — so /prompt returns once the turn is
+    // idle), then read the assistant reply off the /events SSE transcript. This mirrors
+    // the claude member's brain-api client/auth path (same HttpClient, same JWT minter,
+    // same per-member identity) — only the drive lane differs, because agy is headless.
     private async Task<MemberResult> GeminiMemberAsync(string prompt, string focus, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
+        string jwt;
+        try { jwt = await jwtMinter.MintAsync(opt.GeminiAgent, ct).ConfigureAwait(false); }
+        catch (Exception e) { return new("gemini-research", "", sw.ElapsedMilliseconds, CouncilErrors.Sanitize($"mint: {e.Message}")); }
+
+        string sessionId;
+        try { sessionId = await CreateSessionAsync(jwt, focus, ct, engine: "agy").ConfigureAwait(false); }
+        catch (Exception e) { return new("gemini-research", "", sw.ElapsedMilliseconds, CouncilErrors.Sanitize($"session: {e.Message}")); }
+
+        var composed = $"{Sys(focus)}\n\nQuestion: {prompt}";
         try
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(opt.Timeout);
-
-            var query = $"{Sys(focus)}\n\nQuestion: {prompt}";
-            var jwt = await jwtMinter.MintAsync(opt.GeminiAgent, cts.Token).ConfigureAwait(false);
-            var spawn = await gateway.CallToolAsync(opt.GatewayUrl, jwt, "gemini_research",
-                new { query, depth = GeminiDepth(focus) }, cts.Token).ConfigureAwait(false);
-
-            var taskId = ExtractJsonString(spawn, "task_id")
-                ?? throw new InvalidOperationException($"gemini_research returned no task_id: {Truncate(spawn)}");
-
-            var report = await PollGeminiResearchAsync(taskId, cts.Token).ConfigureAwait(false);
+            // 1) inject the prompt (blocks until the agy turn is idle) …
+            await PromptHeadlessAsync(jwt, sessionId, composed, cts.Token).ConfigureAwait(false);
+            // 2) … then assemble the reply from the /events transcript.
+            var report = await ReadHeadlessReplyAsync(jwt, sessionId, cts.Token).ConfigureAwait(false);
             return new("gemini-research", report, sw.ElapsedMilliseconds);
         }
-        catch (Exception e) { return new("gemini-research", "", sw.ElapsedMilliseconds, CouncilErrors.Sanitize(e.Message)); }
+        catch (Exception e) { return new("gemini-research", "", sw.ElapsedMilliseconds, CouncilErrors.Sanitize($"agy: {e.Message}")); }
+        finally { await DeleteSessionAsync(jwt, sessionId).ConfigureAwait(false); }
     }
 
-    private static string GeminiDepth(string focus) => focus switch
+    /// <summary>Inject a prompt into a HEADLESS (agy) session via the front-door
+    /// non-blocking lane (<c>POST /v1/sessions/{id}/prompt</c>). agy runs the turn
+    /// synchronously (a short-lived `agy --print` per inject), so this returns once the
+    /// turn is idle. The 202 body carries the reported state; we do not require a specific
+    /// value (the reply is read from /events afterwards) but a non-2xx is surfaced.</summary>
+    private async Task PromptHeadlessAsync(string jwt, string sessionId, string message, CancellationToken ct)
     {
-        "deep-research" or "architecture" or "second-opinion" => "deep",
-        _ => "standard",
-    };
-
-    /// <summary>
-    /// Poll gemini_get_status until the research task is done or failed. The JWT
-    /// is re-minted each poll (the minter caches it) so a research run longer than
-    /// the token TTL doesn't 401 mid-flight. Bounded by the linked token (opt.Timeout).
-    /// </summary>
-    private async Task<string> PollGeminiResearchAsync(string taskId, CancellationToken ct)
-    {
-        var interval = PollInterval;
-        while (true)
+        using var req = new HttpRequestMessage(HttpMethod.Post, new Uri(opt.BackendUrl, $"/v1/sessions/{sessionId}/prompt"))
         {
-            await Task.Delay(interval, ct).ConfigureAwait(false);
-            var jwt = await jwtMinter.MintAsync(opt.GeminiAgent, ct).ConfigureAwait(false);
-            var statusJson = await gateway.CallToolAsync(opt.GatewayUrl, jwt, "gemini_get_status",
-                new { task_id = taskId }, ct).ConfigureAwait(false);
-
-            using var doc = JsonDocument.Parse(statusJson);
-            var root = doc.RootElement;
-            var status = root.TryGetProperty("status", out var s) ? s.GetString() : null;
-            switch (status)
-            {
-                case "done":
-                    if (!root.TryGetProperty("result", out var r)) return "";
-                    return r.ValueKind == JsonValueKind.String ? r.GetString() ?? "" : r.GetRawText();
-                case "failed":
-                    var err = root.TryGetProperty("error", out var e) ? e.GetString() : "unknown error";
-                    throw new InvalidOperationException($"gemini research failed: {err}");
-                default:
-                    continue; // running — keep polling
-            }
+            Content = JsonContent(new { message }),
+        };
+        req.Headers.Authorization = Bearer(jwt);
+        using var res = await http.SendAsync(req, ct).ConfigureAwait(false);
+        if (!res.IsSuccessStatusCode)
+        {
+            // Surface the upstream detail (bounded) so a failure is diagnosable. The body may
+            // echo an upstream credential/error — CouncilErrors.Sanitize scrubs it at the
+            // member boundary (GeminiMemberAsync), so no secret reaches the caller.
+            var detail = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            throw new InvalidOperationException($"prompt {(int)res.StatusCode}: {Truncate(detail)}");
         }
     }
 
-    // The gemini status poll interval. Settable so a test can poll fast; the
-    // production default (10s) is unchanged.
-    internal TimeSpan PollInterval { get; init; } = TimeSpan.FromSeconds(10);
+    /// <summary>Read a HEADLESS (agy) session's reply off the front-door SSE transcript
+    /// (<c>GET /v1/sessions/{id}/events?sinceSeq=0</c>) and assemble it from the assistant
+    /// <c>text</c> blocks (thinking / tool blocks ignored — same rule brain-api's own
+    /// reply assembly applies). The turn has already completed (inject is synchronous for
+    /// agy), so the transcript is fully present in the SSE replay; we consume <c>message</c>
+    /// frames until the stream falls quiet (no further frame within <see cref="PollInterval"/>)
+    /// — the SSE connection itself never terminates (keep-alives), so a bounded quiet-gap is
+    /// how we know the replay is drained. Bounded overall by the linked token (opt.Timeout).</summary>
+    private async Task<string> ReadHeadlessReplyAsync(string jwt, string sessionId, CancellationToken ct)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, new Uri(opt.BackendUrl, $"/v1/sessions/{sessionId}/events?sinceSeq=0"));
+        req.Headers.Authorization = Bearer(jwt);
+        req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+        using var res = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        if (!res.IsSuccessStatusCode)
+        {
+            var detail = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            throw new InvalidOperationException($"events {(int)res.StatusCode}: {Truncate(detail)}");
+        }
 
-    private static string? ExtractJsonString(string json, string property)
+        await using var stream = await res.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+
+        var sb = new StringBuilder();     // assembled assistant text
+        var dataLines = new List<string>(); // the current SSE event's data: lines
+
+        // Drain the replay: read frames until a PollInterval quiet-gap (the replay is fully
+        // buffered because the turn is already idle). The read is bounded by ct (opt.Timeout).
+        while (true)
+        {
+            var readLine = reader.ReadLineAsync(ct).AsTask();
+            var done = await Task.WhenAny(readLine, Task.Delay(PollInterval, ct)).ConfigureAwait(false);
+            if (done != readLine)
+                break; // quiet-gap → the SSE replay is drained.
+
+            var line = await readLine.ConfigureAwait(false);
+            if (line is null) break; // stream closed.
+
+            if (line.Length == 0)
+            {
+                // Blank line terminates an SSE event — assemble its data payload.
+                if (dataLines.Count > 0)
+                {
+                    AppendAssistantText(sb, string.Join('\n', dataLines));
+                    dataLines.Clear();
+                }
+                continue;
+            }
+            if (line.StartsWith("data:", StringComparison.Ordinal))
+                dataLines.Add(line.Length > 5 && line[5] == ' ' ? line[6..] : line[5..]);
+            // event:/id:/comment (":") lines carry no reply text — ignored.
+        }
+        // A final event without a trailing blank line (stream cut at the gap) — flush it.
+        if (dataLines.Count > 0)
+            AppendAssistantText(sb, string.Join('\n', dataLines));
+
+        return sb.ToString();
+    }
+
+    /// <summary>Append the assistant <c>text</c> blocks of one SSE <c>message</c> frame
+    /// (a JSON-serialised engine-neutral SessionEvent) to the reply. Non-assistant roles,
+    /// non-text blocks, and unparseable payloads contribute nothing (fail-soft — a single
+    /// malformed frame must not abort the whole read).</summary>
+    private static void AppendAssistantText(StringBuilder sb, string dataJson)
     {
         try
         {
-            using var doc = JsonDocument.Parse(json);
-            return doc.RootElement.TryGetProperty(property, out var v) ? v.GetString() : null;
+            using var doc = JsonDocument.Parse(dataJson);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return;
+            // Role is serialised by the dispatcher's web-defaults options → camelCase enum
+            // name ("assistant"/"user"/"system"); accept it case-insensitively.
+            if (!root.TryGetProperty("role", out var roleEl)) return;
+            if (!string.Equals(roleEl.GetString(), "assistant", StringComparison.OrdinalIgnoreCase)) return;
+            if (!root.TryGetProperty("blocks", out var blocks) || blocks.ValueKind != JsonValueKind.Array) return;
+            foreach (var b in blocks.EnumerateArray())
+            {
+                if (b.ValueKind != JsonValueKind.Object) continue;
+                if (!b.TryGetProperty("kind", out var kindEl) ||
+                    !string.Equals(kindEl.GetString(), "text", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (b.TryGetProperty("text", out var textEl) && textEl.ValueKind == JsonValueKind.String)
+                    sb.Append(textEl.GetString());
+            }
         }
-        catch (JsonException) { return null; }
+        catch (JsonException) { /* fail-soft: skip a malformed frame. */ }
     }
+
+    // The SSE replay quiet-gap / poll interval. Settable so a test can drain fast; the
+    // production default (10s) tolerates a slow transcript flush without cutting the replay
+    // short. (Formerly the gemini_get_status poll interval — repurposed for the agy events read.)
+    internal TimeSpan PollInterval { get; init; } = TimeSpan.FromSeconds(10);
 
     private static string Truncate(string s) => s.Length <= 200 ? s : s[..200];
 
@@ -349,11 +425,24 @@ public sealed class CouncilService(HttpClient http, GatewayMcpClient gateway, Ag
     }
 
     // ---- agent-backend helpers ----
-    private async Task<string> CreateSessionAsync(string jwt, string focus, CancellationToken ct)
+    // Create a brain-api front-door session. `engine` selects the per-session engine:
+    // null/"claude" → the default claude PTY lane (the claude member + synthesis);
+    // "agy" → a HEADLESS session (the gemini member). A headless session is driven by the
+    // non-blocking /prompt inject lane and read off /events (SSE) — its turns are events-only,
+    // so the blocking /messages lane the claude member uses returns 409 for it (by design).
+    private async Task<string> CreateSessionAsync(string jwt, string focus, CancellationToken ct, string? engine = null)
     {
+        object payload = engine is null
+            ? new { focus, model = opt.Model }
+            // The brain-api front door derives the governance class from the transport: a
+            // default (print) session → the AUTONOMOUS sub-cap (an interactive session would be
+            // human-class). engine=agy + the default transport is therefore already
+            // class=autonomous — brain-api exposes no explicit `class` field, so we do not send
+            // one. The neutral tier is left to the dispatcher default (balanced).
+            : new { focus, model = opt.Model, engine };
         using var req = new HttpRequestMessage(HttpMethod.Post, new Uri(opt.BackendUrl, "/v1/sessions"))
         {
-            Content = JsonContent(new { focus, model = opt.Model }),
+            Content = JsonContent(payload),
         };
         req.Headers.Authorization = Bearer(jwt);
         using var res = await http.SendAsync(req, ct).ConfigureAwait(false);
