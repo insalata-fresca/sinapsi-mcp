@@ -23,6 +23,8 @@
          [McpServerTool] attribute and the SSH transport type the tool surface
          depends on; both are nuget.org-only, so no feed is needed. -->
     <Compile Include="../../src/servers/Sshgw.Mcp/CommandWhitelist.cs" />
+    <Compile Include="../../src/servers/Sshgw.Mcp/CommandCapabilities.cs" />
+    <Compile Include="../../src/servers/Sshgw.Mcp/CommandAuthorizer.cs" />
     <Compile Include="../../src/servers/Sshgw.Mcp/HostKeyPolicy.cs" />
     <Compile Include="../../src/servers/Sshgw.Mcp/ReadFilePolicy.cs" />
     <Compile Include="../../src/servers/Sshgw.Mcp/ServerRegistry.cs" />

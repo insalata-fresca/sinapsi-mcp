@@ -51,6 +51,10 @@ public sealed class SshgwTools
         [Description("Alias for connectionName (the harness may send the selector under this name). connectionName wins when both are given.")] string? server = null,
         [Description("Optional absolute working directory to run the command in (no shell metacharacters)")] string? directory = null,
         [Description("Optional per-call timeout in ms (clamped to the server hard cap)")] int? timeout = null,
+        // Injected by DI (registered service). Defaulted + nullable so the existing
+        // unit call-sites that don't pass it resolve to the legacy authorizer (their
+        // asserted behaviour); production always injects the real options.
+        SshgwOptions? opts = null,
         CancellationToken ct = default)
     {
         // Resolve the selector from connectionName (wire) or its 'server' alias BEFORE
@@ -70,12 +74,30 @@ public sealed class SshgwTools
         var entry = registry.Get(effectiveConn);
         if (entry is null) return Err($"unknown server '{effectiveConn}'");
 
-        // The in-MCP bound: the command must be on this server's whitelist. The
-        // whitelist matches the RAW command (never the cd-prefixed form), matching
-        // the incumbent contract exactly.
-        var wl = new CommandWhitelist(entry.Whitelist);
-        if (!wl.IsAllowed(cmdString))
+        // The in-MCP bound: authorise the RAW command (never the cd-prefixed form).
+        // Two selectable models (proposal 26), flag-gated + default-legacy:
+        //   legacy     — the whole-string-regex whitelist (byte-identical to today).
+        //   capability — the pipeline-aware authorizer: reads (incl. piped/permuted)
+        //                allow; a mutating command returns a typed requiresApproval
+        //                verdict (the harness ASK gate elevates it) instead of a flat
+        //                dead-end; a secret-path read is denied by the shared policy.
+        if ((opts?.CommandAuthorizerMode ?? SshgwOptions.LegacyAuthorizer) == SshgwOptions.CapabilityAuthorizer)
+        {
+            var verdict = new CommandAuthorizer(entry).Authorize(cmdString);
+            if (verdict.Decision == CommandAuthorizer.AuthDecision.Deny)
+                return Err(verdict.Reason ?? "command not permitted");
+            if (verdict.Decision == CommandAuthorizer.AuthDecision.RequiresApproval)
+                return new JsonObject
+                {
+                    ["ok"] = false,
+                    ["error"] = verdict.Reason ?? "command requires operator approval",
+                    ["requiresApproval"] = true,
+                };
+        }
+        else if (!new CommandWhitelist(entry.Whitelist).IsAllowed(cmdString))
+        {
             return Err("Command not in whitelist, execution forbidden");
+        }
 
         ExecResult r;
         try

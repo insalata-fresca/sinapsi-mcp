@@ -92,6 +92,7 @@ Architecturally it is a handful of small seams:
 | `SSHGW_READFILE_DEFAULT_MAX_BYTES` | no | `262144` | Default `read_file` cap (256 KiB). Integer in `1..16777216`; must not exceed the hard cap; invalid values **fail startup**. |
 | `SSHGW_READFILE_HARD_MAX_BYTES` | no | `2097152` | Hard `read_file` ceiling (2 MiB). Integer in `1..67108864`; invalid values **fail startup**. |
 | `SSHGW_REQUIRE_HOST_KEY_PIN` | no | `false` | Global host-key posture. When on (`1/true/yes/on`), even a server **without** a configured `hostKeyFingerprint` is refused (no trust-on-first-use anywhere). Off ⇒ per-server pins are opt-in. An unrecognised value **fails startup**. |
+| `SSHGW_COMMAND_AUTHORIZER` | no | `legacy` | `execute-command` authorizer model (proposal 26). `legacy` = the whole-string-regex `CommandWhitelist` (byte-identical to the incumbent). `capability` = the pipeline-aware `CommandAuthorizer` (reads incl. piped/flag-permuted allow; a mutating command returns a typed `requiresApproval` verdict for the harness ASK gate instead of a flat dead-end; secret-path reads are denied by the shared `ReadFilePolicy`). Any other value **fails startup**. Default-off: flip per-fleet after the differential run is green against the live registry. |
 | `SSHGW_MCP_HOST` | no | `0.0.0.0` | Listen address. |
 | `SSHGW_MCP_PORT` | no | `9204` | Listen port. |
 

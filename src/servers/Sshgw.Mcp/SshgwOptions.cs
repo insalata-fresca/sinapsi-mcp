@@ -23,8 +23,17 @@ public sealed record SshgwOptions(
     int CommandTimeoutMs,
     int ReadFileDefaultMaxBytes,
     int ReadFileHardMaxBytes,
-    bool RequireHostKeyPin = false)
+    bool RequireHostKeyPin = false,
+    // execute-command authorizer (proposal 26). "legacy" = the whole-string-regex
+    // CommandWhitelist (default, byte-identical to today); "capability" = the
+    // pipeline-aware CommandAuthorizer. Flag-gated + default-OFF so the new model
+    // lands and is deployed with ZERO behaviour change until a deliberate per-fleet
+    // flip once its differential suite is green against the live registry.
+    string CommandAuthorizerMode = "legacy")
 {
+    internal const string LegacyAuthorizer = "legacy";
+    internal const string CapabilityAuthorizer = "capability";
+
     // ── SSH connect timeout ──────────────────────────────────────────────────
     /// <summary>Default SSH connect timeout (ms).</summary>
     internal const int DefaultConnectTimeoutMs = 10_000;
@@ -88,7 +97,24 @@ public sealed record SshgwOptions(
             // Global host-key posture: when set, even a server WITHOUT a configured
             // fingerprint is refused (no trust-on-first-use anywhere). Off by default
             // so per-server pins are opt-in; flip on once every server is pinned.
-            RequireHostKeyPin:       ReadBool("SSHGW_REQUIRE_HOST_KEY_PIN", false));
+            RequireHostKeyPin:       ReadBool("SSHGW_REQUIRE_HOST_KEY_PIN", false),
+            CommandAuthorizerMode:   ReadAuthorizerMode("SSHGW_COMMAND_AUTHORIZER", LegacyAuthorizer));
+    }
+
+    /// <summary>Read the execute-command authorizer mode. Unset ⇒ the fail-safe
+    /// legacy matcher. Any value other than "legacy"/"capability" THROWS naming the
+    /// var, rather than silently picking a mode.</summary>
+    private static string ReadAuthorizerMode(string envVar, string def)
+    {
+        var raw = Environment.GetEnvironmentVariable(envVar);
+        if (raw is not { Length: > 0 }) return def;
+        return raw.Trim().ToLowerInvariant() switch
+        {
+            LegacyAuthorizer => LegacyAuthorizer,
+            CapabilityAuthorizer => CapabilityAuthorizer,
+            _ => throw new InvalidOperationException(
+                $"{envVar}='{raw}' is invalid: expected '{LegacyAuthorizer}' or '{CapabilityAuthorizer}'."),
+        };
     }
 
     /// <summary>Read a boolean env var. Unset ⇒ <paramref name="def"/>. Accepts
