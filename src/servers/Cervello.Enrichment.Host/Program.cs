@@ -164,6 +164,16 @@ if (engineCfg.UseLiveAdapters)
 if (engineCfg.UseLiveAdapters)
     app.MapVoiceSamples(engineCfg);
 
+// ── registry-pilot enrol trigger (design ste/cervello docs/design/voiceprint-naming.md §7 phase V5, §10) ──
+//    Token-gated (the SAME cervello operator bearer as open-points/context-pack/voice-samples). LIVE mode
+//    only: RegistryClipEnroller resolves fully only once the V5 registry seams (IVoiceprintRegistryClipReader
+//    over the gdrive MCP + IDiarizeEmbedClient + IEnrollmentConsentStore + VoiceprintEnrollment) are
+//    live-wired by AddCervelloEnrichment's live branch. Seeds the enrolled voiceprints from the operator's
+//    named clips already in registry/ — the pilot bootstrap the rename-poller cannot do (those clips have
+//    no VoiceprintNamingCandidate row). Bearer gate fails CLOSED on an empty token.
+if (engineCfg.UseLiveAdapters)
+    app.MapRegistryEnroll();
+
 app.Urls.Add($"http://{hostCfg.HealthHost}:{hostCfg.HealthPort}");
 app.Run();
 

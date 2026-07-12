@@ -335,6 +335,14 @@ public static class EnrichmentComposition
         services.AddSingleton<IRecordingRequeue, PgRecordingRequeue>();
         services.AddSingleton<IVoiceprintRegistryDrive, GdriveVoiceprintRegistry>();
 
+        // Registry-pilot enrol surface (design §7 phase V5, §10): seed the enrolled voiceprints from the
+        // operator's named clips already in registry/. Reuses the SAME GatewayMcpClient + AgentJwtMinter +
+        // agent-cervello-watcher identity as V4/V5 (list_files + download_file_base64), the LIVE 256-d
+        // diarize-embed client, the §10 consent store, and VoiceprintEnrollment (the only centroid-write
+        // path). The Host maps a token-gated HTTP trigger over RegistryClipEnroller (live mode only).
+        services.AddSingleton<IVoiceprintRegistryClipReader, GdriveVoiceprintRegistryClipReader>();
+        services.AddSingleton<RegistryClipEnroller>();
+
         // CT-side + git-working-tree stores. The repo working tree + pin/log dirs default to the
         // Watcher's custody root; a host overrides via the matching env before calling.
         var repoRoot = Environment.GetEnvironmentVariable("CERVELLO_REPO_WORKTREE")
