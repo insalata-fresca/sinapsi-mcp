@@ -194,45 +194,91 @@ public sealed class CouncilServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Gemini_poll_returns_the_result_text_on_a_done_transition()
+    public async Task Gemini_member_runs_an_agy_session_on_the_brain_api_front_door()
     {
-        // gemini_research spawns a task_id, then gemini_get_status reports
-        // running twice before flipping to done with the final text.
-        var handler = new RoutingHandler
-        {
-            GeminiTaskId = "task-42",
-            GeminiStatusSequence = new[]
-            {
-                """{"status":"running"}""",
-                """{"status":"running"}""",
-                """{"status":"done","result":"gemini deep-research findings"}""",
-            },
-        };
+        // The repointed gemini member no longer touches the MCP gateway: it creates a
+        // HEADLESS session with engine=agy on the brain-api front door, injects the prompt
+        // via /prompt, and assembles the reply from the /events SSE transcript.
+        var handler = new RoutingHandler { AgyReply = "gemini (agy) deep-research findings" };
         var svc = NewService(handler);
 
         var council = Council(await svc.ConsultAsync(
             "q", "general", new[] { "gemini-research" }, CancellationToken.None));
 
         var member = MemberByName(council, "gemini-research");
-        Assert.Equal("gemini deep-research findings", member.GetProperty("report").GetString());
+        Assert.Equal("gemini (agy) deep-research findings", member.GetProperty("report").GetString());
         Assert.Equal(JsonValueKind.Null, member.GetProperty("error").ValueKind);
         // Single usable member → passthrough synthesis.
-        Assert.Equal("gemini deep-research findings", council.GetProperty("synthesis").GetString());
-        Assert.True(handler.GeminiStatusPolls >= 3);
+        Assert.Equal("gemini (agy) deep-research findings", council.GetProperty("synthesis").GetString());
+
+        // PROOF of the repoint: the member created its session with engine=agy on the
+        // brain-api backend, drove it via /prompt, read /events — and NEVER called the dead
+        // gemini_research/gemini_get_status gateway tools.
+        Assert.Equal("agy", handler.LastCreateEngine);
+        Assert.True(handler.AgyPromptCount >= 1, "gemini member must inject via /prompt");
+        Assert.True(handler.AgyEventsReads >= 1, "gemini member must read the reply off /events");
+        Assert.Equal(0, handler.GeminiGatewayCalls);
     }
 
     [Fact]
-    public async Task Gemini_poll_surfaces_a_failed_transition_as_a_member_error()
+    public async Task Gemini_reply_reader_assembles_the_NUMERIC_role_assistant_frames()
     {
-        var handler = new RoutingHandler
+        // GATE (Task 1). The dispatcher serialises SessionEvent.Role as the ChatRole enum
+        // NUMERICALLY (User=0, Assistant=1, System=2) — so an assistant frame on the /events
+        // wire is "role":1, NOT "role":"assistant". This realistic transcript interleaves:
+        //   • a keep-alive comment (": …")           → carries no data
+        //   • a user frame                (role:0)   → must NOT contribute to the reply
+        //   • a system frame              (role:2)   → must NOT contribute
+        //   • TWO assistant frames        (role:1)   → assembled, in order; a leading thinking
+        //                                              block + a tool_use block are ignored,
+        //                                              only the `text` blocks concatenate
+        //   • a terminal state frame                 → not a message; ignored
+        // A string-only reader (matching "assistant") sees ZERO assistant frames here and
+        // assembles an EMPTY reply → this test fails against it and passes against the fix.
+        static string Frame(int role, params (string kind, string? text)[] blocks)
         {
-            GeminiTaskId = "task-99",
-            GeminiStatusSequence = new[]
+            var ev = JsonSerializer.Serialize(new
             {
-                """{"status":"running"}""",
-                """{"status":"failed","error":"upstream model unavailable"}""",
-            },
-        };
+                sessionId = "sess-1",
+                engine = "agy",
+                seq = 0L,
+                role, // NUMERIC ChatRole
+                blocks = blocks.Select(b => new { kind = b.kind, text = b.text }).ToArray(),
+            });
+            return $"event: message\ndata: {ev}\n\n";
+        }
+
+        var sse = new StringBuilder()
+            .Append(": keep-alive\n\n")                                             // heartbeat comment
+            .Append(Frame(0, ("text", "please research X")))                        // user
+            .Append(Frame(2, ("text", "system preamble")))                          // system
+            .Append(Frame(1, ("thinking", "let me think"),                          // assistant #1
+                             ("text", "First finding. "),
+                             ("tool_use", "search")))
+            .Append(Frame(1, ("text", "Second finding.")))                          // assistant #2
+            .Append("event: state\ndata: {\"state\":\"idle\"}\n\n")                 // terminal state
+            .ToString();
+
+        var handler = new RoutingHandler { AgyRawSseBody = sse };
+        var svc = NewService(handler);
+
+        var council = Council(await svc.ConsultAsync(
+            "q", "general", new[] { "gemini-research" }, CancellationToken.None));
+
+        var member = MemberByName(council, "gemini-research");
+        // Only the assistant `text` blocks, in order — thinking/tool/user/system contribute nothing.
+        Assert.Equal("First finding. Second finding.", member.GetProperty("report").GetString());
+        Assert.False(string.IsNullOrEmpty(member.GetProperty("report").GetString()),
+            "the numeric-role reply must be non-empty (a string-only reader would leave it empty)");
+        Assert.Equal(JsonValueKind.Null, member.GetProperty("error").ValueKind);
+    }
+
+    [Fact]
+    public async Task Gemini_member_surfaces_a_brain_api_failure_as_a_member_error()
+    {
+        // The front-door /prompt inject fails (e.g. the dispatcher is unreachable). The
+        // member must surface a sanitized error and be excluded from the synthesis.
+        var handler = new RoutingHandler { AgyPromptStatus = HttpStatusCode.BadGateway };
         var svc = NewService(handler);
 
         var council = Council(await svc.ConsultAsync(
@@ -240,10 +286,11 @@ public sealed class CouncilServiceTests : IDisposable
 
         var member = MemberByName(council, "gemini-research");
         Assert.Equal("", member.GetProperty("report").GetString());
-        Assert.Contains("gemini research failed", member.GetProperty("error").GetString());
-        Assert.Contains("upstream model unavailable", member.GetProperty("error").GetString());
+        Assert.Contains("agy", member.GetProperty("error").GetString());
         // No usable member → explicit skip sentinel.
         Assert.Contains("synthesis skipped", council.GetProperty("synthesis").GetString());
+        // Still no gateway gemini_* call.
+        Assert.Equal(0, handler.GeminiGatewayCalls);
     }
 
     // ---------------------------------------------------------------- the router
@@ -263,15 +310,21 @@ public sealed class CouncilServiceTests : IDisposable
 
         // Gateway members.
         public string CodexReport { get; set; } = "";
-        public string GeminiTaskId { get; set; } = "task-1";
-        public string[] GeminiStatusSequence { get; set; } = { """{"status":"done","result":"gemini"}""" };
+
+        // agy (gemini member) via the brain-api front door.
+        public string AgyReply { get; set; } = "agy reply";
+        public HttpStatusCode AgyPromptStatus { get; set; } = HttpStatusCode.Accepted;
+        // When set, the /events response serves this raw SSE body verbatim (a realistic,
+        // hand-authored transcript) instead of the AgyReply single-frame body.
+        public string? AgyRawSseBody { get; set; }
 
         // Captured state for assertions.
         public int SessionCreateCount;
-        public int GeminiStatusPolls;
         public string? LastSynthesisPrompt;
-
-        private int _statusIndex;
+        public string? LastCreateEngine;   // the `engine` field of the most recent /v1/sessions create
+        public int AgyPromptCount;         // POST /v1/sessions/{id}/prompt hits
+        public int AgyEventsReads;         // GET  /v1/sessions/{id}/events hits
+        public int GeminiGatewayCalls;     // any gemini_* gateway tools/call (must stay 0 post-repoint)
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
@@ -283,13 +336,30 @@ public sealed class CouncilServiceTests : IDisposable
             if (path.EndsWith("/oauth/v2/token", StringComparison.Ordinal))
                 return Json(HttpStatusCode.OK, """{"access_token":"fake-token","token_type":"Bearer","expires_in":900}""");
 
-            // --- agent backend (claude member + synthesis) ---
+            // --- agent backend (claude + synthesis via /messages; gemini/agy via /prompt+/events) ---
             if (uri.Host == Backend.Host)
             {
                 if (request.Method == HttpMethod.Post && path == "/v1/sessions")
                 {
                     Interlocked.Increment(ref SessionCreateCount);
+                    LastCreateEngine = ExtractField(body, "engine"); // null for claude, "agy" for gemini
                     return Json(HttpStatusCode.OK, $$"""{"session_id":"sess-{{Guid.NewGuid():N}}"}""");
+                }
+                // Headless (agy) inject lane — the gemini member. Synchronous for agy, so
+                // 202 + a state is enough; the reply is read off /events below.
+                if (request.Method == HttpMethod.Post && path.EndsWith("/prompt", StringComparison.Ordinal))
+                {
+                    Interlocked.Increment(ref AgyPromptCount);
+                    if (AgyPromptStatus != HttpStatusCode.Accepted)
+                        return new HttpResponseMessage(AgyPromptStatus) { Content = new StringContent("inject failed") };
+                    return Json(HttpStatusCode.Accepted, """{"state":"idle"}""");
+                }
+                // Headless (agy) transcript — one assistant `message` frame carrying the reply,
+                // then a terminal `state` frame. The reader drains the replay on a quiet-gap.
+                if (request.Method == HttpMethod.Get && path.EndsWith("/events", StringComparison.Ordinal))
+                {
+                    Interlocked.Increment(ref AgyEventsReads);
+                    return Sse(AgyRawSseBody ?? AgySseBody(AgyReply));
                 }
                 if (request.Method == HttpMethod.Post && path.EndsWith("/messages", StringComparison.Ordinal))
                 {
@@ -308,7 +378,7 @@ public sealed class CouncilServiceTests : IDisposable
                     return new HttpResponseMessage(HttpStatusCode.NoContent);
             }
 
-            // --- MCP gateway (gemini / chatgpt) ---
+            // --- MCP gateway (chatgpt only, post-repoint) ---
             if (uri.Host == Gateway.Host)
             {
                 // initialize → hand back an Mcp-Session-Id header so GatewayMcpClient proceeds.
@@ -326,10 +396,10 @@ public sealed class CouncilServiceTests : IDisposable
                 if (body.Contains("\"method\":\"tools/call\""))
                 {
                     var tool = ExtractToolName(body);
+                    if (tool.StartsWith("gemini_", StringComparison.Ordinal))
+                        Interlocked.Increment(ref GeminiGatewayCalls); // must never happen post-repoint.
                     var text = tool switch
                     {
-                        "gemini_research" => $$"""{"task_id":"{{GeminiTaskId}}"}""",
-                        "gemini_get_status" => NextGeminiStatus(),
                         "codex_codex" => CodexReport,
                         _ => "",
                     };
@@ -340,12 +410,30 @@ public sealed class CouncilServiceTests : IDisposable
             return new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent($"unrouted {path}") };
         }
 
-        private string NextGeminiStatus()
+        // One assistant text SSE frame (a serialised engine-neutral SessionEvent) + a state frame.
+        // Uses the REAL wire encoding: SessionEvent.Role is the ChatRole enum serialised
+        // NUMERICALLY by the dispatcher (User=0, Assistant=1, System=2) → an assistant frame is
+        // "role":1, NOT "role":"assistant". A string-only reader misses this — the gate below.
+        private static string AgySseBody(string reply)
         {
-            Interlocked.Increment(ref GeminiStatusPolls);
-            var i = Math.Min(_statusIndex, GeminiStatusSequence.Length - 1);
-            _statusIndex++;
-            return GeminiStatusSequence[i];
+            var ev = JsonSerializer.Serialize(new
+            {
+                sessionId = "sess",
+                engine = "agy",
+                seq = 0L,
+                role = 1, // ChatRole.Assistant, numeric (the real dispatcher wire form)
+                blocks = new[] { new { kind = "text", text = reply } },
+            });
+            return $"event: message\nid: 0\ndata: {ev}\n\nevent: state\ndata: {{\"state\":\"idle\"}}\n\n";
+        }
+
+        private static HttpResponseMessage Sse(string body)
+        {
+            var res = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "text/event-stream"),
+            };
+            return res;
         }
 
         private static HttpResponseMessage Json(HttpStatusCode code, string json) =>
@@ -368,6 +456,14 @@ public sealed class CouncilServiceTests : IDisposable
         {
             using var doc = JsonDocument.Parse(body);
             return doc.RootElement.TryGetProperty("message", out var m) ? m.GetString() ?? "" : "";
+        }
+
+        private static string? ExtractField(string body, string field)
+        {
+            if (string.IsNullOrEmpty(body)) return null;
+            using var doc = JsonDocument.Parse(body);
+            return doc.RootElement.TryGetProperty(field, out var v) && v.ValueKind == JsonValueKind.String
+                ? v.GetString() : null;
         }
 
         private static string ExtractToolName(string body)
