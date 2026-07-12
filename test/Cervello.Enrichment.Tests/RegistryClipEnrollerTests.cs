@@ -26,8 +26,7 @@ public sealed class RegistryClipEnrollerTests
     {
         var reader = new FakeRegistryClipReader()
             .With("file-1", "013_stefano-ursino", audio: [1, 2, 3]);
-        var store = new InMemoryVoiceprintStore(new EnrollmentAllowlist([]), new InMemoryEnrollmentConsentStore());
-        var enroller = Enroller(reader, FakeDiarizeEmbedClient.Returning(OneSpeaker(0)), store, out var consent);
+        var enroller = Enroller(reader, FakeDiarizeEmbedClient.Returning(OneSpeaker(0)), out var store, out var consent);
 
         var result = await enroller.EnrollAsync(["stefano-ursino"], Day1);
 
@@ -63,8 +62,7 @@ public sealed class RegistryClipEnrollerTests
         var reader = new FakeRegistryClipReader()
             .With("a", "marwin-henry_02", audio: [1])
             .With("b", "marwin-henry_06", audio: [2]);
-        var store = new InMemoryVoiceprintStore(new EnrollmentAllowlist([]), new InMemoryEnrollmentConsentStore());
-        var enroller = Enroller(reader, FakeDiarizeEmbedClient.Returning(OneSpeaker(3)), store, out _);
+        var enroller = Enroller(reader, FakeDiarizeEmbedClient.Returning(OneSpeaker(3)), out var store, out _);
 
         var result = await enroller.EnrollAsync(["marwin-henry"], Day1);
 
@@ -83,8 +81,7 @@ public sealed class RegistryClipEnrollerTests
             embeddings: [new SpeakerEmbedding("s1", TestVectors.Axis(5)), new SpeakerEmbedding("s2", TestVectors.Axis(40))],
             model: new DiarizeEmbedModel("silero-vad", "pyannote/wespeaker-voxceleb-resnet34-LM", 256));
         var reader = new FakeRegistryClipReader().With("f", "mikael", audio: [7]);
-        var store = new InMemoryVoiceprintStore(new EnrollmentAllowlist([]), new InMemoryEnrollmentConsentStore());
-        var enroller = Enroller(reader, FakeDiarizeEmbedClient.Returning(response), store, out _);
+        var enroller = Enroller(reader, FakeDiarizeEmbedClient.Returning(response), out var store, out _);
 
         await enroller.EnrollAsync(["mikael"], Day1);
 
@@ -97,8 +94,7 @@ public sealed class RegistryClipEnrollerTests
     public async Task Slug_with_no_matching_clip_is_skipped()
     {
         var reader = new FakeRegistryClipReader().With("f", "013_stefano-ursino", audio: [1]);
-        var store = new InMemoryVoiceprintStore(new EnrollmentAllowlist([]), new InMemoryEnrollmentConsentStore());
-        var enroller = Enroller(reader, FakeDiarizeEmbedClient.Returning(OneSpeaker(0)), store, out _);
+        var enroller = Enroller(reader, FakeDiarizeEmbedClient.Returning(OneSpeaker(0)), out var store, out _);
 
         var result = await enroller.EnrollAsync(["marwin-henry"], Day1);
 
@@ -109,12 +105,13 @@ public sealed class RegistryClipEnrollerTests
     }
 
     private static RegistryClipEnroller Enroller(
-        IVoiceprintRegistryClipReader reader, IDiarizeEmbedClient embed, InMemoryVoiceprintStore store,
-        out IEnrollmentConsentStore consent)
+        IVoiceprintRegistryClipReader reader, IDiarizeEmbedClient embed,
+        out InMemoryVoiceprintStore store, out IEnrollmentConsentStore consent)
     {
         var c = new RecordingConsentStore();
         consent = c;
         // The store must share the SAME consent instance so its §10 gate sees the enroller's AddConsent.
+        store = new InMemoryVoiceprintStore(new EnrollmentAllowlist([]), c);
         return new RegistryClipEnroller(reader, embed, c, new VoiceprintEnrollment(store));
     }
 
