@@ -341,10 +341,13 @@ public sealed class CouncilService(HttpClient http, GatewayMcpClient gateway, Ag
             using var doc = JsonDocument.Parse(dataJson);
             var root = doc.RootElement;
             if (root.ValueKind != JsonValueKind.Object) return;
-            // Role is serialised by the dispatcher's web-defaults options → camelCase enum
-            // name ("assistant"/"user"/"system"); accept it case-insensitively.
-            if (!root.TryGetProperty("role", out var roleEl)) return;
-            if (!string.Equals(roleEl.GetString(), "assistant", StringComparison.OrdinalIgnoreCase)) return;
+            // The dispatcher serialises SessionEvent.Role as a ChatRole enum. On the real
+            // /events wire this is NUMERIC — System.Text.Json's default numeric enum
+            // serialization (ChatRole.User=0, Assistant=1, System=2) — so an assistant frame
+            // is "role":1, NOT "role":"assistant" (proven live: a string-form grep returned
+            // false against real frames). Be robust to BOTH forms in case a future dispatcher
+            // build registers a string-enum converter ("assistant"/"Assistant").
+            if (!root.TryGetProperty("role", out var roleEl) || !IsAssistantRole(roleEl)) return;
             if (!root.TryGetProperty("blocks", out var blocks) || blocks.ValueKind != JsonValueKind.Array) return;
             foreach (var b in blocks.EnumerateArray())
             {
@@ -358,6 +361,23 @@ public sealed class CouncilService(HttpClient http, GatewayMcpClient gateway, Ag
         }
         catch (JsonException) { /* fail-soft: skip a malformed frame. */ }
     }
+
+    /// <summary>True when a SessionEvent <c>role</c> JSON value denotes the assistant, under
+    /// EITHER wire encoding: the numeric ChatRole (Assistant == 1 — the real dispatcher default)
+    /// OR the string name ("assistant"/"Assistant", case-insensitive — should a build register a
+    /// string-enum converter). Anything else (user=0, system=2, or an unknown token) is not the
+    /// assistant.</summary>
+    private static bool IsAssistantRole(JsonElement roleEl) => roleEl.ValueKind switch
+    {
+        JsonValueKind.Number => roleEl.TryGetInt32(out var n) && n == (int)ChatRole.Assistant,
+        JsonValueKind.String => string.Equals(roleEl.GetString(), "assistant", StringComparison.OrdinalIgnoreCase),
+        _ => false,
+    };
+
+    /// <summary>Engine-neutral chat role as the dispatcher's <c>SessionEvent.Role</c> is defined
+    /// (BrainSessionDispatcher.Transcript.ChatRole). Values are load-bearing: the numeric wire
+    /// encoding depends on this order (User=0, Assistant=1, System=2).</summary>
+    private enum ChatRole { User = 0, Assistant = 1, System = 2 }
 
     // The SSE replay quiet-gap / poll interval. Settable so a test can drain fast; the
     // production default (10s) tolerates a slow transcript flush without cutting the replay

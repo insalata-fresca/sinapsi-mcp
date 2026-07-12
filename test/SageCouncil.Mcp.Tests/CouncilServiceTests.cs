@@ -221,6 +221,59 @@ public sealed class CouncilServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Gemini_reply_reader_assembles_the_NUMERIC_role_assistant_frames()
+    {
+        // GATE (Task 1). The dispatcher serialises SessionEvent.Role as the ChatRole enum
+        // NUMERICALLY (User=0, Assistant=1, System=2) — so an assistant frame on the /events
+        // wire is "role":1, NOT "role":"assistant". This realistic transcript interleaves:
+        //   • a keep-alive comment (": …")           → carries no data
+        //   • a user frame                (role:0)   → must NOT contribute to the reply
+        //   • a system frame              (role:2)   → must NOT contribute
+        //   • TWO assistant frames        (role:1)   → assembled, in order; a leading thinking
+        //                                              block + a tool_use block are ignored,
+        //                                              only the `text` blocks concatenate
+        //   • a terminal state frame                 → not a message; ignored
+        // A string-only reader (matching "assistant") sees ZERO assistant frames here and
+        // assembles an EMPTY reply → this test fails against it and passes against the fix.
+        static string Frame(int role, params (string kind, string? text)[] blocks)
+        {
+            var ev = JsonSerializer.Serialize(new
+            {
+                sessionId = "sess-1",
+                engine = "agy",
+                seq = 0L,
+                role, // NUMERIC ChatRole
+                blocks = blocks.Select(b => new { kind = b.kind, text = b.text }).ToArray(),
+            });
+            return $"event: message\ndata: {ev}\n\n";
+        }
+
+        var sse = new StringBuilder()
+            .Append(": keep-alive\n\n")                                             // heartbeat comment
+            .Append(Frame(0, ("text", "please research X")))                        // user
+            .Append(Frame(2, ("text", "system preamble")))                          // system
+            .Append(Frame(1, ("thinking", "let me think"),                          // assistant #1
+                             ("text", "First finding. "),
+                             ("tool_use", "search")))
+            .Append(Frame(1, ("text", "Second finding.")))                          // assistant #2
+            .Append("event: state\ndata: {\"state\":\"idle\"}\n\n")                 // terminal state
+            .ToString();
+
+        var handler = new RoutingHandler { AgyRawSseBody = sse };
+        var svc = NewService(handler);
+
+        var council = Council(await svc.ConsultAsync(
+            "q", "general", new[] { "gemini-research" }, CancellationToken.None));
+
+        var member = MemberByName(council, "gemini-research");
+        // Only the assistant `text` blocks, in order — thinking/tool/user/system contribute nothing.
+        Assert.Equal("First finding. Second finding.", member.GetProperty("report").GetString());
+        Assert.False(string.IsNullOrEmpty(member.GetProperty("report").GetString()),
+            "the numeric-role reply must be non-empty (a string-only reader would leave it empty)");
+        Assert.Equal(JsonValueKind.Null, member.GetProperty("error").ValueKind);
+    }
+
+    [Fact]
     public async Task Gemini_member_surfaces_a_brain_api_failure_as_a_member_error()
     {
         // The front-door /prompt inject fails (e.g. the dispatcher is unreachable). The
@@ -261,6 +314,9 @@ public sealed class CouncilServiceTests : IDisposable
         // agy (gemini member) via the brain-api front door.
         public string AgyReply { get; set; } = "agy reply";
         public HttpStatusCode AgyPromptStatus { get; set; } = HttpStatusCode.Accepted;
+        // When set, the /events response serves this raw SSE body verbatim (a realistic,
+        // hand-authored transcript) instead of the AgyReply single-frame body.
+        public string? AgyRawSseBody { get; set; }
 
         // Captured state for assertions.
         public int SessionCreateCount;
@@ -303,7 +359,7 @@ public sealed class CouncilServiceTests : IDisposable
                 if (request.Method == HttpMethod.Get && path.EndsWith("/events", StringComparison.Ordinal))
                 {
                     Interlocked.Increment(ref AgyEventsReads);
-                    return Sse(AgySseBody(AgyReply));
+                    return Sse(AgyRawSseBody ?? AgySseBody(AgyReply));
                 }
                 if (request.Method == HttpMethod.Post && path.EndsWith("/messages", StringComparison.Ordinal))
                 {
@@ -355,6 +411,9 @@ public sealed class CouncilServiceTests : IDisposable
         }
 
         // One assistant text SSE frame (a serialised engine-neutral SessionEvent) + a state frame.
+        // Uses the REAL wire encoding: SessionEvent.Role is the ChatRole enum serialised
+        // NUMERICALLY by the dispatcher (User=0, Assistant=1, System=2) → an assistant frame is
+        // "role":1, NOT "role":"assistant". A string-only reader misses this — the gate below.
         private static string AgySseBody(string reply)
         {
             var ev = JsonSerializer.Serialize(new
@@ -362,7 +421,7 @@ public sealed class CouncilServiceTests : IDisposable
                 sessionId = "sess",
                 engine = "agy",
                 seq = 0L,
-                role = "assistant",
+                role = 1, // ChatRole.Assistant, numeric (the real dispatcher wire form)
                 blocks = new[] { new { kind = "text", text = reply } },
             });
             return $"event: message\nid: 0\ndata: {ev}\n\nevent: state\ndata: {{\"state\":\"idle\"}}\n\n";
