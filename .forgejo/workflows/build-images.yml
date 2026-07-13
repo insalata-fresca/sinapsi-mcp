@@ -58,6 +58,9 @@ jobs:
           - { server: OpenWrtForum.Mcp, image: openwrtforum-mcp }
           - { server: SageCouncil.Mcp,  image: sagecouncil-mcp }
           - { server: Sinapsi.Indexer,  image: sinapsi-indexer }
+          # S50 — the Authorization Console (read-only inspection surface of the
+          # authz plane; subscribes to homelab.security.>, serves the live UI).
+          - { server: Sinapsi.SentinelConsole, image: sinapsi-sentinel-console }
           - { server: Sshgw.Mcp,        image: sshgw-mcp }
           - { server: StepCa.Mcp,       image: stepca-mcp }
           - { server: Zitadel.Mcp,      image: zitadel-mcp }
