@@ -55,6 +55,9 @@ public sealed class SshgwTools
         // unit call-sites that don't pass it resolve to the legacy authorizer (their
         // asserted behaviour); production always injects the real options.
         SshgwOptions? opts = null,
+        // Injected by DI when a scoped publish identity is configured; null otherwise
+        // (emission is a no-op). Defaulted so existing call-sites are unaffected.
+        AuthzDecisionPublisher? authz = null,
         CancellationToken ct = default)
     {
         // Resolve the selector from connectionName (wire) or its 'server' alias BEFORE
@@ -81,23 +84,43 @@ public sealed class SshgwTools
         //                allow; a mutating command returns a typed requiresApproval
         //                verdict (the harness ASK gate elevates it) instead of a flat
         //                dead-end; a secret-path read is denied by the shared policy.
+        // Resolve the authorization verdict under the configured model, then EMIT it (Q2
+        // of the authorization plane) before acting — so the control plane sees every
+        // command-safety decision live, regardless of allow/deny/approval outcome.
+        string verdictLabel, verdictReason;
+        bool proceed;
         if ((opts?.CommandAuthorizerMode ?? SshgwOptions.LegacyAuthorizer) == SshgwOptions.CapabilityAuthorizer)
         {
-            var verdict = new CommandAuthorizer(entry).Authorize(cmdString);
-            if (verdict.Decision == CommandAuthorizer.AuthDecision.Deny)
-                return Err(verdict.Reason ?? "command not permitted");
-            if (verdict.Decision == CommandAuthorizer.AuthDecision.RequiresApproval)
-                return new JsonObject
-                {
-                    ["ok"] = false,
-                    ["error"] = verdict.Reason ?? "command requires operator approval",
-                    ["requiresApproval"] = true,
-                };
+            var v = new CommandAuthorizer(entry).Authorize(cmdString);
+            (verdictLabel, verdictReason) = v.Decision switch
+            {
+                CommandAuthorizer.AuthDecision.Allow => ("allow", v.Reason ?? ""),
+                CommandAuthorizer.AuthDecision.RequiresApproval => ("requiresApproval", v.Reason ?? "requires operator approval"),
+                _ => ("deny", v.Reason ?? "command not permitted"),
+            };
+            proceed = v.Decision == CommandAuthorizer.AuthDecision.Allow;
         }
-        else if (!new CommandWhitelist(entry.Whitelist).IsAllowed(cmdString))
+        else
         {
-            return Err("Command not in whitelist, execution forbidden");
+            // Legacy whitelist: a binary allow/deny, emitted in the same envelope so the
+            // control plane sees legacy-mode servers too.
+            bool ok = new CommandWhitelist(entry.Whitelist).IsAllowed(cmdString);
+            (verdictLabel, verdictReason, proceed) = ok
+                ? ("allow", "whitelist match", true)
+                : ("deny", "Command not in whitelist, execution forbidden", false);
         }
+
+        authz?.Emit(verdictLabel, verdictReason, effectiveConn, cmdString, correlationId: null);
+
+        if (verdictLabel == "requiresApproval")
+            return new JsonObject
+            {
+                ["ok"] = false,
+                ["error"] = verdictReason,
+                ["requiresApproval"] = true,
+            };
+        if (!proceed)
+            return Err(verdictReason);
 
         ExecResult r;
         try
