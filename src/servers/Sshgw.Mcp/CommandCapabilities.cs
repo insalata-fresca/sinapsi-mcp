@@ -113,6 +113,32 @@ internal static class CommandCapabilities
         ["find"] = VerbSpec.Leaf("-delete", "-exec", "-execdir", "-ok", "-okdir",
                                  "-fprint", "-fprintf", "-fls"),
         ["locate"] = VerbSpec.Leaf(),
+        // binary/hex/compressed content reads (positional paths → ReadFilePolicy).
+        ["strings"] = VerbSpec.Leaf(),
+        ["xxd"] = VerbSpec.Leaf(),
+        ["od"] = VerbSpec.Leaf(),
+        ["hexdump"] = VerbSpec.Leaf(),
+        ["zstdcat"] = VerbSpec.Leaf(),
+        ["zstdgrep"] = VerbSpec.Leaf(),
+        ["bzcat"] = VerbSpec.Leaf(),
+        ["xzcat"] = VerbSpec.Leaf(),
+        // text filters — read-only stream stages (typically in a pipe). `sort -o`/`-S` and
+        // `split`-style output are the only write escape hatches; enumerate them.
+        ["rg"] = VerbSpec.Leaf(),                 // ripgrep: a read grep; paths → ReadFilePolicy
+        ["sort"] = VerbSpec.Leaf("-o", "--output"),
+        ["uniq"] = VerbSpec.Leaf(),
+        ["tr"] = VerbSpec.Leaf(),
+        ["cut"] = VerbSpec.Leaf(),
+        ["fold"] = VerbSpec.Leaf(),
+        ["column"] = VerbSpec.Leaf(),
+        ["rev"] = VerbSpec.Leaf(),
+        ["comm"] = VerbSpec.Leaf(),
+        ["paste"] = VerbSpec.Leaf(),
+        // package + media metadata reads (apt-cache is entirely read-only; ffprobe reads
+        // media metadata — unlike ffmpeg which transcodes/writes).
+        ["apt-cache"] = VerbSpec.Leaf(),
+        ["dpkg-query"] = VerbSpec.Leaf(),
+        ["ffprobe"] = VerbSpec.Leaf(),
 
         // ── service / journal / process / resource diagnostics ──
         ["systemctl"] = VerbSpec.Sub(

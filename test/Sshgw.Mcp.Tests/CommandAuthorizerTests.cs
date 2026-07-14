@@ -44,6 +44,27 @@ public sealed class CommandAuthorizerTests
     [InlineData("skopeo inspect --raw docker://forgejo.insalata-fresca.ch/ste/sshgw-mcp:latest")]
     public void Reads_Allow(string cmd) => Assert.Equal(D.Allow, Decide(cmd));
 
+    // ── newly-modelled diagnostic read verbs (capability-table expansion) ─────
+    [Theory]
+    [InlineData("strings /usr/local/bin/agentgateway")]
+    [InlineData("xxd /etc/hostname")]
+    [InlineData("od -c /etc/hostname")]
+    [InlineData("zstdcat /data/gitea/actions_log/x/2389.log.zst")]
+    [InlineData("rg -n \"error|warn\" /var/log/app.log")]
+    [InlineData("apt-cache policy nginx")]
+    [InlineData("ffprobe /data/media/clip.mp4")]
+    [InlineData("journalctl -u foo --no-pager | sort | uniq -c")]
+    [InlineData("ps aux | sort -rnk3 | head -5")]
+    [InlineData("cat /proc/meminfo | cut -d: -f1")]
+    public void NewlyModelledReads_Allow(string cmd) => Assert.Equal(D.Allow, Decide(cmd));
+
+    [Theory]
+    [InlineData("sort -o /tmp/out.txt /var/log/app.log")]   // -o writes a file → approval
+    [InlineData("python3 /opt/x/script.py")]                // interpreter → deny (not a read)
+    [InlineData("psql -c \"select 1\"")]                    // DB client → deny (not a read)
+    public void InterpretersAndWriteFlags_NotAutoAllowed(string cmd)
+        => Assert.NotEqual(D.Allow, Decide(cmd));
+
     // ── reads: pipes + flag permutations (the legacy matcher could not express) ─
     [Theory]
     [InlineData("top -bn1 | head -25")]
