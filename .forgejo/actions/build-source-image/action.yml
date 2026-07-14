@@ -27,10 +27,25 @@ inputs:
     description: "write:package token — registry login + push."
     required: true
 
+outputs:
+  version:
+    description: "Source image tag portion (sinapsi-0.1.<run>)."
+    value: ${{ steps.build.outputs.version }}
+  image:
+    description: "Fully-qualified image repo (registry/user/image)."
+    value: ${{ steps.build.outputs.image }}
+  tag:
+    description: "Tag portion of the pushed source ref (== version). Feed this to the M15 bump action."
+    value: ${{ steps.build.outputs.tag }}
+  digest:
+    description: "Pushed image digest (sha256:...)."
+    value: ${{ steps.build.outputs.digest }}
+
 runs:
   using: "composite"
   steps:
     - name: Build + push ${{ inputs.image }} (capture digest)
+      id: build
       shell: bash
       env:
         REGISTRY: ${{ inputs.registry }}
@@ -71,3 +86,12 @@ runs:
         podman push "${IMAGE}:sinapsi-latest"
         DIGEST="$(cat "$DIGESTFILE")"; rm -f "$DIGESTFILE"
         echo "Pushed ${IMAGE}:${VER} @ ${DIGEST}"
+
+        # M15: expose the built ref so the workflow can auto-bump the home-server
+        # re-publish pin (Scope 50). tag == VER (sinapsi-0.1.<run>).
+        {
+          echo "version=${VER}"
+          echo "image=${IMAGE}"
+          echo "tag=${VER}"
+          echo "digest=${DIGEST}"
+        } >> "$GITHUB_OUTPUT"
