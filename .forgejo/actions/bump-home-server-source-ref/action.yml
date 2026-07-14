@@ -1,0 +1,146 @@
+name: "bump-home-server-source-ref"
+description: >-
+  M15 auto-bump (Scope 50). After a sinapsi-mcp SOURCE build pushes
+  <image>:sinapsi-0.1.<run>, open a PR against ste/home-server that bumps the
+  matching re-publish workflow's `env: SINAPSI_SOURCE_IMAGE:` to the just-built
+  tag, so a source-plane code change flows source-build -> re-publish -> deploy
+  without a human hand-editing the pin (the manual 0.1.67 -> 0.1.231 step this
+  removes; learning sinapsi-two-plane-source-republish-deploy).
+
+  The join key is the IMAGE REPO PATH (<owner>/<image>), matched verbatim in the
+  home-server SINAPSI_SOURCE_IMAGE env, NOT the service/workflow name. This
+  transparently handles name divergence (openwrtforum-mcp -> openwrt-forum-mcp,
+  sagecouncil-mcp -> sage-council-mcp, stepca-mcp -> step-ca-mcp) and fan-out
+  (forge-mcp -> BOTH forgejo-mcp and codeberg-mcp). A source image with no
+  home-server consumer (e.g. gemini-mcp) is skipped gracefully.
+
+  It ONLY opens the PR; it never merges. Auto-merge + post-merge-verify is the
+  separate M9 mission. Per Canon image-first-no-pr-ci-gate-verify-post-merge the
+  bump carries no PR-CI (correctness is verified post-merge); merging the PR
+  triggers the home-server re-publish workflow on main (its own build-<svc>.yml is
+  in the path filter), which retags + emits homelab.release.<svc>.published.
+
+  ACTIVATION IS GATED: if `token` is empty the step logs and exits 0 (mechanism
+  built but inert). Provision a Forgejo API token with write:repository on
+  ste/home-server as the sinapsi-mcp Actions secret HOME_SERVER_PR_TOKEN to
+  activate (register-secret pattern). No new secret is invented by this action.
+
+inputs:
+  image:
+    description: "Source image repo name under <owner>/ (e.g. sshgw-mcp). The cross-plane join key."
+    required: true
+  tag:
+    description: "Just-built source tag portion (e.g. sinapsi-0.1.231). From build-source-image outputs.tag."
+    required: true
+  registry:
+    description: "OCI registry host; doubles as the Forgejo API/git host in this homelab."
+    required: false
+    default: "forgejo.insalata-fresca.ch"
+  owner:
+    description: "Image/repo owner (registry namespace)."
+    required: false
+    default: "ste"
+  home-server-repo:
+    description: "owner/name of the home-server repo the bump PR targets."
+    required: false
+    default: "ste/home-server"
+  base-branch:
+    description: "Base branch on the home-server repo."
+    required: false
+    default: "main"
+  token:
+    description: >-
+      Forgejo API token with write:repository on the home-server repo (clone,
+      push branch, open PR). EMPTY => auto-bump is inert (logs + exits 0).
+    required: false
+    default: ""
+  run-url:
+    description: "URL of the source build run, for PR provenance."
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Open home-server SINAPSI_SOURCE_IMAGE bump PR (no merge)
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        TAG: ${{ inputs.tag }}
+        REGISTRY: ${{ inputs.registry }}
+        OWNER: ${{ inputs.owner }}
+        HS_REPO: ${{ inputs.home-server-repo }}
+        BASE: ${{ inputs.base-branch }}
+        TOKEN: ${{ inputs.token }}
+        RUN_URL: ${{ inputs.run-url }}
+      run: |
+        set -euo pipefail
+
+        if [ -z "${TOKEN:-}" ]; then
+          echo "HOME_SERVER_PR_TOKEN is not configured — M15 auto-bump is INERT."
+          echo "The mechanism is built; activation is gated on provisioning that secret."
+          echo "Would have bumped ${OWNER}/${IMAGE} -> ${TAG} on ${HS_REPO}."
+          exit 0
+        fi
+
+        NEWREF="${REGISTRY}/${OWNER}/${IMAGE}:${TAG}"
+        echo "Target source ref: ${NEWREF}"
+
+        WORK="$(mktemp -d)"
+        REMOTE="https://x-access-token:${TOKEN}@${REGISTRY}/${HS_REPO}.git"
+        git clone --depth 1 --branch "${BASE}" "${REMOTE}" "${WORK}/hs"
+        cd "${WORK}/hs"
+
+        # Discover EVERY re-publish workflow pinning this image REPO PATH (any tag).
+        # Matching the repo path — not the service name — is the stable cross-plane
+        # join key: it handles name divergence AND fan-out to multiple consumers.
+        mapfile -t FILES < <(grep -rlE "SINAPSI_SOURCE_IMAGE:[[:space:]]*[^[:space:]]*/${OWNER}/${IMAGE}:" .forgejo/workflows/ 2>/dev/null || true)
+        if [ "${#FILES[@]}" -eq 0 ]; then
+          echo "No home-server re-publish workflow pins ${OWNER}/${IMAGE} — skipping gracefully."
+          exit 0
+        fi
+        echo "Consumer workflow(s): ${FILES[*]}"
+
+        for f in "${FILES[@]}"; do
+          sed -i -E "s#(SINAPSI_SOURCE_IMAGE:[[:space:]]*)[^[:space:]]*/${OWNER}/${IMAGE}:[^[:space:]]+#\1${NEWREF}#" "$f"
+        done
+
+        if git diff --quiet; then
+          echo "All consumers already pin ${NEWREF} — nothing to bump."
+          exit 0
+        fi
+        echo "Bump diff:"; git --no-pager diff
+
+        BRANCH="auto-bump/${IMAGE}-${TAG}"
+        git config user.name "sinapsi-source-bump"
+        git config user.email "ci@insalata-fresca.ch"
+        git checkout -b "${BRANCH}"
+        git commit -am "deploy(${IMAGE}): bump SINAPSI_SOURCE_IMAGE -> ${TAG}"
+        # -f: this branch is deterministic per (image,tag); a re-run overwrites it.
+        git push -f "${REMOTE}" "${BRANCH}"
+
+        TITLE="deploy(${IMAGE}): bump SINAPSI_SOURCE_IMAGE -> ${TAG}"
+        BODY="$(printf '%s\n' \
+          "Automated **M15 auto-bump** (Scope 50): a new sinapsi-mcp SOURCE image was built, so this bumps the home-server re-publish pin to deploy it." \
+          "" \
+          "- Source image: \`${NEWREF}\`" \
+          "- Consumer workflow(s) bumped: ${FILES[*]}" \
+          "- Source build run: ${RUN_URL:-n/a}" \
+          "" \
+          "Merging this PR triggers the home-server re-publish workflow(s) on \`${BASE}\` (the edited build-<svc>.yml is in the path filter): retag \`${OWNER}/${IMAGE}\` under a fresh 0.1.<run> release version + emit \`homelab.release.<svc>.published\`; the deploy-controller then pins the Quadlet Image= to the new digest." \
+          "" \
+          "Opened by the SOURCE plane only; **NOT auto-merged here**. The reviewed/auto merge + post-merge-verify is the separate **M9** mission. Per Canon \`image-first-no-pr-ci-gate-verify-post-merge\` the bump carries no PR-CI." )"
+
+        export PR_TITLE="${TITLE}" PR_HEAD="${BRANCH}" PR_BASE="${BASE}" PR_BODY="${BODY}"
+        PAYLOAD="$(python3 -c 'import json,os; print(json.dumps({"title":os.environ["PR_TITLE"],"head":os.environ["PR_HEAD"],"base":os.environ["PR_BASE"],"body":os.environ["PR_BODY"]}))')"
+
+        API="https://${REGISTRY}/api/v1/repos/${HS_REPO}/pulls"
+        HTTP="$(curl -sS -o /tmp/m15_pr_resp.json -w '%{http_code}' -X POST "${API}" \
+          -H "Authorization: token ${TOKEN}" -H "Content-Type: application/json" \
+          --data "${PAYLOAD}")" || true
+        echo "PR API HTTP ${HTTP}"; cat /tmp/m15_pr_resp.json 2>/dev/null || true; echo
+        case "${HTTP}" in
+          201) echo "Opened home-server bump PR for ${IMAGE} -> ${TAG}." ;;
+          409|422) echo "A PR/branch for ${BRANCH} already exists — left as-is (idempotent)." ;;
+          *) echo "::error::home-server bump PR create failed (HTTP ${HTTP})."; exit 1 ;;
+        esac
