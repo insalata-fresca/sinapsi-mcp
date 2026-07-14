@@ -12,7 +12,20 @@ public sealed class DemoSeeder : BackgroundService
 {
     private readonly ReadModel _rm;
     private readonly LiveFeed _feed;
-    public DemoSeeder(ReadModel rm, LiveFeed feed) { _rm = rm; _feed = feed; }
+    private readonly DeployModel _dm;
+    public DemoSeeder(ReadModel rm, LiveFeed feed, DeployModel dm) { _rm = rm; _feed = feed; _dm = dm; }
+
+    // A small released->applied sequence per service, replayed on a slower cadence than the
+    // authz script so the Deploys section also renders populated in the demo/first-look view.
+    private static readonly (string kind, string svc, string ctid, string version, string digest, string result)[] DeployScript =
+    {
+        (DeployEvent.KindReleased, "sinapsi-sentinel-console", "", "0.1.103", "sha256:9f2a1c4e7b80", ""),
+        (DeployEvent.KindApplied, "sinapsi-sentinel-console", "132", "0.1.103", "sha256:9f2a1c4e7b80", "ok"),
+        (DeployEvent.KindReleased, "sshgw-mcp", "", "0.1.87", "sha256:1122334455aa", ""),
+        (DeployEvent.KindApplied, "sshgw-mcp", "121", "0.1.87", "sha256:1122334455aa", "ok"),
+        (DeployEvent.KindReleased, "deploy-controller", "", "0.1.19", "sha256:aabbccddeeff", ""),
+        (DeployEvent.KindFailed, "deploy-controller", "116", "0.1.19", "", "error: restart failed: exit 1"),
+    };
 
     private static readonly (string layer, string tool, string server, string verb, string verdict, string reason, string cmd)[] Script =
     {
@@ -29,7 +42,7 @@ public sealed class DemoSeeder : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
-        int i = 0, req = 100;
+        int i = 0, req = 100, j = 0;
         while (!ct.IsCancellationRequested)
         {
             var s = Script[i % Script.Length];
@@ -41,6 +54,16 @@ public sealed class DemoSeeder : BackgroundService
             _feed.Publish(d);
             i++;
             if (i % Script.Length == 0) req += 7;
+
+            // one deploy event every ~4 authz ticks, so the Deploys section fills in a bit
+            // slower than the live feed — closer to real cadence.
+            if (i % 4 == 0)
+            {
+                var ds = DeployScript[j % DeployScript.Length];
+                _dm.Record(new DeployEvent(ds.kind, ds.svc, ds.ctid, ds.version, ds.digest, ds.result, DateTimeOffset.UtcNow));
+                j++;
+            }
+
             try { await Task.Delay(TimeSpan.FromMilliseconds(1400), ct); }
             catch (OperationCanceledException) { break; }
         }
