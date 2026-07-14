@@ -32,6 +32,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Build + push source image
+        id: build
         uses: ./.forgejo/actions/build-source-image
         with:
           server: Github.Mcp
@@ -39,3 +40,12 @@ jobs:
           registry: ${{ vars.REGISTRY }}
           registry-user: ${{ vars.REGISTRY_USER || 'ste' }}
           registry-token: ${{ secrets.REGISTRY_TOKEN }}
+      - name: Auto-bump home-server re-publish source ref (opens PR; no merge)
+        if: ${{ success() }}
+        uses: ./.forgejo/actions/bump-home-server-source-ref
+        with:
+          image: github-mcp
+          tag: ${{ steps.build.outputs.tag }}
+          registry: ${{ vars.REGISTRY || 'forgejo.insalata-fresca.ch' }}
+          token: ${{ secrets.HOME_SERVER_PR_TOKEN }}
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_number }}
