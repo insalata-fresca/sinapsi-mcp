@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
+using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.Server;
 
 namespace Sshgw.Mcp;
@@ -51,6 +52,17 @@ public sealed class SshgwTools
         [Description("Alias for connectionName (the harness may send the selector under this name). connectionName wins when both are given.")] string? server = null,
         [Description("Optional absolute working directory to run the command in (no shell metacharacters)")] string? directory = null,
         [Description("Optional per-call timeout in ms (clamped to the server hard cap)")] int? timeout = null,
+        // Injected by DI (registered service). Defaulted + nullable so the existing
+        // unit call-sites that don't pass it resolve to the legacy authorizer (their
+        // asserted behaviour); production always injects the real options.
+        SshgwOptions? opts = null,
+        // Injected by DI when a scoped publish identity is configured; null otherwise
+        // (emission is a no-op). Defaulted so existing call-sites are unaffected.
+        AuthzDecisionPublisher? authz = null,
+        // Injected by DI; used to read Envoy's x-request-id as the cross-layer correlation
+        // id so the Q2 decision joins the same request's Q1 (gateway) decision. Null in unit
+        // call-sites (no HTTP context) → correlation id falls back to per-decision.
+        IHttpContextAccessor? httpCtx = null,
         CancellationToken ct = default)
     {
         // Resolve the selector from connectionName (wire) or its 'server' alias BEFORE
@@ -70,12 +82,54 @@ public sealed class SshgwTools
         var entry = registry.Get(effectiveConn);
         if (entry is null) return Err($"unknown server '{effectiveConn}'");
 
-        // The in-MCP bound: the command must be on this server's whitelist. The
-        // whitelist matches the RAW command (never the cd-prefixed form), matching
-        // the incumbent contract exactly.
-        var wl = new CommandWhitelist(entry.Whitelist);
-        if (!wl.IsAllowed(cmdString))
-            return Err("Command not in whitelist, execution forbidden");
+        // The in-MCP bound: authorise the RAW command (never the cd-prefixed form).
+        // Two selectable models (proposal 26), flag-gated + default-legacy:
+        //   legacy     — the whole-string-regex whitelist (byte-identical to today).
+        //   capability — the pipeline-aware authorizer: reads (incl. piped/permuted)
+        //                allow; a mutating command returns a typed requiresApproval
+        //                verdict (the harness ASK gate elevates it) instead of a flat
+        //                dead-end; a secret-path read is denied by the shared policy.
+        // Resolve the authorization verdict under the configured model, then EMIT it (Q2
+        // of the authorization plane) before acting — so the control plane sees every
+        // command-safety decision live, regardless of allow/deny/approval outcome.
+        string verdictLabel, verdictReason;
+        bool proceed;
+        if ((opts?.CommandAuthorizerMode ?? SshgwOptions.LegacyAuthorizer) == SshgwOptions.CapabilityAuthorizer)
+        {
+            var v = new CommandAuthorizer(entry).Authorize(cmdString);
+            (verdictLabel, verdictReason) = v.Decision switch
+            {
+                CommandAuthorizer.AuthDecision.Allow => ("allow", v.Reason ?? ""),
+                CommandAuthorizer.AuthDecision.RequiresApproval => ("requiresApproval", v.Reason ?? "requires operator approval"),
+                _ => ("deny", v.Reason ?? "command not permitted"),
+            };
+            proceed = v.Decision == CommandAuthorizer.AuthDecision.Allow;
+        }
+        else
+        {
+            // Legacy whitelist: a binary allow/deny, emitted in the same envelope so the
+            // control plane sees legacy-mode servers too.
+            bool ok = new CommandWhitelist(entry.Whitelist).IsAllowed(cmdString);
+            (verdictLabel, verdictReason, proceed) = ok
+                ? ("allow", "whitelist match", true)
+                : ("deny", "Command not in whitelist, execution forbidden", false);
+        }
+
+        // Envoy/agentgateway sets x-request-id per request; when forwarded upstream it is the
+        // shared id that joins this Q2 decision to the request's Q1 (gateway) decision.
+        var correlationId = httpCtx?.HttpContext?.Request.Headers["x-request-id"].ToString();
+        authz?.Emit(verdictLabel, verdictReason, effectiveConn, cmdString,
+                    string.IsNullOrEmpty(correlationId) ? null : correlationId);
+
+        if (verdictLabel == "requiresApproval")
+            return new JsonObject
+            {
+                ["ok"] = false,
+                ["error"] = verdictReason,
+                ["requiresApproval"] = true,
+            };
+        if (!proceed)
+            return Err(verdictReason);
 
         ExecResult r;
         try

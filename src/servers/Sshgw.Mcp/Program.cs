@@ -10,6 +10,14 @@ builder.Services.AddSingleton(SshgwOptions.FromEnvironment());
 // registry names, with only the commands/paths the registry permits.
 builder.Services.AddSingleton<ServerRegistry>();
 builder.Services.AddSingleton<SshClient>();
+// So execute-command can read Envoy's x-request-id as the cross-layer correlation id.
+builder.Services.AddHttpContextAccessor();
+
+// Q2 decision emission (authorization plane, docs/61). Opt-in: only when a scoped
+// publish-only NATS identity is configured (SSHGW_AUTHZ_NATS_*). Absent ⇒ null ⇒ the
+// ExecuteCommand `authz` param stays null ⇒ no emission, MCP runs unchanged.
+if (AuthzDecisionPublisher.FromEnvironmentOrNull() is { } authzPublisher)
+    builder.Services.AddSingleton(authzPublisher);
 
 builder
     .AddSinapsiMcpServer("sshgw-mcp", "0.1.0")
