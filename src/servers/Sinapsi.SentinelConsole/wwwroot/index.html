@@ -48,6 +48,18 @@
   .row .v{font-weight:600;text-align:right}
   .v.allow{color:var(--allow)} .v.requiresApproval{color:var(--approval)} .v.deny{color:var(--deny)}
   .row .corr{color:#484f58;font-size:11px;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* deploy feed */
+  .drow{display:grid;grid-template-columns:82px 74px 1fr 110px 90px;gap:10px;padding:7px 12px;border-bottom:1px solid #21262d;align-items:center}
+  .drow:hover{background:var(--panel2)}
+  .drow .t{color:var(--dim)}
+  .drow .kind{font-weight:700;text-align:center;border-radius:4px;font-size:11px;padding:1px 0}
+  .kind.released{color:#a5d6ff;background:#0d2740} .kind.applied{color:var(--allow);background:#0f2417} .kind.failed{color:var(--deny);background:#2a1211}
+  .drow .svc{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .drow .ver{color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .drow .ctid{color:var(--dim);font-size:11px;text-align:right}
+  .pill.applied{color:var(--allow);border-color:#238636;background:#0f2417}
+  .pill.failed{color:var(--deny);border-color:#8e2c26;background:#2a1211}
+  .pill.released{color:var(--accent);border-color:#1f6feb;background:#0d2740}
   .chain{grid-column:1/-1;margin:6px 0 2px;padding:8px 10px;border-left:2px solid var(--accent);background:#0d1b2a;border-radius:4px}
   .chain .step{color:var(--dim)} .chain .step b{color:var(--text)}
   .empty{padding:24px;text-align:center;color:var(--dim)}
@@ -60,9 +72,19 @@
     <span><span id="dot" class="dot down"></span><span id="conn">connecting…</span></span>
     <span>decisions <b id="total">0</b></span>
     <span>viewers <b id="clients">0</b></span>
+    <span><span id="ddot" class="dot down"></span><span id="dconn">deploy bus…</span></span>
+    <span>deploys <b id="dtotal">0</b></span>
   </div>
 </header>
 <main>
+  <h2>Deploys — release → applied, per service</h2>
+  <table class="posture"><thead><tr><th>Service</th><th>Last released</th><th>Last applied</th><th>Result</th></tr></thead>
+    <tbody id="deploystate"><tr><td colspan="4" class="none">waiting for release/deploy events…</td></tr></tbody>
+  </table>
+
+  <h3 style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--dim);margin:14px 0 8px">Recent deploy events</h3>
+  <div class="feed" id="deployfeed"><div class="empty">no deploy events yet — they stream in as CI releases + the deploy-controller reconciles.</div></div>
+
   <h2>Posture — tool × layer (live)</h2>
   <table class="posture"><thead><tr><th>Tool</th>
     <th>Q1 · identity→tool</th><th>Q2 · command-safety</th><th>Q3 · operator gate</th></tr></thead>
@@ -157,6 +179,46 @@ async function refreshStats(){
     $('#total').textContent=s.total; $('#clients').textContent=s.clients;
     const up=s.connected; $('#dot').className='dot '+(up?'up':'down');
     $('#conn').textContent=up?'bus connected':'bus disconnected';
+    $('#dtotal').textContent=s.deploysTotal ?? 0;
+    const dup=s.deployBusConnected; $('#ddot').className='dot '+(dup?'up':'down');
+    $('#dconn').textContent=dup?'deploy bus connected':'deploy bus disconnected';
+  }catch{}
+}
+
+// deploy state grid (poll) — per-service last released vs last applied
+function shortDigest(d){ return d ? d.replace(/^sha256:/,'').slice(0,12) : ''; }
+async function refreshDeployState(){
+  try{
+    const rows=await (await fetch('/api/deploy-state')).json();
+    const body=$('#deploystate');
+    if(!rows.length){ body.innerHTML='<tr><td colspan="4" class="none">waiting for release/deploy events…</td></tr>'; return; }
+    body.innerHTML = rows.map(r=>{
+      const released = r.lastReleasedVersion
+        ? `${esc(r.lastReleasedVersion)} <span class="counts">${esc(shortDigest(r.lastReleasedDigest))} · ${hhmmss(r.lastReleasedAt)}</span>` : '<span class="none">—</span>';
+      const applied = r.lastAppliedVersion
+        ? `${esc(r.lastAppliedVersion)} <span class="counts">ct${esc(r.lastAppliedCtid)} · ${esc(shortDigest(r.lastAppliedDigest))} · ${hhmmss(r.lastAppliedAt)}</span>` : '<span class="none">—</span>';
+      const result = r.lastResult ? `<span class="pill ${esc(r.lastResult)}">${esc(r.lastResult)}</span>` : '<span class="none">—</span>';
+      return `<tr><td class="tool">${esc(r.svc)}</td><td>${released}</td><td>${applied}</td><td>${result}</td></tr>`;
+    }).join('');
+  }catch{}
+}
+
+// recent deploy events (poll — no SSE lane for this yet, /api/deploys is cheap to poll)
+function drowHtml(d){
+  const kind=(d.kind||'').toLowerCase();
+  return `<div class="drow">
+    <span class="t">${hhmmss(d.time)}</span>
+    <span class="kind ${kind}">${esc(kind.toUpperCase())}</span>
+    <span class="svc">${esc(d.svc)}</span>
+    <span class="ver">${esc(d.version)}</span>
+    <span class="ctid">${d.ctid?('ct'+esc(d.ctid)):''}</span></div>`;
+}
+async function refreshDeployFeed(){
+  try{
+    const rows=await (await fetch('/api/deploys?n=100')).json();
+    const feed=$('#deployfeed');
+    if(!rows.length){ feed.innerHTML='<div class="empty">no deploy events yet — they stream in as CI releases + the deploy-controller reconciles.</div>'; return; }
+    feed.innerHTML = rows.map(drowHtml).join('');
   }catch{}
 }
 
@@ -175,8 +237,9 @@ function connect(){
   es.onerror=()=>{ es.close(); setTimeout(connect,3000); };
 }
 backfill().then(connect);
-refreshPosture(); refreshStats();
+refreshPosture(); refreshStats(); refreshDeployState(); refreshDeployFeed();
 setInterval(refreshPosture,4000); setInterval(refreshStats,4000);
+setInterval(refreshDeployState,4000); setInterval(refreshDeployFeed,4000);
 </script>
 </body>
 </html>

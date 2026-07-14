@@ -16,10 +16,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The read-model + decision parser are pure (System.Text.Json only), so compile
+    <!-- The read-models + event parsers are pure (System.Text.Json only), so compile
          them directly rather than referencing the Sdk.Web service project. -->
     <Compile Include="../../src/servers/Sinapsi.SentinelConsole/AuthzDecision.cs" />
     <Compile Include="../../src/servers/Sinapsi.SentinelConsole/ReadModel.cs" />
+    <Compile Include="../../src/servers/Sinapsi.SentinelConsole/DeployEvent.cs" />
+    <Compile Include="../../src/servers/Sinapsi.SentinelConsole/DeployModel.cs" />
   </ItemGroup>
 
 </Project>
