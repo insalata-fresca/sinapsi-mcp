@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
+using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.Server;
 
 namespace Sshgw.Mcp;
@@ -58,6 +59,10 @@ public sealed class SshgwTools
         // Injected by DI when a scoped publish identity is configured; null otherwise
         // (emission is a no-op). Defaulted so existing call-sites are unaffected.
         AuthzDecisionPublisher? authz = null,
+        // Injected by DI; used to read Envoy's x-request-id as the cross-layer correlation
+        // id so the Q2 decision joins the same request's Q1 (gateway) decision. Null in unit
+        // call-sites (no HTTP context) → correlation id falls back to per-decision.
+        IHttpContextAccessor? httpCtx = null,
         CancellationToken ct = default)
     {
         // Resolve the selector from connectionName (wire) or its 'server' alias BEFORE
@@ -110,7 +115,11 @@ public sealed class SshgwTools
                 : ("deny", "Command not in whitelist, execution forbidden", false);
         }
 
-        authz?.Emit(verdictLabel, verdictReason, effectiveConn, cmdString, correlationId: null);
+        // Envoy/agentgateway sets x-request-id per request; when forwarded upstream it is the
+        // shared id that joins this Q2 decision to the request's Q1 (gateway) decision.
+        var correlationId = httpCtx?.HttpContext?.Request.Headers["x-request-id"].ToString();
+        authz?.Emit(verdictLabel, verdictReason, effectiveConn, cmdString,
+                    string.IsNullOrEmpty(correlationId) ? null : correlationId);
 
         if (verdictLabel == "requiresApproval")
             return new JsonObject
