@@ -1,0 +1,27 @@
+# Sinapsi.SentinelConsole — OCI image. Two-stage: dotnet SDK 8.0 (build/publish)
+# -> aspnet 8.0 (runtime). Build context is the REPO ROOT so the in-repo
+# ProjectReference to src/libs/Sinapsi.Nats resolves; restore is nuget.org-only
+# (no private feed, no build secret). Build from the repo root:
+#   podman build --network=host -f src/servers/Sinapsi.SentinelConsole/Containerfile -t <img> .
+#
+# The service subscribes (read-only) to homelab.security.> on the NATS bus and
+# serves the Authorization Console page + inspection API. The scoped read-only
+# NATS identity + TLS CA are host-mounted at DEPLOY by the Quadlet, never baked.
+
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+COPY . .
+RUN dotnet publish src/servers/Sinapsi.SentinelConsole/Sinapsi.SentinelConsole.csproj \
+        -c Release -o /app /p:UseAppHost=false
+
+FROM mcr.microsoft.com/dotnet/aspnet:8.0
+WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /app .
+ENV DOTNET_EnableDiagnostics=0
+# Documentation only; the listen port is env-driven (SENTINEL_CONSOLE_PORT,
+# default 8140) and overridden by the Quadlet at deploy.
+EXPOSE 8140
+ENTRYPOINT ["dotnet", "Sinapsi.SentinelConsole.dll"]

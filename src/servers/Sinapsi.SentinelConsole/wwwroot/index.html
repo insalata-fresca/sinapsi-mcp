@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sinapsi Sentinel · Authorization Console</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2128; --line:#30363d; --text:#c9d1d9;
+    --dim:#8b949e; --allow:#3fb950; --approval:#d29922; --deny:#f85149; --accent:#58a6ff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  header{display:flex;align-items:center;gap:16px;padding:12px 18px;border-bottom:1px solid var(--line);background:var(--panel)}
+  header h1{font-size:15px;margin:0;font-weight:600;letter-spacing:.2px}
+  header .sub{color:var(--dim);font-size:12px}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:middle}
+  .dot.up{background:var(--allow);box-shadow:0 0 6px var(--allow)} .dot.down{background:var(--deny)}
+  .stats{margin-left:auto;color:var(--dim);font-size:12px;display:flex;gap:16px}
+  .stats b{color:var(--text)}
+  main{padding:16px 18px;max-width:1400px;margin:0 auto}
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:.8px;color:var(--dim);margin:22px 0 10px}
+  /* posture grid */
+  table{width:100%;border-collapse:collapse}
+  .posture td,.posture th{padding:8px 12px;border-bottom:1px solid var(--line);text-align:left}
+  .posture th{color:var(--dim);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+  .posture td.tool{color:var(--text)}
+  .cell{display:inline-flex;align-items:center;gap:8px}
+  .pill{padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;border:1px solid transparent}
+  .pill.allow{color:var(--allow);border-color:#238636;background:#0f2417}
+  .pill.requiresApproval{color:var(--approval);border-color:#9e6a03;background:#241a06}
+  .pill.deny{color:var(--deny);border-color:#8e2c26;background:#2a1211}
+  .counts{color:var(--dim);font-size:11px}
+  .none{color:#484f58}
+  /* controls */
+  .controls{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+  .controls input,.controls select{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:5px 8px;font:inherit}
+  .chip{cursor:pointer;padding:3px 10px;border:1px solid var(--line);border-radius:12px;color:var(--dim);user-select:none}
+  .chip.on{color:var(--text);border-color:var(--accent);background:#0d2136}
+  /* feed */
+  .feed{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--panel)}
+  .row{display:grid;grid-template-columns:82px 42px 1fr 150px 120px;gap:10px;padding:7px 12px;border-bottom:1px solid #21262d;cursor:pointer;align-items:center}
+  .row:hover{background:var(--panel2)}
+  .row .t{color:var(--dim)} .row .layer{font-weight:700;text-align:center;border-radius:4px;font-size:11px;padding:1px 0}
+  .layer.q1{color:#a5d6ff;background:#0d2740} .layer.q2{color:#d2a8ff;background:#231536} .layer.q3{color:#ffd7a8;background:#341c08}
+  .row .cmd{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row .cmd .verb{color:var(--accent)}
+  .row .v{font-weight:600;text-align:right}
+  .v.allow{color:var(--allow)} .v.requiresApproval{color:var(--approval)} .v.deny{color:var(--deny)}
+  .row .corr{color:#484f58;font-size:11px;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .chain{grid-column:1/-1;margin:6px 0 2px;padding:8px 10px;border-left:2px solid var(--accent);background:#0d1b2a;border-radius:4px}
+  .chain .step{color:var(--dim)} .chain .step b{color:var(--text)}
+  .empty{padding:24px;text-align:center;color:var(--dim)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Sinapsi Sentinel</h1><span class="sub">Authorization Console — inspect the plane, live</span>
+  <div class="stats">
+    <span><span id="dot" class="dot down"></span><span id="conn">connecting…</span></span>
+    <span>decisions <b id="total">0</b></span>
+    <span>viewers <b id="clients">0</b></span>
+  </div>
+</header>
+<main>
+  <h2>Posture — tool × layer (live)</h2>
+  <table class="posture"><thead><tr><th>Tool</th>
+    <th>Q1 · identity→tool</th><th>Q2 · command-safety</th><th>Q3 · operator gate</th></tr></thead>
+    <tbody id="posture"><tr><td colspan="4" class="none">waiting for decisions…</td></tr></tbody>
+  </table>
+
+  <h2>Live decisions</h2>
+  <div class="controls">
+    <input id="search" placeholder="filter by tool / verb / command…" size="34" />
+    <span class="chip on" data-v="all">all</span>
+    <span class="chip" data-v="allow">allow</span>
+    <span class="chip" data-v="requiresApproval">approval</span>
+    <span class="chip" data-v="deny">deny</span>
+    <span style="color:var(--dim);margin-left:auto">click a row → its cross-layer chain</span>
+  </div>
+  <div class="feed" id="feed"><div class="empty">no decisions yet — they stream in as agents act.</div></div>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const feed = $('#feed'); let vFilter='all', search='';
+const MAXROWS = 300;
+
+function vClass(v){ return v==='allow'?'allow':v==='deny'?'deny':'requiresApproval'; }
+function vLabel(v){ return v==='requiresApproval'?'approval':v; }
+function esc(s){ return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function hhmmss(t){ try{return new Date(t).toLocaleTimeString();}catch{return '';} }
+
+function matches(d){
+  if(vFilter!=='all' && d.verdict!==vFilter) return false;
+  if(search){ const h=(d.tool+' '+d.verb+' '+d.command+' '+d.server).toLowerCase();
+    if(!h.includes(search)) return false; }
+  return true;
+}
+
+function rowHtml(d){
+  const layer=(d.layer||'').toLowerCase();
+  const cmd = d.verb ? `<span class="verb">${esc(d.verb)}</span> ${esc((d.command||'').replace(new RegExp('^'+d.verb),''))}` : esc(d.command||d.reason);
+  return `<div class="row" data-corr="${esc(d.correlationId)}">
+    <span class="t">${hhmmss(d.time)}</span>
+    <span class="layer ${layer}">${esc((d.layer||'').toUpperCase())}</span>
+    <span class="cmd" title="${esc(d.tool)} — ${esc(d.reason)}">${cmd}</span>
+    <span class="v ${vClass(d.verdict)}">${vLabel(d.verdict)}</span>
+    <span class="corr" title="${esc(d.correlationId)}">${esc((d.correlationId||'').slice(0,8))}</span></div>`;
+}
+
+function addRow(d){
+  if(!matches(d)) return;
+  if(feed.querySelector('.empty')) feed.innerHTML='';
+  feed.insertAdjacentHTML('afterbegin', rowHtml(d));
+  while(feed.children.length>MAXROWS) feed.lastElementChild.remove();
+}
+
+feed.addEventListener('click', async e=>{
+  const row=e.target.closest('.row'); if(!row) return;
+  const existing=row.nextElementSibling;
+  if(existing && existing.classList.contains('chain')){ existing.remove(); return; }
+  const corr=row.dataset.corr; if(!corr) return;
+  const chain=await (await fetch('/api/chain/'+encodeURIComponent(corr))).json();
+  const steps = chain.length ? chain.map(c=>
+    `<div class="step"><b>${esc((c.layer||'').toUpperCase())}</b> ${esc(vLabel(c.verdict))} — ${esc(c.reason||'')}</div>`).join('')
+    : '<div class="step">no other layers recorded for this request yet (a shared trace-id lands the full chain).</div>';
+  row.insertAdjacentHTML('afterend', `<div class="chain">${steps}</div>`);
+});
+
+document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{
+  document.querySelectorAll('.chip').forEach(x=>x.classList.remove('on'));
+  c.classList.add('on'); vFilter=c.dataset.v;
+});
+$('#search').oninput=e=>{ search=e.target.value.toLowerCase(); };
+
+// posture grid (poll)
+const LAYERS=['q1','q2','q3'];
+async function refreshPosture(){
+  const rows=await (await fetch('/api/posture')).json();
+  const byTool={};
+  for(const r of rows){ (byTool[r.tool] ??= {})[r.layer]=r; }
+  const tools=Object.keys(byTool).sort();
+  const body=$('#posture');
+  if(!tools.length){ body.innerHTML='<tr><td colspan="4" class="none">waiting for decisions…</td></tr>'; return; }
+  body.innerHTML = tools.map(tool=>{
+    const cells=LAYERS.map(L=>{
+      const c=byTool[tool][L];
+      if(!c) return '<td class="none">—</td>';
+      return `<td><span class="cell"><span class="pill ${c.lastVerdict}">${vLabel(c.lastVerdict)}</span>
+        <span class="counts">A:${c.allow} · ?:${c.approval} · D:${c.deny}</span></span></td>`;
+    }).join('');
+    return `<tr><td class="tool">${esc(tool)}</td>${cells}</tr>`;
+  }).join('');
+}
+async function refreshStats(){
+  try{ const s=await (await fetch('/api/stats')).json();
+    $('#total').textContent=s.total; $('#clients').textContent=s.clients;
+    const up=s.connected; $('#dot').className='dot '+(up?'up':'down');
+    $('#conn').textContent=up?'bus connected':'bus disconnected';
+  }catch{}
+}
+
+// backfill the feed with recent history on load (newest-first from the API →
+// iterate oldest-first so prepend leaves newest on top), THEN stream live.
+async function backfill(){
+  try{
+    const rows=await (await fetch('/api/recent?n=150')).json();
+    rows.reverse().forEach(addRow);
+  }catch{}
+}
+// live feed (SSE, auto-reconnect)
+function connect(){
+  const es=new EventSource('/events');
+  es.onmessage=e=>{ try{ addRow(JSON.parse(e.data)); }catch{} };
+  es.onerror=()=>{ es.close(); setTimeout(connect,3000); };
+}
+backfill().then(connect);
+refreshPosture(); refreshStats();
+setInterval(refreshPosture,4000); setInterval(refreshStats,4000);
+</script>
+</body>
+</html>
