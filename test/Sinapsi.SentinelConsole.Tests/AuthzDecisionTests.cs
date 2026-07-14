@@ -30,6 +30,32 @@ public sealed class AuthzDecisionTests
     }
 
     [Fact]
+    public void Parses_Q1_Envelope_ReadsLayerFromPayload()
+    {
+        var json = """
+        {"time":"2026-07-14T08:00:00Z","data":{"layer":"q1","question":"identity-tool",
+          "surface":"gateway-pep","tool":"sshgw.execute-command","verdict":"deny",
+          "reason":"no-grant","agent":"agent-nightly","correlation_id":"req-42"}}
+        """;
+        var d = AuthzDecision.TryParse("homelab.security.authz.q1.deny.cse", json, Now);
+        Assert.NotNull(d);
+        Assert.Equal("q1", d!.Layer);
+        Assert.Equal(AuthzDecision.VerdictDeny, d.Verdict);
+        Assert.Equal("sshgw.execute-command", d.Tool);
+        Assert.Equal("req-42", d.CorrelationId);
+    }
+
+    [Fact]
+    public void Parses_Authz_InfersLayerFromSubject_WhenPayloadOmitsIt()
+    {
+        var d = AuthzDecision.TryParse(
+            "homelab.security.authz.q1.allow.cse",
+            """{"data":{"verdict":"allow","tool":"t"}}""", Now);
+        Assert.NotNull(d);
+        Assert.Equal("q1", d!.Layer);   // inferred from the subject
+    }
+
+    [Fact]
     public void Maps_Q3_AskGate_ToApproval()
     {
         var json = """

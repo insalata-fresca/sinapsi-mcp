@@ -41,14 +41,17 @@ public sealed record AuthzDecision(
         var data = root["data"] as JsonObject;
         var time = ParseTime(root["time"]?.GetValue<string>(), now);
 
-        // Q2 — the canonical envelope carries an explicit verdict.
-        if (subject.Contains(".authz.q2.") && data is not null)
+        // Any authz.<layer> subject carries the canonical envelope: an explicit verdict +
+        // its own layer (q1 gateway/OpenFGA, q2 in-MCP command authorizer, …).
+        if (subject.Contains(".authz.") && data is not null)
         {
             var verdict = Str(data["verdict"]);
-            if (verdict.Length == 0) return null;
+            var layer = Str(data["layer"]);
+            if (layer.Length == 0) layer = LayerFromSubject(subject);   // fallback: authz.<layer>
+            if (verdict.Length == 0 || layer.Length == 0) return null;
             return new AuthzDecision(
-                Layer: "q2",
-                Tool: Str(data["tool"], "sshgw.execute-command"),
+                Layer: layer,
+                Tool: Str(data["tool"]),
                 Server: Str(data["server"]),
                 Verb: Str(data["verb"]),
                 Verdict: verdict,
@@ -74,6 +77,17 @@ public sealed record AuthzDecision(
         }
 
         return null;
+    }
+
+    // "homelab.security.authz.q1.deny.cse" → "q1" (the token after ".authz.").
+    private static string LayerFromSubject(string subject)
+    {
+        const string marker = ".authz.";
+        int i = subject.IndexOf(marker, StringComparison.Ordinal);
+        if (i < 0) return "";
+        int start = i + marker.Length;
+        int end = subject.IndexOf('.', start);
+        return end < 0 ? subject[start..] : subject[start..end];
     }
 
     private static bool IsHarnessSecurity(string subject, out string verdict)
