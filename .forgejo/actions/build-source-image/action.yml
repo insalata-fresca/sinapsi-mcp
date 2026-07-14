@@ -1,0 +1,73 @@
+name: "build-source-image"
+description: >-
+  Build ONE sinapsi-mcp server OCI image on the self-hosted runner and push it to
+  the Forgejo registry as <image>:sinapsi-0.1.<run> + <image>:sinapsi-latest. This
+  is the SOURCE plane: it produces the provenance-tagged source bits that
+  ste/home-server's per-service build-<svc>.yml re-publishes (retag ste/<svc>:0.1.<run>
+  + emit homelab.release.<svc>.published) as the release/deploy orchestrator. The
+  build step is a verbatim extraction of the build-images.yml matrix leg, so the
+  tag-triggered full-matrix path and the merge-triggered per-service path build
+  byte-identically.
+
+inputs:
+  server:
+    description: "Project dir under src/servers/ (the source of the image name)."
+    required: true
+  image:
+    description: "Lowercased image repo path (ste/<image>)."
+    required: true
+  registry:
+    description: "OCI registry host (from the REGISTRY Actions variable; no default is baked in)."
+    required: true
+  registry-user:
+    description: "Registry user (REGISTRY_USER Actions variable)."
+    required: false
+    default: "ste"
+  registry-token:
+    description: "write:package token — registry login + push."
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Build + push ${{ inputs.image }} (capture digest)
+      shell: bash
+      env:
+        REGISTRY: ${{ inputs.registry }}
+        REGISTRY_USER: ${{ inputs.registry-user }}
+        REGISTRY_TOKEN: ${{ inputs.registry-token }}
+        SERVER: ${{ inputs.server }}
+        IMAGE_NAME: ${{ inputs.image }}
+      run: |
+        set -euo pipefail
+        : "${REGISTRY:?REGISTRY Actions variable is not set — no default registry is baked in}"
+        : "${REGISTRY_TOKEN:?REGISTRY_TOKEN Actions secret is not set}"
+        USER_NAME="${REGISTRY_USER:-ste}"
+
+        # Monotonic version from the run number (checkout is shallow; no full
+        # history needed). Tag the image both :sinapsi-<version> and :sinapsi-latest.
+        # The "sinapsi-" prefix is permanent provenance: it disambiguates these
+        # source images from the release plane that shares this registry namespace
+        # and uses the same numeric 0.1.<run> scheme, preventing tag collisions on
+        # the image names common to both planes.
+        VER="sinapsi-0.1.${GITHUB_RUN_NUMBER}"
+        IMAGE="${REGISTRY}/${USER_NAME}/${IMAGE_NAME}"
+        echo "Building ${IMAGE}:${VER}"
+
+        echo "${REGISTRY_TOKEN}" | podman login "${REGISTRY}" -u "${USER_NAME}" --password-stdin
+
+        # Build context is the REPO ROOT so the in-repo ProjectReference to
+        # src/libs/ resolves; restore is nuget.org-only (no private feed, no
+        # build secret). --network=host: the runner LXC has no /dev/net/tun.
+        podman build --network=host \
+          -f "src/servers/${SERVER}/Containerfile" \
+          -t "${IMAGE}:${VER}" -t "${IMAGE}:sinapsi-latest" .
+
+        # Capture the digest of THIS push via --digestfile. Do NOT use
+        # `inspect .RepoDigests` — that list accumulates stale entries across
+        # rebuilds of the same content and returns the wrong (old) digest.
+        DIGESTFILE="$(mktemp)"
+        podman push --digestfile "$DIGESTFILE" "${IMAGE}:${VER}"
+        podman push "${IMAGE}:sinapsi-latest"
+        DIGEST="$(cat "$DIGESTFILE")"; rm -f "$DIGESTFILE"
+        echo "Pushed ${IMAGE}:${VER} @ ${DIGEST}"

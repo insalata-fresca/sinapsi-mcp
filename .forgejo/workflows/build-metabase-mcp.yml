@@ -1,0 +1,41 @@
+# S34 "merge = deploy" — merge-triggered SOURCE build for metabase-mcp.
+#
+# On a push to main that changes THIS service's source, build + push the
+# provenance-tagged source image metabase-mcp:sinapsi-0.1.<run> (+ :sinapsi-latest)
+# to the Forgejo registry. Path-scoped: ONLY the changed service builds — no
+# full-matrix rebuild on every merge (that blast radius is unacceptable).
+#
+# ADDITIVE. The existing tag-triggered full-matrix build-images.yml (on: tags v*)
+# is left completely untouched — a version tag still cuts the whole matrix.
+#
+# SOURCE plane only: this does NOT emit homelab.release.metabase-mcp.published. In the
+# two-plane release model, ste/home-server's build-metabase-mcp.yml re-publishes this
+# source image (retag ste/metabase-mcp:0.1.<run> + emit the release event) as the
+# release/deploy orchestrator. sinapsi-mcp has no release nkey and must not become
+# a second publisher of that subject. See the PR body for the release-emit boundary.
+#
+# Requires (repo Settings -> Actions): secret REGISTRY_TOKEN, variables REGISTRY +
+# REGISTRY_USER. Runs on the self-hosted runner. First build (no source change) is
+# available via the workflow_dispatch button / API.
+name: build-metabase-mcp
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/servers/Metabase.Mcp/**'
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build + push source image
+        uses: ./.forgejo/actions/build-source-image
+        with:
+          server: Metabase.Mcp
+          image: metabase-mcp
+          registry: ${{ vars.REGISTRY }}
+          registry-user: ${{ vars.REGISTRY_USER || 'ste' }}
+          registry-token: ${{ secrets.REGISTRY_TOKEN }}
