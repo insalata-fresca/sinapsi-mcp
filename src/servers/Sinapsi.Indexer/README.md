@@ -37,7 +37,7 @@ the same store. Rebuild = re-scan the sources, never replay the event log.
 | `IndexerErrors.cs` | Uniform error sanitization: redacts key material / credential assignments and length-caps every surfaced string. |
 | `IndexerConfig.cs` | Fail-closed numeric config (default / floor / ceiling; throws naming the offending env var on bad input). |
 | `IndexerWorker.cs` | The JetStream durable consumer + coalescing re-scan loop + periodic safety rescan + background embed loop. |
-| `SourceScanner.cs` | git sync + markdown walk → `Document`s (classify + title + content-hash); path denylist for secret-shaped files; token scrubbed from git error text. |
+| `GitSourceScanner.cs` | git sync + markdown walk → `Document`s (classify + title + content-hash); path denylist for secret-shaped files; token scrubbed from git error text. |
 | `PostgresIndexStore.cs` | `IIndexStore` over Postgres: schema, idempotent upsert, tombstone, FTS + hybrid-RRF read queries, embedding backfill. |
 | `OnnxEmbedder.cs` | Local all-MiniLM-L6-v2 embedder (in-process ONNX); CPU-contained; env-driven model paths + dims (fail-closed). |
 | `LearnPublisher.cs` | Lazily-connected NATS publisher for learning-published events; uses a scoped publish-only identity when configured. |

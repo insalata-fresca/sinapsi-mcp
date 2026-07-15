@@ -4,7 +4,7 @@
 # (no private feed, no build secret). Build from the repo root:
 #   podman build --network=host -f src/servers/Sinapsi.Indexer/Containerfile -t <img> .
 #
-# Runtime deps: aspnet + ca-certificates + git (SourceScanner shells out to
+# Runtime deps: aspnet + ca-certificates + git (GitSourceScanner shells out to
 # `git` to sync watched repos) + libgomp1 (ONNX Runtime's OpenMP native dep).
 # The all-MiniLM-L6-v2 embedding model + vocab are BAKED at build time (fetched
 # from HuggingFace with --network=host) so nothing leaves the host at runtime
@@ -18,7 +18,7 @@ RUN dotnet publish src/servers/Sinapsi.Indexer/Sinapsi.Indexer.csproj \
 
 FROM mcr.microsoft.com/dotnet/aspnet:8.0
 WORKDIR /app
-# git: SourceScanner shells out to `git`. libgomp1: ONNX Runtime OpenMP native
+# git: GitSourceScanner shells out to `git`. libgomp1: ONNX Runtime OpenMP native
 # dep. curl: fetch the embedding model at build. ca-certificates: outbound HTTPS.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates curl libgomp1 \

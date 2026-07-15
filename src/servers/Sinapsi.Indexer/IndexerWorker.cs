@@ -39,7 +39,7 @@ public sealed class IndexerWorker : JetStreamWorker
     public long DocsEmbedded => _core.DocsEmbedded;
     public DateTimeOffset? LastReindex => _core.LastReindex;
 
-    public IndexerWorker(IIndexStore store, SourceScanner scanner, IEmbedder embedder, NatsConnectionOptions opts, ILogger<IndexerWorker> log)
+    public IndexerWorker(IIndexStore store, ISourceScanner scanner, IEmbedder embedder, NatsConnectionOptions opts, ILogger<IndexerWorker> log)
         : base(opts, log)
     {
         _core = new IndexerCore(store, scanner, embedder, log);
@@ -81,7 +81,7 @@ public sealed class IndexerWorker : JetStreamWorker
         // per debounce window regardless of how many pushes arrive.
         var repoName = RepoNameFromSubject(subject);
         if (repoName is null) return ValueTask.CompletedTask;
-        if (_core.Repos.Any(r => r.Source == repoName))
+        if (_core.Sources.Any(r => r.Source == repoName))
             _dirty[repoName] = 1;
         else
             Log.LogDebug("git push for unwatched repo {repo} — ignored", repoName);
@@ -112,10 +112,10 @@ public sealed class IndexerWorker : JetStreamWorker
             foreach (var repoName in due)
             {
                 _dirty.TryRemove(repoName, out _);
-                var repo = _core.Repos.FirstOrDefault(r => r.Source == repoName);
+                var repo = _core.Sources.FirstOrDefault(r => r.Source == repoName);
                 if (repo is null) continue;
                 Log.LogInformation("coalesced git push(es) on {repo} → re-scanning source", repoName);
-                try { await _core.ReindexRepoAsync(repo, ct); }
+                try { await _core.ReindexSourceAsync(repo, ct); }
                 catch (Exception e) { Log.LogWarning(e, "coalesced re-index failed for {repo}", repoName); }
             }
             // Re-scans only clear embeddings on content change (UpsertAsync sets
