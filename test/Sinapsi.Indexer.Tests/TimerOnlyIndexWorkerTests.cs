@@ -11,7 +11,7 @@
 //      .ConnectAsync in this version". A future edit that accidentally wires
 //      NATS into this type fails this test immediately.
 //   2. FUNCTIONAL: constructing + starting the worker with a real (empty-repo)
-//      SourceScanner and a recording IIndexStore proves the startup path
+//      GitSourceScanner and a recording IIndexStore proves the startup path
 //      (EnsureSchema -> ReindexAll -> Ready=true) runs to completion with NO
 //      NatsConnectionOptions ever constructed anywhere in the test, and that
 //      the shared IndexerCore engine it delegates to (proven functionally by
@@ -95,10 +95,10 @@ public sealed class TimerOnlyIndexWorkerTests
         // An empty repo list means ReindexAllAsync completes with no git/network
         // calls at all — this proves the startup sequence (EnsureSchema ->
         // ReindexAll -> Ready=true) completes purely through IIndexStore/
-        // SourceScanner/IEmbedder fakes, with no NatsConnectionOptions
+        // GitSourceScanner/IEmbedder fakes, with no NatsConnectionOptions
         // constructed anywhere in this test.
         var store = new RecordingIndexStore(poisonDocId: "none", onPoison: () => new InvalidOperationException("unused"));
-        var scanner = new SourceScanner(repos: Array.Empty<RepoSpec>(), token: null, log: NullLogger.Instance);
+        var scanner = new GitSourceScanner(repos: Array.Empty<RepoSpec>(), token: null, log: NullLogger.Instance);
         var embedder = new FakeEmbedder();
         var worker = new TimerOnlyIndexWorker(store, scanner, embedder, NullLogger<TimerOnlyIndexWorker>.Instance);
 

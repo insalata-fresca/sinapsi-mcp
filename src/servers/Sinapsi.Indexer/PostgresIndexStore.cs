@@ -134,14 +134,14 @@ public sealed class PostgresIndexStore : IIndexStore
         await cmd.ExecuteScalarAsync(ct);
     }
 
-    // Secret-denylist path fragments — mirrored from SourceScanner.DenyFragments so that
+    // Secret-denylist path fragments — mirrored from GitSourceScanner.DenyFragments so that
     // even if a secret-shaped row somehow reached the store (e.g. a manual INSERT or a
     // future scanner regression), it can never surface via the search read path.
     // Defence-in-depth: the scanner guards at ingest; the SQL guard protects the read path.
     //
     // NOTE: Document.Path is a REPO-RELATIVE path with NO leading slash (e.g.
     // "secrets/prod.yml", not "/secrets/prod.yml"). The leading-slash directory
-    // fragments used by SourceScanner.DenyFragments (which prepends "/" before
+    // fragments used by GitSourceScanner.DenyFragments (which prepends "/" before
     // matching) cannot be reused here verbatim — a LIKE pattern of '%/secrets/%'
     // misses top-level paths like "secrets/prod.yml" because there is no leading
     // slash in the stored value. Drop the leading slash from directory fragments so

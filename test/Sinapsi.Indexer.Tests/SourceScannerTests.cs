@@ -18,8 +18,8 @@ public sealed class SourceScannerTests
     [Fact]
     public void Files_in_the_learnings_source_are_classified_learning()
     {
-        Assert.Equal("learning", SourceScanner.ClassifyKind(Learnings, "global/foo.md", Learnings));
-        Assert.Equal("learning", SourceScanner.ClassifyKind(Learnings, "projects/acme/bar.md", Learnings));
+        Assert.Equal("learning", GitSourceScanner.ClassifyKind(Learnings, "global/foo.md", Learnings));
+        Assert.Equal("learning", GitSourceScanner.ClassifyKind(Learnings, "projects/acme/bar.md", Learnings));
     }
 
     [Theory]
@@ -35,16 +35,16 @@ public sealed class SourceScannerTests
     [InlineData("README.md", "doc")]
     public void NonLearning_files_classify_by_path_prefix(string rel, string expected)
     {
-        Assert.Equal(expected, SourceScanner.ClassifyKind("docs", rel, Learnings));
+        Assert.Equal(expected, GitSourceScanner.ClassifyKind("docs", rel, Learnings));
     }
 
     [Fact]
     public void Learnings_source_name_is_configurable_not_hardcoded()
     {
         // A custom learnings source name still wins over the path heuristic.
-        Assert.Equal("learning", SourceScanner.ClassifyKind("kb", "docs/x.md", learningsSource: "kb"));
+        Assert.Equal("learning", GitSourceScanner.ClassifyKind("kb", "docs/x.md", learningsSource: "kb"));
         // And a repo NOT named the learnings source is classified by path.
-        Assert.Equal("doc", SourceScanner.ClassifyKind("kb", "docs/x.md", learningsSource: "learnings"));
+        Assert.Equal("doc", GitSourceScanner.ClassifyKind("kb", "docs/x.md", learningsSource: "learnings"));
     }
 
     // ── ScopeOf: first path segment, or "global" at the root ────────────────────
@@ -55,7 +55,7 @@ public sealed class SourceScannerTests
     [InlineData("at-root.md", "global")]
     public void ScopeOf_takes_the_first_path_segment(string rel, string expected)
     {
-        Assert.Equal(expected, SourceScanner.ScopeOf(rel));
+        Assert.Equal(expected, GitSourceScanner.ScopeOf(rel));
     }
 
     // ── ExtractTitle: first markdown H1, else the filename ──────────────────────
@@ -63,13 +63,13 @@ public sealed class SourceScannerTests
     [Fact]
     public void ExtractTitle_uses_the_first_h1()
     {
-        Assert.Equal("Hello World", SourceScanner.ExtractTitle("intro\n# Hello World\nbody", "a/b.md"));
+        Assert.Equal("Hello World", GitSourceScanner.ExtractTitle("intro\n# Hello World\nbody", "a/b.md"));
     }
 
     [Fact]
     public void ExtractTitle_falls_back_to_the_filename_without_extension()
     {
-        Assert.Equal("notes", SourceScanner.ExtractTitle("no heading here", "deep/path/notes.md"));
+        Assert.Equal("notes", GitSourceScanner.ExtractTitle("no heading here", "deep/path/notes.md"));
     }
 
     // ── Sha256: stable, lowercase hex, content-sensitive ────────────────────────
@@ -77,9 +77,9 @@ public sealed class SourceScannerTests
     [Fact]
     public void Sha256_is_deterministic_and_changes_with_content()
     {
-        var a = SourceScanner.Sha256("alpha");
-        Assert.Equal(a, SourceScanner.Sha256("alpha"));
-        Assert.NotEqual(a, SourceScanner.Sha256("beta"));
+        var a = GitSourceScanner.Sha256("alpha");
+        Assert.Equal(a, GitSourceScanner.Sha256("alpha"));
+        Assert.NotEqual(a, GitSourceScanner.Sha256("beta"));
         Assert.Matches("^[0-9a-f]{64}$", a);
     }
 

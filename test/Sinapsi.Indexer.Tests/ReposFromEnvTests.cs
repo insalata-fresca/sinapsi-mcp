@@ -28,7 +28,7 @@ public sealed class ReposFromEnvTests
     [Fact]
     public void Default_repo_list_is_empty_nothing_baked_in()
     {
-        var repos = WithEnv(new Dictionary<string, string?>(), SourceScanner.ReposFromEnv);
+        var repos = WithEnv(new Dictionary<string, string?>(), GitSourceScanner.ReposFromEnv);
         Assert.Empty(repos);
     }
 
@@ -41,7 +41,7 @@ public sealed class ReposFromEnvTests
             ["INDEXER_REPOS"] = "docs=acme/docs, learnings=acme/learnings",
             ["INDEXER_REPO_BRANCH"] = "main",
             ["INDEXER_CACHE_DIR"] = "/tmp/cache",
-        }, SourceScanner.ReposFromEnv);
+        }, GitSourceScanner.ReposFromEnv);
 
         Assert.Equal(2, repos.Count);
 
@@ -61,7 +61,7 @@ public sealed class ReposFromEnvTests
         {
             ["FORGE_BASE_URL"] = "https://forge.example.com/",
             ["INDEXER_REPOS"] = "docs=acme/docs",
-        }, SourceScanner.ReposFromEnv);
+        }, GitSourceScanner.ReposFromEnv);
 
         Assert.Equal("https://forge.example.com/acme/docs.git", repos.Single().Url);
     }
@@ -72,7 +72,7 @@ public sealed class ReposFromEnvTests
         var repos = WithEnv(new Dictionary<string, string?>
         {
             ["INDEXER_REPOS"] = "docs=acme/docs",
-        }, SourceScanner.ReposFromEnv);
+        }, GitSourceScanner.ReposFromEnv);
 
         // No real instance baked in — the default is forge.example.com.
         Assert.StartsWith("https://forge.example.com/", repos.Single().Url);

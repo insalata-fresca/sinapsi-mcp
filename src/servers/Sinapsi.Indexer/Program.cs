@@ -21,10 +21,14 @@ var caps = IndexerCapabilities.FromEnvironment();
 
 builder.Services.AddSingleton<IIndexStore, PostgresIndexStore>();
 builder.Services.AddSingleton<IEmbedder, OnnxEmbedder>();
-builder.Services.AddSingleton(sp => new SourceScanner(
-    SourceScanner.ReposFromEnv(),
+// The SOURCE seam: today the git implementation (GitSourceScanner) is the sole
+// ISourceScanner. Registered against the interface so IndexerCore + both worker
+// shapes depend only on the seam; a future OPDS source registers a different
+// ISourceScanner here with no change to the core/workers.
+builder.Services.AddSingleton<ISourceScanner>(sp => new GitSourceScanner(
+    GitSourceScanner.ReposFromEnv(),
     Environment.GetEnvironmentVariable("FORGE_REPO_TOKEN"),
-    sp.GetRequiredService<ILoggerFactory>().CreateLogger<SourceScanner>()));
+    sp.GetRequiredService<ILoggerFactory>().CreateLogger<GitSourceScanner>()));
 
 // --- index capability ---
 // SharedBusConsumer: the NATS-consuming IndexerWorker (push-coalesced +

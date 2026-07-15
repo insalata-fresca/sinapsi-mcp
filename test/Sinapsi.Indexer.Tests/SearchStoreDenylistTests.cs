@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // SearchStoreDenylistTests - unit proof that the secret-path denylist SQL
 // fragments embedded in PostgresIndexStore.SearchAsync are correct (their
-// literal content matches what SourceScanner.DenyFragments enforces at ingest).
+// literal content matches what GitSourceScanner.DenyFragments enforces at ingest).
 //
 // These tests do NOT need a live Postgres instance — they verify the SHAPE and
 // CONTENT of the denylist as a contract between the ingest-time scanner guard
@@ -43,10 +43,10 @@ public sealed class SearchStoreDenylistTests
 {
     // The denylist fragments that PostgresIndexStore.SearchAsync injects into
     // the SQL WHERE clause as defence-in-depth. Kept in sync with
-    // SourceScanner.DenyFragments by this test.
+    // GitSourceScanner.DenyFragments by this test.
     //
     // NOTE: these are REPO-RELATIVE path fragments (no leading slash) matching
-    // what is stored in Document.Path. SourceScanner.DenyFragments uses the same
+    // what is stored in Document.Path. GitSourceScanner.DenyFragments uses the same
     // strings but prepends "/" before matching because it builds a probed path
     // as "/" + rel; the SQL read path does not prepend and so cannot use
     // leading-slash-anchored fragments.
@@ -164,7 +164,7 @@ public sealed class SearchStoreIntegrationTests
             Kind = "doc",
             Title = "Tombstoned Document",
             Body = "This document should not appear in search results after tombstoning.",
-            ContentSha = SourceScanner.Sha256("Tombstoned Document"),
+            ContentSha = GitSourceScanner.Sha256("Tombstoned Document"),
         };
 
         await store.UpsertAsync(doc, CancellationToken.None);
@@ -202,7 +202,7 @@ public sealed class SearchStoreIntegrationTests
             Kind = "doc",
             Title = "Production Secrets",
             Body = "This is a secret document that must never appear in search results.",
-            ContentSha = SourceScanner.Sha256("Production Secrets"),
+            ContentSha = GitSourceScanner.Sha256("Production Secrets"),
         };
 
         await store.UpsertAsync(secretDoc, CancellationToken.None);
@@ -237,7 +237,7 @@ public sealed class SearchStoreIntegrationTests
             Kind = "doc",
             Title = "Homelab NATS Configuration",
             Body = "homelab nats configuration setup guide step by step homelab nats",
-            ContentSha = SourceScanner.Sha256("high"),
+            ContentSha = GitSourceScanner.Sha256("high"),
         };
         var lowDoc = new Document
         {
@@ -247,7 +247,7 @@ public sealed class SearchStoreIntegrationTests
             Kind = "doc",
             Title = "Unrelated Document",
             Body = "completely unrelated content about something else entirely different",
-            ContentSha = SourceScanner.Sha256("low"),
+            ContentSha = GitSourceScanner.Sha256("low"),
         };
 
         await store.UpsertAsync(highDoc, CancellationToken.None);

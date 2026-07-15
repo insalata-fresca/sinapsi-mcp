@@ -5,16 +5,24 @@ using Microsoft.Extensions.Logging;
 
 namespace Sinapsi.Indexer;
 
-/// <summary>One source repo to index: a clone URL + branch + a local cache dir.</summary>
-public sealed record RepoSpec(string Source, string Url, string Branch, string CacheDir);
+/// <summary>One source repo to index: a clone URL + branch + a local cache dir.
+/// The <see cref="Source"/> logical name is the only field that crosses the
+/// <see cref="ISourceScanner"/> seam (via <see cref="ISourceRef"/>); Url/Branch/
+/// CacheDir are git-specific detail private to <see cref="GitSourceScanner"/>.</summary>
+public sealed record RepoSpec(string Source, string Url, string Branch, string CacheDir) : ISourceRef;
 
 /// <summary>
 /// Re-scans the SOURCE repos (the truth) into <see cref="Document"/>s. Events are
 /// only change-notifications; a (re)scan = git pull + walk the markdown +
 /// classify + hash (rebuild = re-scan the sources, never replay the event log).
 /// Reads markdown only; never secret-shaped paths.
+/// <para>The git implementation of the <see cref="ISourceScanner"/> seam. The
+/// concrete <see cref="RepoSpec"/>-typed <see cref="SyncAsync(RepoSpec,CancellationToken)"/>
+/// / <see cref="Scan(RepoSpec)"/> / <see cref="Repos"/> members are the git-native
+/// surface (unchanged from before the seam was extracted); the interface members
+/// forward to them.</para>
 /// </summary>
-public sealed class SourceScanner
+public sealed class GitSourceScanner : ISourceScanner
 {
     private readonly IReadOnlyList<RepoSpec> _repos;
     private readonly string? _token;
@@ -27,7 +35,7 @@ public sealed class SourceScanner
     private static readonly string[] DenyFragments =
         { "/secrets/", "/secret/", "vault.yml", "vault.yaml", "/.git/", "/private/" };
 
-    public SourceScanner(IReadOnlyList<RepoSpec> repos, string? token, ILogger log)
+    public GitSourceScanner(IReadOnlyList<RepoSpec> repos, string? token, ILogger log)
     {
         _repos = repos;
         _token = token;
@@ -36,7 +44,28 @@ public sealed class SourceScanner
         _log = log;
     }
 
+    /// <summary>Git-native repo list (concrete <see cref="RepoSpec"/>s). The
+    /// seam exposes these as source-neutral handles via <see cref="Sources"/>.</summary>
     public IReadOnlyList<RepoSpec> Repos => _repos;
+
+    // --- ISourceScanner seam (git-neutral) ---------------------------------
+    // The core/workers drive the scanner through these; every source handle a
+    // GitSourceScanner hands out IS a RepoSpec, so the interface members forward
+    // to the concrete RepoSpec-typed members with a documented, safe cast.
+
+    IReadOnlyList<ISourceRef> ISourceScanner.Sources => _repos;
+
+    Task<bool> ISourceScanner.SyncAsync(ISourceRef source, CancellationToken ct) =>
+        SyncAsync(AsRepo(source), ct);
+
+    IReadOnlyList<Document> ISourceScanner.Scan(ISourceRef source) => Scan(AsRepo(source));
+
+    /// <summary>Every handle a GitSourceScanner produces is a <see cref="RepoSpec"/>;
+    /// a foreign <see cref="ISourceRef"/> reaching the git scanner is a composition
+    /// bug, surfaced loudly rather than silently mis-synced.</summary>
+    private static RepoSpec AsRepo(ISourceRef source) => source as RepoSpec
+        ?? throw new ArgumentException(
+            $"GitSourceScanner requires a RepoSpec source ref, got {source.GetType().Name}", nameof(source));
 
     /// <summary>Build the default repo set from env (forge base + branch + cache dir).
     /// All values are env-driven with neutral local defaults — nothing is baked in.</summary>

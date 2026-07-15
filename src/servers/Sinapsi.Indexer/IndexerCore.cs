@@ -25,7 +25,7 @@ namespace Sinapsi.Indexer;
 internal sealed class IndexerCore
 {
     private readonly IIndexStore _store;
-    private readonly SourceScanner _scanner;
+    private readonly ISourceScanner _scanner;
     private readonly IEmbedder _embedder;
     private readonly ILogger _log;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -36,7 +36,7 @@ internal sealed class IndexerCore
     public long DocsEmbedded { get; private set; }
     public DateTimeOffset? LastReindex { get; private set; }
 
-    public IndexerCore(IIndexStore store, SourceScanner scanner, IEmbedder embedder, ILogger log)
+    public IndexerCore(IIndexStore store, ISourceScanner scanner, IEmbedder embedder, ILogger log)
     {
         _store = store;
         _scanner = scanner;
@@ -48,7 +48,9 @@ internal sealed class IndexerCore
         _rescanInterval = TimeSpan.FromMinutes(IndexerConfig.RescanIntervalMin());
     }
 
-    public IReadOnlyList<RepoSpec> Repos => _scanner.Repos;
+    /// <summary>The tracked sources as source-neutral handles (the workers match
+    /// a push subject's repo token against each handle's <see cref="ISourceRef.Source"/>).</summary>
+    public IReadOnlyList<ISourceRef> Sources => _scanner.Sources;
 
     /// <summary>Retry schema-ensure until Postgres is reachable (the data tier
     /// may still be booting). Sets <see cref="SchemaReady"/> once it succeeds.</summary>
@@ -67,24 +69,24 @@ internal sealed class IndexerCore
 
     public async Task ReindexAllAsync(CancellationToken ct)
     {
-        foreach (var repo in _scanner.Repos)
-            await ReindexRepoAsync(repo, ct);
+        foreach (var source in _scanner.Sources)
+            await ReindexSourceAsync(source, ct);
         // No inline embedding: the background EmbedLoop owns that work so the
         // CPU-bound ONNX step never blocks scan/consume or pegs the host.
     }
 
-    public async Task ReindexRepoAsync(RepoSpec repo, CancellationToken ct)
+    public async Task ReindexSourceAsync(ISourceRef source, CancellationToken ct)
     {
         await _gate.WaitAsync(ct);
         try
         {
-            if (!await _scanner.SyncAsync(repo, ct))
+            if (!await _scanner.SyncAsync(source, ct))
             {
-                _log.LogWarning("skipping {source} re-index — sync failed", repo.Source);
+                _log.LogWarning("skipping {source} re-index — sync failed", source.Source);
                 return;
             }
-            var docs = _scanner.Scan(repo);
-            await IndexDocsAsync(repo.Source, docs, ct);
+            var docs = _scanner.Scan(source);
+            await IndexDocsAsync(source.Source, docs, ct);
         }
         finally
         {

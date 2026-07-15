@@ -24,10 +24,10 @@ public sealed class NulByteResilienceTests
     [Fact]
     public void HasNulByte_detects_a_nul_and_passes_clean_text()
     {
-        Assert.True(SourceScanner.HasNulByte("before\0after"));
-        Assert.True(SourceScanner.HasNulByte("\0"));
-        Assert.False(SourceScanner.HasNulByte("perfectly normal markdown"));
-        Assert.False(SourceScanner.HasNulByte(""));
+        Assert.True(GitSourceScanner.HasNulByte("before\0after"));
+        Assert.True(GitSourceScanner.HasNulByte("\0"));
+        Assert.False(GitSourceScanner.HasNulByte("perfectly normal markdown"));
+        Assert.False(GitSourceScanner.HasNulByte(""));
     }
 
     [Fact]
@@ -43,7 +43,7 @@ public sealed class NulByteResilienceTests
             File.WriteAllText(Path.Combine(dir, "good-b.md"), "# Beta\nclean body B");
             File.WriteAllText(Path.Combine(dir, "poison.md"), "# Poison\nbad\0byte here");
 
-            var scanner = new SourceScanner(Array.Empty<RepoSpec>(), token: null, NullLogger.Instance);
+            var scanner = new GitSourceScanner(Array.Empty<RepoSpec>(), token: null, NullLogger.Instance);
             var repo = new RepoSpec("docs", "https://example/docs.git", "main", dir);
 
             var docs = scanner.Scan(repo);
@@ -66,7 +66,7 @@ public sealed class NulByteResilienceTests
     {
         // Constructed WITHOUT touching NATS (ExecuteAsync is never called). A default
         // NatsConnectionOptions is enough to satisfy the base constructor.
-        var scanner = new SourceScanner(Array.Empty<RepoSpec>(), token: null, NullLogger.Instance);
+        var scanner = new GitSourceScanner(Array.Empty<RepoSpec>(), token: null, NullLogger.Instance);
         return new IndexerWorker(store, scanner, new FakeEmbedder(),
             new NatsConnectionOptions(), NullLogger<IndexerWorker>.Instance);
     }
@@ -79,7 +79,7 @@ public sealed class NulByteResilienceTests
         Kind = "doc",
         Title = path,
         Body = body,
-        ContentSha = SourceScanner.Sha256(body),
+        ContentSha = GitSourceScanner.Sha256(body),
     };
 
     private static PostgresException Nul22021() =>

@@ -34,7 +34,7 @@ public sealed class TimerOnlyIndexWorker : BackgroundService
     public long DocsEmbedded => _core.DocsEmbedded;
     public DateTimeOffset? LastReindex => _core.LastReindex;
 
-    public TimerOnlyIndexWorker(IIndexStore store, SourceScanner scanner, IEmbedder embedder, ILogger<TimerOnlyIndexWorker> log)
+    public TimerOnlyIndexWorker(IIndexStore store, ISourceScanner scanner, IEmbedder embedder, ILogger<TimerOnlyIndexWorker> log)
     {
         _core = new IndexerCore(store, scanner, embedder, log);
         _log = log;

@@ -10,7 +10,7 @@ public sealed record Document
     public required string DocId { get; init; }
     public required string Source { get; init; }   // the logical source name of the repo
     public required string Path { get; init; }      // repo-relative path
-    public required string Kind { get; init; }       // see SourceScanner.ClassifyKind
+    public required string Kind { get; init; }       // see GitSourceScanner.ClassifyKind
     public required string Title { get; init; }
     public required string Body { get; init; }
     public required string ContentSha { get; init; }
