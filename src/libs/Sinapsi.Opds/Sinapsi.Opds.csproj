@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RootNamespace>Sinapsi.Opds</RootNamespace>
+
+    <!-- Packable so it can be published to a NuGet feed for external consumers
+         (PackageReference, never ProjectReference). Private for now. -->
+    <IsPackable>true</IsPackable>
+    <PackageId>Sinapsi.Opds</PackageId>
+    <!-- Version inherited from Directory.Build.props (repo-wide 0.1.0 pin). -->
+    <Authors>ste</Authors>
+    <Description>Sinapsi.Opds — a generic OPDS 1.2 (Atom) catalog client + an
+      EPUB text/structure extractor. OpdsClient fetches + parses navigation and
+      acquisition feeds, follows rel="next" pagination, supports HTTP Basic or
+      anonymous auth, downloads the application/epub+zip acquisition link, and
+      diffs entry sets for incremental sync. EpubExtractor walks the EPUB spine
+      (EPUB2 toc.ncx + EPUB3 nav.xhtml) into clean, heading-structured text.
+      Point it at any OPDS library (BookLore, Calibre-Web, Kavita, Komga).
+      Part of a personal research lab; offered as-is.</Description>
+    <!-- License (Apache-2.0) inherited from Directory.Build.targets. -->
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- xhtml -> text: real EPUB content xhtml carries named HTML entities
+         (&nbsp; etc.) and, in EPUB2, unclosed void tags, both of which make the
+         BCL System.Xml.Linq parser throw. HtmlAgilityPack tolerates real-world
+         HTML. The STRUCTURAL EPUB/OPDS XML (container/OPF/nav/ncx, Atom feeds)
+         stays on the BCL parser (spec-well-formed). This is the only added dep. -->
+    <PackageReference Include="HtmlAgilityPack" Version="1.12.4" />
+  </ItemGroup>
+
+</Project>
