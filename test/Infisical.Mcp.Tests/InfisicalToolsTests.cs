@@ -22,6 +22,11 @@ public sealed class InfisicalToolsTests
         public List<(string Method, string Url, string Body)> Calls { get; } = new();
         public string ListResponseJson { get; set; } = """{"secrets":[]}""";
 
+        /// <summary>Status returned for the GET /v3/secrets/raw (list) call only. Everything
+        /// else (login, folder create, secret upsert) always answers 200 — the 404-vs-empty
+        /// behavior under test belongs to the list call alone.</summary>
+        public HttpStatusCode ListStatusCode { get; set; } = HttpStatusCode.OK;
+
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -30,6 +35,12 @@ public sealed class InfisicalToolsTests
                 : await request.Content.ReadAsStringAsync(cancellationToken);
             var url = request.RequestUri!.ToString();
             Calls.Add((request.Method.Method, url, body));
+
+            if (url.Contains("/v3/secrets/raw") && request.Method == HttpMethod.Get && ListStatusCode != HttpStatusCode.OK)
+                return new HttpResponseMessage(ListStatusCode)
+                {
+                    Content = new StringContent("{}", Encoding.UTF8, "application/json"),
+                };
 
             string json;
             if (url.Contains("/v1/auth/universal-auth/login"))
@@ -151,6 +162,24 @@ public sealed class InfisicalToolsTests
         Assert.Equal("/web/api", result.GetProperty("path").GetString());
         var names = result.GetProperty("names").EnumerateArray().Select(e => e.GetString()).ToArray();
         Assert.Equal(new[] { "DB_PASSWORD", "NATS_NKEY_SEED" }, names);
+    }
+
+    [Fact]
+    public async Task List_secrets_returns_an_empty_success_envelope_when_the_path_has_never_been_provisioned()
+    {
+        // Root-cause regression test (CanonFix-tools #53): a 404 from Infisical for a
+        // secretPath that has no folder yet must come back as a normal, successful
+        // {path, names:[]} envelope — NOT an "ok:false" error and NOT an unhandled MCP
+        // exception. This is exactly the sanctioned "does this secret already exist" check.
+        var (tools, rec) = Build();
+        rec.ListStatusCode = HttpStatusCode.NotFound;
+
+        var resultJson = await tools.list_secrets("web", "never-provisioned", CancellationToken.None);
+        var result = Parse(resultJson);
+
+        Assert.Equal("/web/never-provisioned", result.GetProperty("path").GetString());
+        Assert.Empty(result.GetProperty("names").EnumerateArray());
+        Assert.False(result.TryGetProperty("ok", out _)); // success shape, not the {ok:false,error} envelope
     }
 
     [Fact]
