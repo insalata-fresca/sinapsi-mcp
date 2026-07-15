@@ -1,0 +1,26 @@
+# ConfigSpine.Mcp — OCI image. Two-stage: dotnet SDK 8.0 (build/publish) -> aspnet 8.0 (runtime).
+# Build context is the REPO ROOT so the in-repo ProjectReferences to src/libs/ resolve; restore is
+# nuget.org-only (no private feed, no build secret). Build from the repo root:
+#   podman build --network=host -f src/servers/ConfigSpine.Mcp/Containerfile -t <img> .
+#
+# Runtime deps: bare aspnet + ca-certificates. The publish-only NATS nkey SEED, its public key, the
+# pinned NATS CA cert, and CLOUDEVENTS_* are all supplied at DEPLOY by the Quadlet (env + host
+# mounts) — never baked into the image (register-secret Path D file-based seed delivery).
+
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+COPY . .
+RUN dotnet publish src/servers/ConfigSpine.Mcp/ConfigSpine.Mcp.csproj \
+        -c Release -o /app /p:UseAppHost=false
+
+FROM mcr.microsoft.com/dotnet/aspnet:8.0
+WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /app .
+ENV DOTNET_EnableDiagnostics=0
+# Documentation only; the listen address is env-driven (CONFIG_SPINE_MCP_HOST/_PORT,
+# default 0.0.0.0:9216) and overridden by the Quadlet at deploy.
+EXPOSE 9216
+ENTRYPOINT ["dotnet", "ConfigSpine.Mcp.dll"]
