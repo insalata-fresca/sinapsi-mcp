@@ -31,6 +31,22 @@ public enum IndexerNatsMode
     Private,
 }
 
+/// <summary>Which <see cref="ISourceScanner"/> the composition root constructs
+/// (M4). <c>Git</c> is the default (unset ⇒ today's behaviour — the untouched
+/// <see cref="GitSourceScanner"/>); <c>Opds</c> selects the M4
+/// <see cref="OpdsSourceScanner"/>. Orthogonal to the worker shape + NATS mode:
+/// EITHER scanner slots behind the same seam into any worker shape.</summary>
+public enum IndexerSourceKind
+{
+    /// <summary>Default. The existing git-clone + markdown-walk source
+    /// (<see cref="GitSourceScanner"/>), completely unchanged.</summary>
+    Git,
+    /// <summary>The OPDS poll + download + extract + chunk source
+    /// (<see cref="OpdsSourceScanner"/>). Opt-in per profile; requires
+    /// <c>INDEXER_OPDS_URL</c> (fail-closed).</summary>
+    Opds,
+}
+
 /// <summary>Which "index" worker shape (if any) Program.cs should register.</summary>
 public enum IndexWorkerShape
 {

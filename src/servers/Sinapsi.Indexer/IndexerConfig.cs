@@ -163,6 +163,45 @@ internal static class IndexerConfig
             $"INDEXER_NATS_MODE='{raw}' is invalid: expected 'shared-bus', 'isolated', or 'private' (default {DefaultNatsMode}).");
     }
 
+    // -------------------------------------------------------------------
+    // Source-kind gate (M4). Selects which ISourceScanner the composition
+    // root constructs: `git` (default/unset — the EXISTING GitSourceScanner
+    // path, completely unchanged) or `opds` (the M4 OpdsSourceScanner). This
+    // is fail-closed and per-profile: a git tenant IGNORES every INDEXER_OPDS_*
+    // var entirely (a fat-fingered OPDS var cannot leak into a git tenant), and
+    // an opds tenant that omits INDEXER_OPDS_URL refuses to start (see
+    // OpdsSourceScanner.SourcesFromEnv). The default `git` keeps the shared
+    // image's four existing tenants (shared/career/cervello/learnings) byte-
+    // behaviour-unchanged — no new required env, no new default-on behaviour.
+    // -------------------------------------------------------------------
+
+    internal const string DefaultSourceKind = "git";
+
+    /// <summary>Which <see cref="ISourceScanner"/> to construct: <c>git</c>
+    /// (default, unset ⇒ back-compat) or <c>opds</c>. Any other value is rejected
+    /// (fail-closed), naming the var — a typo must not silently pick a scanner.</summary>
+    internal static IndexerSourceKind SourceKind()
+    {
+        var raw = Environment.GetEnvironmentVariable("INDEXER_SOURCE_KIND");
+        if (string.IsNullOrEmpty(raw)) return IndexerSourceKind.Git; // back-compat default
+        if (string.Equals(raw, "git", StringComparison.OrdinalIgnoreCase)) return IndexerSourceKind.Git;
+        if (string.Equals(raw, "opds", StringComparison.OrdinalIgnoreCase)) return IndexerSourceKind.Opds;
+        throw new InvalidOperationException(
+            $"INDEXER_SOURCE_KIND='{raw}' is invalid: expected 'git' or 'opds' (default {DefaultSourceKind}).");
+    }
+
+    // --- OPDS download pacing (OpdsSourceScanner) ---
+    internal const int DefaultOpdsDownloadThrottleMs = 250;
+    internal const int MinOpdsDownloadThrottleMs = 0;
+    internal const int MaxOpdsDownloadThrottleMs = 60_000;
+
+    /// <summary>Milliseconds to pause between OPDS EPUB downloads so a large
+    /// library doesn't spike disk/CPU on the shared host. Fail-closed 0..60000,
+    /// default 250. Only read on the opds source-kind path.</summary>
+    internal static int OpdsDownloadThrottleMs() =>
+        ReadInt("INDEXER_OPDS_DOWNLOAD_THROTTLE_MS",
+            DefaultOpdsDownloadThrottleMs, MinOpdsDownloadThrottleMs, MaxOpdsDownloadThrottleMs);
+
     /// <summary>Config-layer (secondary) belt-and-braces bar for <c>private</c> mode
     /// (cervello-private-events.md §4.2.4): the configured watch subject MUST be
     /// under <paramref name="allowedSubjectPrefix"/> (e.g. <c>homelab.cervello.</c>)

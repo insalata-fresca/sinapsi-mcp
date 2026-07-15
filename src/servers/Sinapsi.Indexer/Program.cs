@@ -21,14 +21,40 @@ var caps = IndexerCapabilities.FromEnvironment();
 
 builder.Services.AddSingleton<IIndexStore, PostgresIndexStore>();
 builder.Services.AddSingleton<IEmbedder, OnnxEmbedder>();
-// The SOURCE seam: today the git implementation (GitSourceScanner) is the sole
-// ISourceScanner. Registered against the interface so IndexerCore + both worker
-// shapes depend only on the seam; a future OPDS source registers a different
-// ISourceScanner here with no change to the core/workers.
-builder.Services.AddSingleton<ISourceScanner>(sp => new GitSourceScanner(
-    GitSourceScanner.ReposFromEnv(),
-    Environment.GetEnvironmentVariable("FORGE_REPO_TOKEN"),
-    sp.GetRequiredService<ILoggerFactory>().CreateLogger<GitSourceScanner>()));
+// The SOURCE seam (M4 gate: INDEXER_SOURCE_KIND, default `git`). IndexerCore +
+// both worker shapes depend ONLY on the interface, so which concrete scanner is
+// registered here is the sole difference between a git tenant and an OPDS
+// (books) tenant. Fail-closed + per-profile:
+//   * git (default/unset): the EXISTING GitSourceScanner path, byte-unchanged —
+//     the OPDS env is never read, so a fat-fingered INDEXER_OPDS_* var cannot
+//     leak into a git tenant (shared/career/cervello/learnings).
+//   * opds: the M4 OpdsSourceScanner. Requires INDEXER_OPDS_URL — omitting it
+//     THROWS at startup (OpdsSourceScanner.SourcesFromEnv, mirroring
+//     IndexerConfig.ValidatePrivateSubjectAndStream's fail-closed precedent) so
+//     an opds tenant can never silently start with zero sources.
+switch (IndexerConfig.SourceKind())
+{
+    case IndexerSourceKind.Git:
+        builder.Services.AddSingleton<ISourceScanner>(sp => new GitSourceScanner(
+            GitSourceScanner.ReposFromEnv(),
+            Environment.GetEnvironmentVariable("FORGE_REPO_TOKEN"),
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<GitSourceScanner>()));
+        break;
+    case IndexerSourceKind.Opds:
+        // Resolve (+ fail-closed validate) the OPDS source/auth BEFORE registering,
+        // so a missing INDEXER_OPDS_URL refuses to start immediately rather than
+        // deferring the throw to first use inside the worker.
+        var opdsSources = OpdsSourceScanner.SourcesFromEnv();
+        var opdsOptions = OpdsSourceScanner.ClientOptionsFromEnv();
+        var opdsThrottleMs = IndexerConfig.OpdsDownloadThrottleMs();
+        // One long-lived HttpClient for the scanner (its lifetime is the process's).
+        builder.Services.AddSingleton<ISourceScanner>(sp => new OpdsSourceScanner(
+            opdsSources,
+            new Sinapsi.Opds.OpdsClient(new HttpClient(), opdsOptions),
+            opdsThrottleMs,
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<OpdsSourceScanner>()));
+        break;
+}
 
 // --- index capability ---
 // SharedBusConsumer: the NATS-consuming IndexerWorker (push-coalesced +
