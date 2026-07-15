@@ -50,7 +50,13 @@ external dependency.
 
 ```csharp
 var client = new OpdsClient(httpClient, new OpdsClientOptions { Username = u, Password = p });
-var entries = await client.EnumerateAllAsync(feedUrl, ct);        // follows pagination
+// EnumerateAllAsync TRAVERSES navigation feeds: real OPDS roots (BookLore,
+// Calibre-Web, Kavita, Komga) are NAVIGATION feeds whose entries are catalog links
+// (All Books / Authors / Series), not books. The client descends nav sub-feeds +
+// pages rel="next" at every level, and returns the full set of ACQUISITION entries
+// de-duplicated by Id. Bounded fail-safe: cycle guard (never revisit a feed URL),
+// MaxNavigationDepth (6), and OpdsClientOptions.MaxPages as the max-feeds budget.
+var entries = await client.EnumerateAllAsync(feedUrl, ct);        // traverses nav + follows pagination
 var diff    = OpdsClient.Diff(previousSnapshot, entries);         // new / changed / removed
 foreach (var e in diff.New.Concat(diff.Changed))
     if (e.EpubLink is { } link)

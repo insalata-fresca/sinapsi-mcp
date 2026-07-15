@@ -38,6 +38,38 @@ public sealed record OpdsLink(string Href, string? Type, string? Rel, string? Ti
     /// <summary>True if this acquisition link points at an EPUB.</summary>
     public bool IsEpub =>
         Type is not null && Type.StartsWith(EpubMediaType, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The Atom media-type prefix an OPDS catalog (navigation OR acquisition)
+    /// sub-feed link carries: <c>application/atom+xml</c> (usually with a
+    /// <c>;profile=opds-catalog</c> parameter). A link into a sub-catalog has this
+    /// type; a publication acquisition link (epub/pdf) or a cover image does not.</summary>
+    public const string CatalogMediaType = "application/atom+xml";
+
+    /// <summary>Feed/entry <c>rel</c> values that are structural navigation of the
+    /// CURRENT feed, NOT a link into a child sub-catalog. Following these is how a
+    /// crawler loops back to the root (start/up) or self — the traversal must skip
+    /// them (the cycle guard is a second line of defence, but skipping is cheaper).</summary>
+    private static readonly HashSet<string> NonDescentRels = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "self", "start", "up", "search", "first", "last", "previous", "prev", "next",
+        // OPDS facet/sort/shelf/crawlable rels point sideways/at the same catalog plane,
+        // not down into a distinct book sub-feed; dedup-by-Id makes following them safe,
+        // but they are not descent edges.
+        "http://opds-spec.org/sort/new", "http://opds-spec.org/sort/popular",
+        "http://opds-spec.org/crawlable", "http://opds-spec.org/shelf",
+        "http://opds-spec.org/subscriptions", "http://opds-spec.org/featured",
+    };
+
+    /// <summary>True when this link points DOWN into a child OPDS sub-catalog feed we
+    /// should traverse: an <c>application/atom+xml</c> catalog link whose <c>rel</c> is
+    /// NOT a structural/self/start/up/search/pagination rel. Covers BookLore/Calibre-Web's
+    /// <c>rel="subsection"</c> nav entries and feed-level catalog links alike. A link with
+    /// no <c>rel</c> but a catalog type still counts (some servers omit rel on nav entries).</summary>
+    public bool IsNavigationDescent =>
+        Type is not null
+        && Type.StartsWith(CatalogMediaType, StringComparison.OrdinalIgnoreCase)
+        && !IsAcquisition
+        && (Rel is null || !NonDescentRels.Contains(Rel));
 }
 
 /// <summary>
@@ -76,6 +108,16 @@ public sealed record OpdsEntry
     /// <summary>All acquisition links on the entry (EPUB, PDF, mobi, cover thumbnails
     /// are excluded - only <c>rel</c> starting with the acquisition prefix).</summary>
     public IReadOnlyList<OpdsLink> AcquisitionLinks { get; init; } = Array.Empty<OpdsLink>();
+
+    /// <summary>Navigation-descent links on this entry: <c>application/atom+xml</c>
+    /// catalog links into a child sub-feed (a BookLore/Calibre-Web nav entry — "All
+    /// Books", an author, a series — carries exactly one). Empty for a publication
+    /// (acquisition) entry. The traversal follows these to reach acquisition feeds.</summary>
+    public IReadOnlyList<OpdsLink> NavigationLinks { get; init; } = Array.Empty<OpdsLink>();
+
+    /// <summary>True if this entry has at least one acquisition link (it is a
+    /// downloadable publication, not a pure navigation entry).</summary>
+    public bool IsAcquisition => AcquisitionLinks.Count > 0;
 
     /// <summary>The best EPUB acquisition link on this entry, or null if none. Prefers
     /// a plain <c>.../acquisition</c> or open-access rel over sample/buy/borrow.</summary>
@@ -122,6 +164,13 @@ public sealed record OpdsFeed
     /// sub-catalogs (no acquisition links). Informational; callers usually just
     /// enumerate <see cref="Entries"/> and inspect each entry's acquisition links.</summary>
     public bool IsNavigation => Entries.Count > 0 && Entries.All(e => e.AcquisitionLinks.Count == 0);
+
+    /// <summary>Feed-LEVEL navigation-descent links (resolved absolute hrefs): the
+    /// <c>application/atom+xml</c> catalog links in <see cref="Links"/> that point down
+    /// into a child sub-feed (not self/start/up/search/pagination). Some servers expose
+    /// sections as feed-level links rather than nav entries; the traversal follows both.</summary>
+    public IReadOnlyList<OpdsLink> NavigationLinks =>
+        Links.Where(l => l.IsNavigationDescent).ToList();
 }
 
 /// <summary>

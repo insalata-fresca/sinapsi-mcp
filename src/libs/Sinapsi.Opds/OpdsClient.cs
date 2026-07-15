@@ -34,7 +34,7 @@ namespace Sinapsi.Opds;
 /// are injected here (from config / a secret manager), never hardcoded in the
 /// client.
 /// </summary>
-public sealed class OpdsClientOptions
+public sealed record OpdsClientOptions
 {
     /// <summary>HTTP Basic username. Null/empty =&gt; anonymous (no Authorization header).</summary>
     public string? Username { get; init; }
@@ -49,6 +49,14 @@ public sealed class OpdsClientOptions
     /// <summary>Max EPUB download size in bytes. Default 256 MiB. A response larger
     /// than this fails fast rather than buffering unbounded into memory.</summary>
     public long MaxDownloadBytes { get; init; } = 256L * 1024 * 1024;
+
+    /// <summary>Optional sink for the traversal's fail-safe warnings (a bound was
+    /// hit: depth / feed-budget). Receives <c>(level, message)</c> where level is
+    /// <c>"warn"</c>. Null =&gt; silent. Kept as a plain delegate so
+    /// <c>Sinapsi.Opds</c> takes no logging dependency; a caller (the indexer) can
+    /// bridge it to <c>ILogger</c>. The traversal never throws on a bound — it logs
+    /// (if a sink is set) and stops that branch.</summary>
+    public Action<string, string>? Log { get; init; }
 
     /// <summary>True when Basic auth is configured.</summary>
     public bool HasBasicAuth => !string.IsNullOrEmpty(Username);
@@ -80,6 +88,10 @@ public sealed class OpdsClient
         _options = options ?? new OpdsClientOptions();
     }
 
+    private const string LogLevelWarn = "warn";
+
+    private void _log(string level, string message) => _options.Log?.Invoke(level, message);
+
     /// <summary>Fetch + parse ONE OPDS feed page. Applies Basic auth when configured.
     /// The returned feed's <see cref="OpdsFeed.NextHref"/> is the absolute next-page
     /// URL (or null). Throws on non-success status or malformed feed XML.</summary>
@@ -98,11 +110,22 @@ public sealed class OpdsClient
         return OpdsFeedParser.Parse(xml, uri);
     }
 
+    // --- traversal bounds (fail-safe caps) ----------------------------------
+    // These bound the OPDS crawl so a mis-behaving / adversarial server can never
+    // make the client crawl forever or fan out unboundedly on the shared CT132
+    // host. Correctness is dedup-by-Id (over-traversal only costs time); these are
+    // the hard stops. MaxPages (OpdsClientOptions) is the overall feed/page budget.
+
+    /// <summary>Deepest navigation nesting the traversal descends (root=0). A real
+    /// library is 2-3 deep; 6 tolerates faceted catalogs without infinite descent.</summary>
+    public const int MaxNavigationDepth = 6;
+
     /// <summary>
-    /// Enumerate EVERY entry across all pages of a feed, following
-    /// <c>rel="next"</c> up to <see cref="OpdsClientOptions.MaxPages"/>. Yields
-    /// pages lazily so a caller can stream a large catalog. Guards against a
-    /// pagination loop (a next href equal to an already-visited page).
+    /// Enumerate EVERY entry across all pages of a SINGLE feed (no navigation
+    /// descent), following <c>rel="next"</c> up to <see cref="OpdsClientOptions.MaxPages"/>.
+    /// Yields entries lazily. Guards against a pagination loop (a next href equal to
+    /// an already-visited page). This is the flat per-feed primitive; use
+    /// <see cref="EnumerateAcquisitionEntriesAsync"/> to traverse navigation feeds.
     /// </summary>
     public async IAsyncEnumerable<OpdsEntry> EnumerateEntriesAsync(
         string feedUrl,
@@ -124,13 +147,128 @@ public sealed class OpdsClient
         }
     }
 
-    /// <summary>Materialise <see cref="EnumerateEntriesAsync"/> into a full list
-    /// (convenience for callers that want the whole catalog for a diff).</summary>
+    /// <summary>
+    /// Traverse an OPDS catalog from <paramref name="rootUrl"/> and yield every
+    /// distinct ACQUISITION (publication) entry reachable from it, de-duplicated by
+    /// <see cref="OpdsEntry.Id"/>. OPDS roots are almost always NAVIGATION feeds
+    /// (BookLore/Calibre-Web/Kavita/Komga): their entries are catalog links (All
+    /// Books, Authors, Series, ...) with no acquisition links. This method:
+    /// <list type="bullet">
+    /// <item>Fetches each feed and PARTITIONS its entries: acquisition entries are
+    /// yielded (once, deduped by Id); navigation entries (+ feed-level navigation
+    /// links) are queued as child sub-feeds to descend into.</item>
+    /// <item>Follows <c>rel="next"</c> pagination at EVERY feed level (via
+    /// <see cref="EnumerateEntriesAsync"/> on each feed URL).</item>
+    /// <item>Is BOUNDED, fail-safe: a cycle guard (visited absolute feed URLs are
+    /// never revisited — servers link back with up/start), a max depth
+    /// (<see cref="MaxNavigationDepth"/>), and the overall feed/page budget
+    /// <see cref="OpdsClientOptions.MaxPages"/> as a max-feeds-visited cap. Hitting a
+    /// bound logs a warning and stops that branch — never an infinite crawl.</item>
+    /// </list>
+    /// A plain acquisition-root feed (no navigation entries) behaves exactly like
+    /// <see cref="EnumerateEntriesAsync"/> did (back-compat): its entries are yielded
+    /// and there is nothing to descend into.
+    /// </summary>
+    public async IAsyncEnumerable<OpdsEntry> EnumerateAcquisitionEntriesAsync(
+        string rootUrl,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    {
+        // Cycle guard across the WHOLE traversal: absolute feed URLs already fetched.
+        var visitedFeeds = new HashSet<string>(StringComparer.Ordinal);
+        // Dedup acquisition entries by Id (a book appears under All-Books AND its
+        // Author/Series facet — count it once).
+        var yieldedIds = new HashSet<string>(StringComparer.Ordinal);
+        // BFS frontier of (feedUrl, depth). BFS so shallow (usually richer) feeds
+        // are visited before deep facet chains when a budget cap bites.
+        var frontier = new Queue<(string Url, int Depth)>();
+        frontier.Enqueue((rootUrl, 0));
+
+        int feedsVisited = 0;
+
+        while (frontier.Count > 0)
+        {
+            ct.ThrowIfCancellationRequested();
+            var (url, depth) = frontier.Dequeue();
+
+            if (!visitedFeeds.Add(url))
+                continue; // already crawled this exact feed URL — cycle guard
+
+            if (feedsVisited >= _options.MaxPages)
+            {
+                _log(LogLevelWarn,
+                    $"OPDS traversal hit MaxPages feed-budget ({_options.MaxPages}) at '{url}' — stopping crawl (partial result).");
+                break;
+            }
+
+            // Fetch this feed + all its rel="next" pages as ONE logical feed. Collect
+            // the child sub-feed URLs to descend into AFTER fully paging this level.
+            var childUrls = new List<string>();
+            OpdsFeed page;
+            string? pageUrl = url;
+            var pageSeen = new HashSet<string>(StringComparer.Ordinal);
+            int pagesHere = 0;
+
+            while (pageUrl is not null && pagesHere < _options.MaxPages && pageSeen.Add(pageUrl))
+            {
+                ct.ThrowIfCancellationRequested();
+                page = await FetchFeedAsync(pageUrl, ct).ConfigureAwait(false);
+                feedsVisited++;
+
+                foreach (var entry in page.Entries)
+                {
+                    if (entry.IsAcquisition)
+                    {
+                        // Acquisition (publication) entry — yield once, deduped by Id.
+                        if (yieldedIds.Add(entry.Id))
+                            yield return entry;
+                    }
+                    else
+                    {
+                        // Navigation entry — queue each of its descent links as a child feed.
+                        foreach (var nav in entry.NavigationLinks)
+                            if (!string.IsNullOrEmpty(nav.Href))
+                                childUrls.Add(nav.Href);
+                    }
+                }
+
+                // Feed-LEVEL navigation links (sections exposed as feed links, not entries).
+                foreach (var nav in page.NavigationLinks)
+                    if (!string.IsNullOrEmpty(nav.Href))
+                        childUrls.Add(nav.Href);
+
+                pagesHere++;
+                pageUrl = page.NextHref;
+            }
+
+            // Enqueue children for the next depth — unless the depth cap is reached.
+            if (childUrls.Count > 0)
+            {
+                if (depth + 1 > MaxNavigationDepth)
+                {
+                    _log(LogLevelWarn,
+                        $"OPDS traversal hit MaxNavigationDepth ({MaxNavigationDepth}) at '{url}' — not descending into {childUrls.Count} sub-feed(s).");
+                }
+                else
+                {
+                    foreach (var child in childUrls)
+                        if (!visitedFeeds.Contains(child)) // cheap pre-filter; Add still guards on dequeue
+                            frontier.Enqueue((child, depth + 1));
+                }
+            }
+        }
+    }
+
+    /// <summary>Materialise <see cref="EnumerateAcquisitionEntriesAsync"/> into a
+    /// full de-duplicated list of ACQUISITION entries reachable from
+    /// <paramref name="feedUrl"/> — traversing navigation sub-feeds. This is the
+    /// method M4's <c>OpdsSourceScanner</c> calls; its signature is unchanged, but it
+    /// now traverses (a nav root yields the whole library instead of 0 books). A
+    /// plain acquisition root still returns exactly its entries (back-compat).</summary>
     public async Task<IReadOnlyList<OpdsEntry>> EnumerateAllAsync(
         string feedUrl, CancellationToken ct = default)
     {
         var all = new List<OpdsEntry>();
-        await foreach (var e in EnumerateEntriesAsync(feedUrl, ct).ConfigureAwait(false))
+        await foreach (var e in EnumerateAcquisitionEntriesAsync(feedUrl, ct).ConfigureAwait(false))
             all.Add(e);
         return all;
     }
