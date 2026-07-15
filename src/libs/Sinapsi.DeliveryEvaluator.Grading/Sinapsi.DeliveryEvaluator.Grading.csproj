@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RootNamespace>Sinapsi.DeliveryEvaluator.Grading</RootNamespace>
+
+    <!-- Packable like the other src/libs (Mission B2 grading + stream-diff framework). -->
+    <IsPackable>true</IsPackable>
+    <PackageId>Sinapsi.DeliveryEvaluator.Grading</PackageId>
+    <Authors>ste</Authors>
+    <Description>Sinapsi.DeliveryEvaluator.Grading — the Mission B2 "evaluate-the-evaluator"
+      harness (home-server docs/64 §3). Grades the C1 independent delivery risk evaluator
+      against the B1 golden corpus via C1's own CorpusScenarioAdapter: accuracy, the
+      escalation-recall GATE on the trust-plane MUST-escalate stratum, false-refusal/
+      over-block, adversarial-subset accuracy, and run-twice variance — into a
+      deterministic, committable ScoreCard. Also the shadow-vs-would-enforce StreamDiff
+      harness that auto-fails promotion on any deviation. A personal research-lab library;
+      offered as-is.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Sinapsi.DeliveryEvaluator.Grading.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Grades the C1 evaluator BY REUSING it (CorpusScenarioAdapter + the classifier). -->
+    <ProjectReference Include="..\Sinapsi.DeliveryEvaluator\Sinapsi.DeliveryEvaluator.csproj" />
+  </ItemGroup>
+
+</Project>
