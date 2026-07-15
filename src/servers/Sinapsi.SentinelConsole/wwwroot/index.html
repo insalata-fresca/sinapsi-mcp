@@ -63,6 +63,32 @@
   .chain{grid-column:1/-1;margin:6px 0 2px;padding:8px 10px;border-left:2px solid var(--accent);background:#0d1b2a;border-radius:4px}
   .chain .step{color:var(--dim)} .chain .step b{color:var(--text)}
   .empty{padding:24px;text-align:center;color:var(--dim)}
+  /* pending-approval cards (E1.7) */
+  .cards{display:flex;flex-direction:column;gap:10px}
+  .acard{border:1px solid var(--line);border-radius:8px;background:var(--panel);padding:12px 14px}
+  .acard .ahead{display:flex;align-items:baseline;gap:10px;margin-bottom:6px;flex-wrap:wrap}
+  .acard .atitle{font-size:13px;font-weight:700;color:var(--text)}
+  .acard .aid{color:var(--dim);font-size:11px}
+  .risk{padding:1px 7px;border-radius:9px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;border:1px solid transparent}
+  .risk.green{color:var(--allow);border-color:#238636;background:#0f2417}
+  .risk.yellow{color:var(--approval);border-color:#9e6a03;background:#241a06}
+  .risk.red{color:var(--deny);border-color:#8e2c26;background:#2a1211}
+  .aprov{color:var(--dim);font-size:11px;margin-bottom:8px}
+  .aprov b{color:var(--text);font-weight:600}
+  .aparams{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font-size:12px;margin-bottom:10px}
+  .aparams .prow{display:flex;gap:8px}
+  .aparams .pkey{color:var(--dim);min-width:110px}
+  .aparams .pval{color:var(--text);word-break:break-all}
+  .aactions{display:flex;gap:8px;align-items:center}
+  .aactions button{font:inherit;border-radius:6px;padding:6px 14px;cursor:pointer;border:1px solid transparent;font-weight:600}
+  .btn-approve{background:#0f2417;border-color:#238636;color:var(--allow)}
+  .btn-approve:hover{background:#123a1e}
+  .btn-reject{background:#2a1211;border-color:#8e2c26;color:var(--deny)}
+  .btn-reject:hover{background:#3a1815}
+  .aactions button:disabled{opacity:.5;cursor:default}
+  .aresult{font-size:11px;color:var(--dim)}
+  .aresult.err{color:var(--deny)}
+  .aresult.ok{color:var(--allow)}
 </style>
 </head>
 <body>
@@ -74,9 +100,17 @@
     <span>viewers <b id="clients">0</b></span>
     <span><span id="ddot" class="dot down"></span><span id="dconn">deploy bus…</span></span>
     <span>deploys <b id="dtotal">0</b></span>
+    <span><span id="adot" class="dot down"></span><span id="aconn">approval bus…</span></span>
+    <span>approvals <b id="atotal">0</b></span>
   </div>
 </header>
 <main>
+  <h2>Pending approvals — operator action required</h2>
+  <div class="cards" id="pending"><div class="empty">no open requests.</div></div>
+
+  <h3 style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--dim);margin:18px 0 8px">Approval lifecycle</h3>
+  <div class="feed" id="approvalfeed"><div class="empty">no approval-bridge events yet — they stream in as agents request + operators decide.</div></div>
+
   <h2>Deploys — release → applied, per service</h2>
   <table class="posture"><thead><tr><th>Service</th><th>Last released</th><th>Last applied</th><th>Result</th></tr></thead>
     <tbody id="deploystate"><tr><td colspan="4" class="none">waiting for release/deploy events…</td></tr></tbody>
@@ -182,6 +216,9 @@ async function refreshStats(){
     $('#dtotal').textContent=s.deploysTotal ?? 0;
     const dup=s.deployBusConnected; $('#ddot').className='dot '+(dup?'up':'down');
     $('#dconn').textContent=dup?'deploy bus connected':'deploy bus disconnected';
+    $('#atotal').textContent=s.approvalsTotal ?? 0;
+    const aup=s.approvalBusConnected; $('#adot').className='dot '+(aup?'up':'down');
+    $('#aconn').textContent=aup?'approval bus connected':'approval bus disconnected';
   }catch{}
 }
 
@@ -222,6 +259,100 @@ async function refreshDeployFeed(){
   }catch{}
 }
 
+// ── Pending approvals (E1.7) — cards proxied live from the broker's GET /pending ───────────────
+// Renders the registry title + TYPED params + provenance (requester identity, action_id, expiry).
+// The card NEVER renders an agent free-text rationale as an actionable field — there isn't one:
+// the broker's envelope carries only action_id + schema-validated params (docs/66 §8 T4).
+function fmtExpiry(iso){
+  const ms = new Date(iso).getTime() - Date.now();
+  if (!isFinite(ms)) return '';
+  if (ms <= 0) return 'expired';
+  const s = Math.round(ms/1000);
+  return s < 60 ? `expires in ${s}s` : `expires in ${Math.round(s/60)}m`;
+}
+function paramsHtml(params){
+  if (params == null || typeof params !== 'object' || !Object.keys(params).length)
+    return '<div class="prow"><span class="pkey">(no params)</span></div>';
+  return Object.entries(params).map(([k,v]) =>
+    `<div class="prow"><span class="pkey">${esc(k)}</span><span class="pval">${esc(typeof v==='object'?JSON.stringify(v):String(v))}</span></div>`
+  ).join('');
+}
+function cardHtml(it){
+  const risk = (it.riskTier||'green').toLowerCase();
+  return `<div class="acard" data-request-id="${esc(it.requestId)}">
+    <div class="ahead">
+      <span class="atitle">${esc(it.title||it.actionId)}</span>
+      <span class="risk ${risk}">${esc(risk)}</span>
+      <span class="aid">${esc(it.actionId)}</span>
+    </div>
+    <div class="aprov">requested by <b>${esc(it.requesterIdentity)}</b> · action <b>${esc(it.actionId)}</b> · <b>${esc(fmtExpiry(it.expiresAt))}</b></div>
+    <div class="aparams">${paramsHtml(it.params)}</div>
+    <div class="aactions">
+      <button class="btn-approve" data-act="approve">Approve</button>
+      <button class="btn-reject" data-act="reject">Reject</button>
+      <span class="aresult"></span>
+    </div>
+  </div>`;
+}
+async function refreshPending(){
+  try{
+    const res = await (await fetch('/api/approvals/pending')).json();
+    const box = $('#pending');
+    if (!res.brokerReachable){ box.innerHTML = '<div class="empty">approval-bridge broker unreachable — nothing to show (fails safe, not open).</div>'; return; }
+    if (!res.items.length){ box.innerHTML = '<div class="empty">no open requests.</div>'; return; }
+    box.innerHTML = res.items.map(cardHtml).join('');
+  }catch{}
+}
+$('#pending').addEventListener('click', async e=>{
+  const btn = e.target.closest('button[data-act]'); if (!btn) return;
+  const card = e.target.closest('.acard'); const requestId = card.dataset.requestId;
+  const act = btn.dataset.act; const out = card.querySelector('.aresult');
+  card.querySelectorAll('button').forEach(b=>b.disabled=true);
+  out.textContent = act==='approve' ? 'approving…' : 'rejecting…'; out.className='aresult';
+  try{
+    const r = await fetch(`/api/approvals/${act}`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({request_id: requestId})
+    });
+    const body = await r.json().catch(()=>({}));
+    if (r.ok){ out.textContent = act==='approve' ? 'approved' : 'rejected'; out.className='aresult ok'; setTimeout(refreshPending, 800); }
+    else { out.textContent = 'broker refused: ' + (body.rejected || body.error || r.status); out.className='aresult err'; card.querySelectorAll('button').forEach(b=>b.disabled=false); }
+  }catch{
+    out.textContent = 'network error'; out.className='aresult err';
+    card.querySelectorAll('button').forEach(b=>b.disabled=false);
+  }
+});
+
+// ── Approval lifecycle feed (E1.7) — from the BUS: requested→approved/rejected→executed/expired,
+// correlation-id joined (requirement 3). This is the audit trail; the cards above are current state.
+function arowHtml(e){
+  return `<div class="row" data-corr="${esc(e.correlationId)}" style="grid-template-columns:82px 120px 1fr 150px 120px">
+    <span class="t">${hhmmss(e.time)}</span>
+    <span class="v ${vClass(e.verdict==='requested'?'requiresApproval':e.verdict==='rejected'||e.verdict==='expired'?'deny':'allow')}">${esc(e.verdict)}</span>
+    <span class="cmd" title="${esc(e.reason)}"><span class="verb">${esc(e.actionId)}</span> ${esc(e.requester)}${e.approver?' → '+esc(e.approver):''}</span>
+    <span class="t">${esc(e.resultStatus||'')}</span>
+    <span class="corr" title="${esc(e.correlationId)}">${esc((e.correlationId||'').slice(0,8))}</span></div>`;
+}
+async function refreshApprovalFeed(){
+  try{
+    const rows = await (await fetch('/api/approvals/recent?n=100')).json();
+    const feed = $('#approvalfeed');
+    if (!rows.length){ feed.innerHTML = '<div class="empty">no approval-bridge events yet — they stream in as agents request + operators decide.</div>'; return; }
+    feed.innerHTML = rows.map(arowHtml).join('');
+  }catch{}
+}
+$('#approvalfeed').addEventListener('click', async e=>{
+  const row=e.target.closest('.row'); if(!row) return;
+  const existing=row.nextElementSibling;
+  if(existing && existing.classList.contains('chain')){ existing.remove(); return; }
+  const corr=row.dataset.corr; if(!corr) return;
+  const chain=await (await fetch('/api/approvals/chain/'+encodeURIComponent(corr))).json();
+  const steps = chain.length ? chain.map(c=>
+    `<div class="step"><b>${esc(c.verdict.toUpperCase())}</b> ${esc(c.reason||'')}${c.approver?' — approver: '+esc(c.approver):''}</div>`).join('')
+    : '<div class="step">no other steps recorded for this request yet.</div>';
+  row.insertAdjacentHTML('afterend', `<div class="chain">${steps}</div>`);
+});
+
 // backfill the feed with recent history on load (newest-first from the API →
 // iterate oldest-first so prepend leaves newest on top), THEN stream live.
 async function backfill(){
@@ -238,8 +369,10 @@ function connect(){
 }
 backfill().then(connect);
 refreshPosture(); refreshStats(); refreshDeployState(); refreshDeployFeed();
+refreshPending(); refreshApprovalFeed();
 setInterval(refreshPosture,4000); setInterval(refreshStats,4000);
 setInterval(refreshDeployState,4000); setInterval(refreshDeployFeed,4000);
+setInterval(refreshPending,3000); setInterval(refreshApprovalFeed,4000);
 </script>
 </body>
 </html>

@@ -26,6 +26,11 @@ this up live is a later, operator-gated trust-boundary flip (docs/66 §10).
 6. **EMIT** `requested` / `approved` / `rejected` / `executed` / `expired` FACTS as CloudEvents on
    `homelab.security.approval.<action_id>.<verdict>`, `correlation_id`-joined; unclassifiable → the C2
    `DeadLetterRouter` (deny-by-default, never silent-drop).
+7. **PENDING QUEUE READ** (`GET /pending`, added for E1.7). A READ-ONLY projection joining every
+   currently-`pending` store entry with its registry `ActionSpec` — the `title` + TYPED params +
+   provenance (requester identity, action_id, expiry) the Sentinel Console renders as a pending-approval
+   card. Performs no state transition and enforces nothing; the security checks live exclusively in
+   `ApproveAsync` / `RejectAsync` (item 4).
 
 ## The three security invariants (proven by tests)
 
@@ -43,5 +48,7 @@ this up live is a later, operator-gated trust-boundary flip (docs/66 §10).
 
 ## Out of scope
 
-Executor (E1.4), Console UI (E1.7), agent MCP request tool (E1.6), live approve-channel authz (E1.5),
-go-live cutover. No real action can execute from this service.
+Executor (E1.4), agent MCP request tool (E1.6), live approve-channel authz (E1.5), go-live cutover. No
+real action can execute from this service. (E1.7, the Sentinel Console UI, consumes this broker's `GET
+/pending` + `POST /approve` / `POST /reject` — see `Sinapsi.SentinelConsole`'s README — and added the
+`GET /pending` read endpoint here as the minimal plumbing that consumer needed.)

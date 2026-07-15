@@ -13,6 +13,8 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <!-- BrokerClient (E1.7) logs via ILogger<T> — NullLogger<T> stands in for tests. -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -22,6 +24,12 @@
     <Compile Include="../../src/servers/Sinapsi.SentinelConsole/ReadModel.cs" />
     <Compile Include="../../src/servers/Sinapsi.SentinelConsole/DeployEvent.cs" />
     <Compile Include="../../src/servers/Sinapsi.SentinelConsole/DeployModel.cs" />
+    <!-- Operator Approval Bridge lane (E1.7). BrokerClient depends only on HttpClient +
+         ILogger<T> (both available without the Sdk.Web service project), so it compiles
+         directly here too, exercised against a fake HttpMessageHandler (no live broker). -->
+    <Compile Include="../../src/servers/Sinapsi.SentinelConsole/ApprovalEvent.cs" />
+    <Compile Include="../../src/servers/Sinapsi.SentinelConsole/ApprovalQueueModel.cs" />
+    <Compile Include="../../src/servers/Sinapsi.SentinelConsole/BrokerClient.cs" />
   </ItemGroup>
 
 </Project>
