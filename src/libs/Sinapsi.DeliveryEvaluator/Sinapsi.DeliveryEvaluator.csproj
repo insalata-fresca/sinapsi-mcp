@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RootNamespace>Sinapsi.DeliveryEvaluator</RootNamespace>
+
+    <!-- Packed + consumed as a NuGet package (like the other src/libs), so Mission
+         B2 (evaluate-the-evaluator) can PackageReference the exact version it grades. -->
+    <IsPackable>true</IsPackable>
+    <PackageId>Sinapsi.DeliveryEvaluator</PackageId>
+    <!-- Version inherited from Directory.Build.props (repo-wide pin). -->
+    <Authors>ste</Authors>
+    <Description>Sinapsi.DeliveryEvaluator — the INDEPENDENT delivery risk evaluator
+      (home-server docs/64 §2-3, Mission C1). A DETERMINISTIC classifier (NOT an LLM)
+      that, from a change (diff + metadata), computes its risk tier by path/content
+      rules, detects trust-plane touch, and emits an allow/requiresApproval/deny verdict
+      per the docs/65 rubric into the docs/61 §8 decision envelope. Structurally a
+      different mechanism from any agent that makes/advocates a change (DDIA correlated
+      -fault; a 2nd LLM pass is not an independent vote). Fail-safe default =
+      requiresApproval; the trust plane never self-clears to allow; the diff/PR body is
+      untrusted input. A personal research-lab library; offered as-is.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Sinapsi.DeliveryEvaluator.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Reuse the C2/C3 EventPlane contracts: the shared verdict vocabulary
+         (DecisionEnvelopeContract) and the verdict-fact / DLQ subject discipline
+         (EventPlaneChannels). Feed-free intra-repo project reference. -->
+    <ProjectReference Include="..\Sinapsi.Nats\Sinapsi.Nats.csproj" />
+  </ItemGroup>
+
+</Project>
