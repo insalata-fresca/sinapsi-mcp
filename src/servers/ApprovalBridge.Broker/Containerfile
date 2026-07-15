@@ -1,0 +1,35 @@
+# ApprovalBridge.Broker — OCI image (DORMANT / shadow deploy, home-server docs/66 E1.3).
+#
+# Two-stage: dotnet SDK 8.0 (build/publish) -> aspnet 8.0 (runtime). Build context is the
+# REPO ROOT so the in-repo ProjectReference to src/libs/Sinapsi.Nats resolves; restore is
+# nuget.org-only (no private feed, no build secret). Build from the repo root:
+#   podman build --network=host -f src/servers/ApprovalBridge.Broker/Containerfile -t <img> .
+#
+# DEPLOY POSTURE: this broker holds coordination authority but NEVER a target secret. It ships
+# DORMANT — dispatch is the C2 NullActCommandDispatcher (deny-by-default), live approve-channel
+# authz (E1.5) is deferred, and no executor (E1.4) exists. Standing it up live is a later,
+# operator-gated trust-boundary flip (docs/66 §10). No build-image CI workflow publishes this yet.
+
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+COPY . .
+RUN dotnet publish src/servers/ApprovalBridge.Broker/ApprovalBridge.Broker.csproj \
+        -c Release -o /app /p:UseAppHost=false
+
+FROM mcr.microsoft.com/dotnet/aspnet:8.0
+WORKDIR /app
+# ca-certificates: outbound TLS to the NATS bus (only when BRIDGE_SHADOW_LOCAL_ONLY=false).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /app .
+# Non-root by default (rootless-podman friendly). A Quadlet may override to User=0 at deploy so
+# the process can read a 0600 NATS seed — parity with the other Sinapsi.Nats daemons.
+RUN useradd --system --no-create-home --uid 10013 broker
+USER broker
+ENV ASPNETCORE_URLS=http://0.0.0.0:8013 \
+    BRIDGE_SHADOW_LOCAL_ONLY=true \
+    DOTNET_EnableDiagnostics=0
+# The listen address is env-driven via ASPNETCORE_URLS (Kestrel); overridable by the Quadlet.
+EXPOSE 8013
+ENTRYPOINT ["dotnet", "ApprovalBridge.Broker.dll"]

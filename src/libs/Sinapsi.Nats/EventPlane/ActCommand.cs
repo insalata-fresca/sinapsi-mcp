@@ -9,6 +9,13 @@ public enum ActCommandKind
     MergePullRequest,
     /// <summary>Deploy an already-merged, CI-green change.</summary>
     Deploy,
+    /// <summary>Execute a target-side handler for an operator-approved, allowlisted action
+    /// (the Operator Approval Bridge act-path, home-server <c>docs/66 §3.4</c>). Additive: the
+    /// approval-bridge broker (E1.3) reuses this same rejectable act-command seam and its
+    /// deny-by-default <see cref="NullActCommandDispatcher"/> so the broker can dispatch an
+    /// approved action to an executor without holding any target secret. The executor itself
+    /// (E1.4) is not built — the null dispatcher rejects every kind, so this dispatches nothing.</summary>
+    ApprovalBridgeExecute,
 }
 
 /// <summary>
@@ -43,6 +50,7 @@ public sealed record ActCommand(
     {
         ActCommandKind.MergePullRequest => "merge-pr",
         ActCommandKind.Deploy => "deploy",
+        ActCommandKind.ApprovalBridgeExecute => "approval-execute",
         _ => "unknown",
     };
 }
