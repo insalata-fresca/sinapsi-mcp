@@ -151,6 +151,53 @@ public sealed class McpBootSmokeTests
     }
 
     [Fact]
+    public async Task OpdsSourceKind_ConstructsCleanly_AndStillServesAllFourTools()
+    {
+        // M4: the opds source-kind profile (a books tenant) is a full default-caps
+        // worker whose ISourceScanner is the OpdsSourceScanner rather than the git
+        // one. This asserts two things the 2026-07-04 zero-tools guard now covers
+        // for that shape:
+        //   (a) the OPDS scanner composes cleanly from env (the composition-root
+        //       path Program.cs takes when INDEXER_SOURCE_KIND=opds), and
+        //   (b) the MCP host still serves the exact 4 tools — the OPDS gate is a
+        //       source-side swap and must not perturb the read/publish surface.
+        var prevKind = Environment.GetEnvironmentVariable("INDEXER_SOURCE_KIND");
+        var prevUrl = Environment.GetEnvironmentVariable("INDEXER_OPDS_URL");
+        try
+        {
+            Environment.SetEnvironmentVariable("INDEXER_SOURCE_KIND", "opds");
+            Environment.SetEnvironmentVariable("INDEXER_OPDS_URL", "http://booklore.test/opds/books");
+
+            // (a) The source-kind gate resolves to opds and the scanner constructs
+            //     from the SAME env helpers Program.cs uses — no throw.
+            Assert.Equal(IndexerSourceKind.Opds, IndexerConfig.SourceKind());
+            var scanner = new OpdsSourceScanner(
+                OpdsSourceScanner.SourcesFromEnv(),
+                new Sinapsi.Opds.OpdsClient(new HttpClient(), OpdsSourceScanner.ClientOptionsFromEnv()),
+                IndexerConfig.OpdsDownloadThrottleMs(),
+                Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
+            Assert.Single(((ISourceScanner)scanner).Sources);
+
+            // (b) Default caps (books tenant runs the full read+publish surface) —
+            //     tools/list still serves all four.
+            var caps = new IndexerCapabilities(
+                index: true, searchMcp: true, searchHttp: true, learnPublish: true, natsIsolated: false);
+            using var server = BuildMcpHost(caps);
+
+            var names = await ListToolNamesAsync(server);
+
+            Assert.Equal(
+                new[] { "get_learning", "publish_learning", "search_index", "semantic_search" },
+                names);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("INDEXER_SOURCE_KIND", prevKind);
+            Environment.SetEnvironmentVariable("INDEXER_OPDS_URL", prevUrl);
+        }
+    }
+
+    [Fact]
     public async Task SearchToolsStillServed_WhenNatsIsolated()
     {
         // S50: an isolated tenant (index off, NATS isolated) still SERVES the search
