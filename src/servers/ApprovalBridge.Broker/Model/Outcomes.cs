@@ -33,7 +33,9 @@ internal sealed record RequestOutcome(bool Accepted, string RequestId, BrokerRej
 /// <param name="Dispatched">True when the act-command was handed to the dispatcher seam.</param>
 /// <param name="ExecutorAccepted">The dispatcher's disposition (false under deny-by-default).</param>
 /// <param name="Reason">Refusal reason, or the dispatcher's reject reason.</param>
-internal sealed record ApprovalOutcome(bool Accepted, bool Dispatched, bool ExecutorAccepted, BrokerRejectReason Reason, string Detail)
+/// <param name="ResultJson">The executor's NON-SECRET result (conforming to <c>result_schema</c>), or null when
+/// nothing executed (deny-by-default) — never a secret or token (docs/66 §3.4, I2).</param>
+internal sealed record ApprovalOutcome(bool Accepted, bool Dispatched, bool ExecutorAccepted, BrokerRejectReason Reason, string Detail, string? ResultJson = null)
 {
     public static ApprovalOutcome Deny(BrokerRejectReason reason) => new(false, false, false, reason, string.Empty);
 }

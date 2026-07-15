@@ -22,6 +22,11 @@
          DecisionEnvelopeContract) + the CloudEvents publisher come from the in-repo lib via
          ProjectReference, so the solution builds with nuget.org only (no private feed). -->
     <ProjectReference Include="../../libs/Sinapsi.Nats/Sinapsi.Nats.csproj" />
+    <!-- The E1.4 executor SDK. Referenced so the broker CAN bind IActCommandDispatcher to the real
+         target-side ExecutorDispatcher when explicitly configured live — the DEFAULT stays the C2
+         NullActCommandDispatcher (dormant / deny-by-default). Selecting live is a trust-boundary flip,
+         out of scope for E1.4. -->
+    <ProjectReference Include="../ApprovalBridge.Executor/ApprovalBridge.Executor.csproj" />
     <!-- Server-side param_schema validation (docs/66 §3.1: params ∈ param_schema, deny-by-default). -->
     <PackageReference Include="JsonSchema.Net" Version="7.3.4" />
     <!-- Parse the git-backed allowlist YAML (policies/approval-bridge/actions/<id>.yaml). -->

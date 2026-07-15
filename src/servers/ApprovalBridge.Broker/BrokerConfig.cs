@@ -26,6 +26,16 @@ internal sealed record BrokerConfig
     /// the fully dormant posture. Set false only once a durable bus + KV are provisioned.</summary>
     public bool ShadowLocalOnly { get; init; } = true;
 
+    /// <summary>When true, bind <c>IActCommandDispatcher</c> to the real target-side E1.4
+    /// <c>ExecutorDispatcher</c> instead of the C2 <c>NullActCommandDispatcher</c>. DEFAULT FALSE —
+    /// the dormant / deny-by-default posture. Flipping this to true is a trust-boundary flip
+    /// (always-escalate, docs/66 §10; <c>CLAUDE.md</c> rule 7/8) and is out of scope for E1.4.</summary>
+    public bool ExecutorLive { get; init; }
+
+    /// <summary>Root directory of per-target-identity Path-D secret files, used only when
+    /// <see cref="ExecutorLive"/> is true (<c>&lt;root&gt;/&lt;target-identity&gt;/&lt;SECRET_NAME&gt;</c>, 0600).</summary>
+    public string ExecutorSecretsRoot { get; init; } = string.Empty;
+
     public NatsConnectionOptions Nats { get; init; } = new();
 
     public static BrokerConfig FromEnvironment() => new()
@@ -34,6 +44,8 @@ internal sealed record BrokerConfig
         ActionsDir = Env("BRIDGE_ACTIONS_DIR") ?? string.Empty,
         EventSource = Env("BRIDGE_EVENT_SOURCE") ?? "approval-bridge-broker://shadow",
         ShadowLocalOnly = (Env("BRIDGE_SHADOW_LOCAL_ONLY") ?? "true").Equals("true", StringComparison.OrdinalIgnoreCase),
+        ExecutorLive = (Env("BRIDGE_EXECUTOR_LIVE") ?? "false").Equals("true", StringComparison.OrdinalIgnoreCase),
+        ExecutorSecretsRoot = Env("BRIDGE_EXECUTOR_SECRETS_ROOT") ?? string.Empty,
         Nats = NatsConnectionOptions.FromEnvironment(),
     };
 

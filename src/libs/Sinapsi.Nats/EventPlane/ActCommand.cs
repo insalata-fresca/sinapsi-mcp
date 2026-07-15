@@ -34,13 +34,20 @@ public enum ActCommandKind
 /// <param name="CorrelationId">The verdict/request trace id this act descends from.</param>
 /// <param name="RequestedBy">The identity that issued the command (audit).</param>
 /// <param name="Reason">Human-readable justification (audit).</param>
+/// <param name="Payload">Optional act-payload. For <see cref="ActCommandKind.ApprovalBridgeExecute"/>
+/// this carries the <c>action_id</c> + the schema-validated, NON-SECRET params the target-side
+/// executor needs to run (home-server <c>docs/66 §3.4</c>: "dispatches (action_id, params) … over an
+/// authenticated channel carrying no secret"). It is additive and defaults to <c>null</c> so the
+/// merge-pr / deploy kinds — and any pre-existing caller — are unaffected. It never carries a target
+/// secret: the seal is that the secret is read target-side by the executor, never dispatched (I2).</param>
 public sealed record ActCommand(
     string CommandId,
     ActCommandKind Kind,
     string Target,
     string CorrelationId,
     string RequestedBy,
-    string Reason)
+    string Reason,
+    ActPayload? Payload = null)
 {
     /// <summary>The work-queue subject this command belongs on, under
     /// <see cref="EventPlaneChannels.ActCommandSubjectRoot"/> — never a verdict-fact subject.</summary>
@@ -54,6 +61,19 @@ public sealed record ActCommand(
         _ => "unknown",
     };
 }
+
+/// <summary>
+/// The NON-SECRET act-payload of an <see cref="ActCommand"/> for the Operator Approval Bridge
+/// (<see cref="ActCommandKind.ApprovalBridgeExecute"/>). It carries exactly what the target-side
+/// executor needs to run a pre-registered scoped action — the allowlisted <paramref name="ActionId"/>
+/// and the server-side-validated <paramref name="ParamsJson"/> — and NOTHING secret. The target's own
+/// secret (e.g. the Garmin client secret) is read target-side by the executor via register-secret
+/// Path D and never travels in this payload: that is what makes the seal structural (home-server
+/// <c>docs/66 §3, §4</c>, I2). Params here are always the canonical, <c>param_schema</c>-validated form.
+/// </summary>
+/// <param name="ActionId">The allowlisted action id the executor must run (e.g. <c>garmin.oauth.exchange</c>).</param>
+/// <param name="ParamsJson">The canonical, schema-validated, non-secret params JSON (e.g. <c>{"auth_code":"…"}</c>).</param>
+public sealed record ActPayload(string ActionId, string ParamsJson);
 
 /// <summary>Whether the single receiver accepted or rejected an <see cref="ActCommand"/>.</summary>
 public enum ActCommandDisposition
@@ -69,11 +89,20 @@ public enum ActCommandDisposition
 /// a fact has no addressee and no answer.)</summary>
 /// <param name="Disposition">Accepted or Rejected.</param>
 /// <param name="Reason">Why (required on rejection; may be empty on acceptance).</param>
-public sealed record ActCommandAck(ActCommandDisposition Disposition, string Reason)
+/// <param name="ResultJson">Optional NON-SECRET result the receiver produced, conforming to the action's
+/// <c>result_schema</c> (home-server <c>docs/66 §3.4</c>). For the Operator Approval Bridge this is the
+/// <c>{status, stored, expires_at}</c> confirmation the executor returns — NEVER the token or any secret.
+/// Additive, defaults to <c>null</c>; the merge-pr / deploy kinds leave it null.</param>
+public sealed record ActCommandAck(ActCommandDisposition Disposition, string Reason, string? ResultJson = null)
 {
     public bool Accepted => Disposition == ActCommandDisposition.Accepted;
 
     public static ActCommandAck Accept(string reason = "") => new(ActCommandDisposition.Accepted, reason);
+
+    /// <summary>Accept and carry the executor's non-secret <paramref name="resultJson"/> back to the broker.</summary>
+    public static ActCommandAck AcceptWithResult(string resultJson, string reason = "") =>
+        new(ActCommandDisposition.Accepted, reason, resultJson);
+
     public static ActCommandAck Reject(string reason) => new(ActCommandDisposition.Rejected, reason);
 }
 

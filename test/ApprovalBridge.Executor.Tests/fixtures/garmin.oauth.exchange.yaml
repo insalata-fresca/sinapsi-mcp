@@ -1,0 +1,38 @@
+# Fixture copy of the real E1.1 allowlist entry (home-server
+# policies/approval-bridge/actions/garmin.oauth.exchange.yaml) so the executor-side loader is
+# proven against the actual shipped shape — including result_schema, which the executor uses to
+# prove its result is non-secret. Kept byte-faithful to the fields the executor reads.
+action_id: garmin.oauth.exchange
+title: "Garmin OAuth code→token exchange"
+description: >
+  Exchange a Garmin OAuth authorization code for an access/refresh token and store it
+  server-side. Returns only a non-secret confirmation — never the token itself.
+target:
+  host: ct<NNN>-<name>
+  identity: garmin-connector
+executor: garmin-oauth-exchange
+param_schema:
+  type: object
+  required: [auth_code]
+  additionalProperties: false
+  properties:
+    auth_code:
+      type: string
+      minLength: 8
+      maxLength: 512
+result_schema:
+  type: object
+  properties:
+    status:
+      enum: [ok, error]
+    stored:
+      type: boolean
+    expires_at:
+      type: string
+      format: date-time
+risk_tier: yellow
+expiry_seconds: 300
+rate_limit:
+  per_agent_per_hour: 3
+  per_action_per_hour: 10
+one_shot: true
