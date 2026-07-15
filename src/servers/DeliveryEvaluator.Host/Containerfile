@@ -1,0 +1,37 @@
+# DeliveryEvaluator.Host — OCI image (C1 independent delivery risk evaluator, SHADOW).
+# Two-stage: dotnet SDK 8.0 (build/publish) -> aspnet 8.0 (runtime). Build context is
+# the REPO ROOT so the in-repo ProjectReferences (src/libs/Sinapsi.DeliveryEvaluator +
+# src/libs/Sinapsi.Nats) resolve; restore is nuget.org-only (no private feed, no build
+# secret). Build from the repo root:
+#   podman build --network=host -f src/servers/DeliveryEvaluator.Host/Containerfile -t <img> .
+#
+# The service SUBSCRIBES (durable JetStream consumer on HOMELAB_AUDIT, filtered to
+# homelab.git.>/release.>/deploy.>), runs the DETERMINISTIC risk classifier, and PUBLISHES
+# verdict FACTS to homelab.security.authz.delivery-evaluator.<slug>.delivery-risk-evaluator.
+# Observe-only: it holds no act dispatcher and cannot enforce. The scoped NATS identity
+# (seed + CA) is host-mounted at DEPLOY by the Quadlet, never baked into the image.
+
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+COPY . .
+RUN dotnet publish src/servers/DeliveryEvaluator.Host/DeliveryEvaluator.Host.csproj \
+        -c Release -o /app /p:UseAppHost=false
+
+FROM mcr.microsoft.com/dotnet/aspnet:8.0
+WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /app .
+# Non-root by default (rootless-podman friendly). The Quadlet overrides to User=0 at
+# deploy so the process can read the 0600 NATS seed — parity with the other Sinapsi.Nats
+# daemons.
+RUN useradd --system --no-create-home --uid 10014 evaluator
+USER evaluator
+ENV DELIVERY_EVALUATOR_HEALTH_HOST=0.0.0.0 \
+    DELIVERY_EVALUATOR_HEALTH_PORT=8014 \
+    DOTNET_EnableDiagnostics=0
+# Documentation only; the listen address is env-driven (DELIVERY_EVALUATOR_HEALTH_HOST/PORT)
+# and overridden by the Quadlet at deploy.
+EXPOSE 8014
+ENTRYPOINT ["dotnet", "DeliveryEvaluator.Host.dll"]

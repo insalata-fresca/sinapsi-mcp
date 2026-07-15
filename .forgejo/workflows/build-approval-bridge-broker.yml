@@ -1,0 +1,43 @@
+# S34 "merge = deploy" — merge-triggered SOURCE build for approval-bridge-broker (E1.3).
+#
+# On a push to main that changes THIS service's source (or the ApprovalBridge.Executor /
+# Sinapsi.Nats it links), build + push the provenance-tagged source image
+# approval-bridge-broker:sinapsi-0.1.<run> (+ :sinapsi-latest) to the Forgejo registry.
+# Path-scoped: ONLY on a change to the broker or the projects it compiles in.
+#
+# ADDITIVE. The existing tag-triggered full-matrix build-images.yml (on: tags v*) is left
+# untouched — a version tag still cuts the whole matrix (ApprovalBridge.Broker is in it).
+#
+# SOURCE plane only: this does NOT emit homelab.release.approval-bridge-broker.published. In the
+# two-plane release model, ste/home-server's build-approval-bridge-broker.yml re-publishes this
+# source image (retag ste/approval-bridge-broker:0.1.<run> + emit the release event) as the
+# release/deploy orchestrator. sinapsi-mcp has no release nkey and must not become a second
+# publisher of that subject. See the PR body for the release-emit boundary.
+#
+# Requires (repo Settings -> Actions): secret REGISTRY_TOKEN, variables REGISTRY +
+# REGISTRY_USER. Runs on the self-hosted runner. First build (no source change) is
+# available via the workflow_dispatch button / API.
+name: build-approval-bridge-broker
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/servers/ApprovalBridge.Broker/**'
+      - 'src/servers/ApprovalBridge.Executor/**'
+      - 'src/libs/Sinapsi.Nats/**'
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build + push source image
+        uses: ./.forgejo/actions/build-source-image
+        with:
+          server: ApprovalBridge.Broker
+          image: approval-bridge-broker
+          registry: ${{ vars.REGISTRY }}
+          registry-user: ${{ vars.REGISTRY_USER || 'ste' }}
+          registry-token: ${{ secrets.REGISTRY_TOKEN }}
