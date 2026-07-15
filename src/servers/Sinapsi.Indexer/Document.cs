@@ -18,5 +18,16 @@ public sealed record Document
     /// (e.g. "global", a project slug), used by the get_learning tool. Empty otherwise.</summary>
     public string Scope { get; init; } = "";
 
+    /// <summary>
+    /// Optional per-document facet metadata, serialised as a JSON object string
+    /// (stored in the additive <c>documents.metadata jsonb</c> column — see
+    /// <see cref="PostgresIndexStore.EnsureSchemaAsync"/>). Null for every
+    /// existing git-source document (shared/career/cervello/learnings) — this
+    /// field is ADDITIVE and does not change their behavior. Populated for book
+    /// chunks with facets such as isbn/authors/categories/chapter/heading/anchor
+    /// (see <see cref="Sinapsi.Opds.BookDocumentMapper"/> in M4's book source).
+    /// </summary>
+    public string? Metadata { get; init; }
+
     public static string MakeDocId(string source, string path) => $"{source}:{path}";
 }
