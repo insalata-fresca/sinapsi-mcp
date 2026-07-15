@@ -159,4 +159,38 @@ public sealed class InfisicalClientTests
 
         Assert.Contains("accessToken", ex.Message);
     }
+
+    // ── ListSecretNamesAsync: a 404 (never-provisioned path) is EMPTY, not a failure ──
+
+    [Fact]
+    public async Task ListSecretNamesAsync_returns_an_empty_list_when_the_path_has_never_been_provisioned()
+    {
+        // Infisical 404s a secretPath whose folder doesn't exist yet. That is the common,
+        // legitimate shape of the sanctioned "does this secret already exist" check for a
+        // service that hasn't been provisioned — it must come back as zero names, not throw.
+        var rec = new ScriptedHandler
+        {
+            Responder = m => m == HttpMethod.Get ? HttpStatusCode.NotFound : HttpStatusCode.OK,
+        };
+        var client = Build(rec);
+
+        var names = await client.ListSecretNamesAsync("/web/never-provisioned", CancellationToken.None);
+
+        Assert.Empty(names);
+    }
+
+    [Fact]
+    public async Task ListSecretNamesAsync_still_throws_on_a_genuine_upstream_failure()
+    {
+        // Only 404 gets the empty-list treatment — any other failure status must still
+        // surface as an exception (caught + sanitized by the tool layer above).
+        var rec = new ScriptedHandler
+        {
+            Responder = m => m == HttpMethod.Get ? HttpStatusCode.InternalServerError : HttpStatusCode.OK,
+        };
+        var client = Build(rec);
+
+        await Assert.ThrowsAsync<HttpRequestException>(
+            () => client.ListSecretNamesAsync("/web/api", CancellationToken.None));
+    }
 }
