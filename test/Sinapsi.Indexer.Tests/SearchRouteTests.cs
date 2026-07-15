@@ -60,6 +60,7 @@ internal sealed class ControllableIndexStore : IIndexStore
     public Task EnsureSchemaAsync(CancellationToken ct) => Task.CompletedTask;
     public Task<bool> UpsertAsync(Document doc, CancellationToken ct) => Task.FromResult(false);
     public Task<int> TombstoneMissingAsync(string source, IReadOnlyCollection<string> presentDocIds, CancellationToken ct) => Task.FromResult(0);
+    public Task<int> TombstoneSourcesNotInAsync(IReadOnlyCollection<string> keepSources, CancellationToken ct) => Task.FromResult(0);
     public Task PingAsync(CancellationToken ct) => Task.CompletedTask;
     public Task<IReadOnlyList<LearningHit>> GetLearningsAsync(string? scope, string? query, int limit, CancellationToken ct)
         => Task.FromResult<IReadOnlyList<LearningHit>>(Array.Empty<LearningHit>());

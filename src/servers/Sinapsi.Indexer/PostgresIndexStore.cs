@@ -139,6 +139,23 @@ public sealed class PostgresIndexStore : IIndexStore
         return await cmd.ExecuteNonQueryAsync(ct);
     }
 
+    public async Task<int> TombstoneSourcesNotInAsync(IReadOnlyCollection<string> keepSources, CancellationToken ct)
+    {
+        // Fail-safe belongs to the CALLER (IndexerCore) per the IIndexStore
+        // contract — but a defence-in-depth guard here costs nothing and
+        // protects any other caller from wiping the whole store via an
+        // empty keepSources.
+        if (keepSources.Count == 0) return 0;
+        const string sql = """
+            UPDATE documents SET is_deleted = TRUE, updated_at = now()
+            WHERE NOT is_deleted AND NOT (source = ANY(@keep));
+            """;
+        await using var c = await OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand(sql, c);
+        cmd.Parameters.AddWithValue("keep", keepSources.ToArray());
+        return await cmd.ExecuteNonQueryAsync(ct);
+    }
+
     public async Task PingAsync(CancellationToken ct)
     {
         await using var c = await OpenAsync(ct);

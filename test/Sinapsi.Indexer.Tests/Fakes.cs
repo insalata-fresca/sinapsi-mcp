@@ -25,6 +25,7 @@ internal sealed class ThrowingIndexStore : IIndexStore
     public Task EnsureSchemaAsync(CancellationToken ct) => throw new InvalidOperationException(Sentinel);
     public Task<bool> UpsertAsync(Document doc, CancellationToken ct) => throw new InvalidOperationException(Sentinel);
     public Task<int> TombstoneMissingAsync(string source, IReadOnlyCollection<string> presentDocIds, CancellationToken ct) => throw new InvalidOperationException(Sentinel);
+    public Task<int> TombstoneSourcesNotInAsync(IReadOnlyCollection<string> keepSources, CancellationToken ct) => throw new InvalidOperationException(Sentinel);
     public Task PingAsync(CancellationToken ct) => throw new InvalidOperationException(Sentinel);
     public Task<IReadOnlyList<SearchHit>> SearchAsync(string query, string? source, string? kind, int limit, CancellationToken ct) => throw new InvalidOperationException(Sentinel);
     public Task<IReadOnlyList<LearningHit>> GetLearningsAsync(string? scope, string? query, int limit, CancellationToken ct) => throw new InvalidOperationException(Sentinel);
@@ -51,6 +52,7 @@ internal sealed class LeakingIndexStore : IIndexStore
     public Task EnsureSchemaAsync(CancellationToken ct) => throw Leak();
     public Task<bool> UpsertAsync(Document doc, CancellationToken ct) => throw Leak();
     public Task<int> TombstoneMissingAsync(string source, IReadOnlyCollection<string> presentDocIds, CancellationToken ct) => throw Leak();
+    public Task<int> TombstoneSourcesNotInAsync(IReadOnlyCollection<string> keepSources, CancellationToken ct) => throw Leak();
     public Task PingAsync(CancellationToken ct) => throw Leak();
     public Task<IReadOnlyList<SearchHit>> SearchAsync(string query, string? source, string? kind, int limit, CancellationToken ct) => throw Leak();
     public Task<IReadOnlyList<LearningHit>> GetLearningsAsync(string? scope, string? query, int limit, CancellationToken ct) => throw Leak();
@@ -105,6 +107,16 @@ internal sealed class RecordingIndexStore : IIndexStore
     {
         TombstoneSource = source;
         TombstonePresent = presentDocIds.ToArray();
+        return Task.FromResult(0);
+    }
+
+    /// <summary>The keepSources handed to the retired-source prune (proves
+    /// ReindexAllAsync ran it with the full CONFIGURED source set).</summary>
+    public string[]? PrunedKeepSources { get; private set; }
+
+    public Task<int> TombstoneSourcesNotInAsync(IReadOnlyCollection<string> keepSources, CancellationToken ct)
+    {
+        PrunedKeepSources = keepSources.ToArray();
         return Task.FromResult(0);
     }
 

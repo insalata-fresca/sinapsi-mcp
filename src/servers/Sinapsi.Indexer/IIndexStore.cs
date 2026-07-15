@@ -21,6 +21,21 @@ public interface IIndexStore
     /// disappeared from the source since this scan. Returns the tombstoned count.</summary>
     Task<int> TombstoneMissingAsync(string source, IReadOnlyCollection<string> presentDocIds, CancellationToken ct);
 
+    /// <summary>Tombstone (is_deleted = true) every LIVE doc whose <c>source</c>
+    /// is NOT in <paramref name="keepSources"/> — i.e. a whole source that was
+    /// retired from the tenant's configured source set (e.g. a git source
+    /// replaced by an OPDS source, or vice versa). Idempotent (already-tombstoned
+    /// rows are simply not re-matched by <c>NOT is_deleted</c>). Returns the
+    /// tombstoned count.
+    /// <para>
+    /// CALLER FAIL-SAFE: this is a blunt, cross-source instrument — passing an
+    /// empty/incomplete <paramref name="keepSources"/> would tombstone every doc
+    /// NOT in that set, i.e. everything. The caller (<see cref="IndexerCore"/>)
+    /// MUST refuse to call this when the configured-source set is empty; the
+    /// store itself does not special-case emptiness.
+    /// </para></summary>
+    Task<int> TombstoneSourcesNotInAsync(IReadOnlyCollection<string> keepSources, CancellationToken ct);
+
     /// <summary>Liveness probe (SELECT 1). Throws on failure.</summary>
     Task PingAsync(CancellationToken ct);
 
