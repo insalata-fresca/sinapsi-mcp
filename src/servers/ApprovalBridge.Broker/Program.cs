@@ -3,6 +3,8 @@ using ApprovalBridge.Broker.Core;
 using ApprovalBridge.Broker.Events;
 using ApprovalBridge.Broker.Registry;
 using ApprovalBridge.Broker.Store;
+using ApprovalBridge.Executor.Dispatch;
+using ApprovalBridge.Executor.Garmin;
 using NATS.Client.Core;
 using Sinapsi.Nats;
 using Sinapsi.Nats.EventPlane;
@@ -22,8 +24,16 @@ builder.Services.AddSingleton<IActionRegistry>(_ =>
         ? new InMemoryActionRegistry([])
         : YamlActionLoader.LoadDirectory(cfg.ActionsDir));
 
-// Deny-by-default dispatch seam (I3/§5 (5)): reused C2 contract, never an executor here.
-builder.Services.AddSingleton<IActCommandDispatcher, NullActCommandDispatcher>();
+// Dispatch seam (I3/§5 (5)). DEFAULT = the C2 NullActCommandDispatcher (deny-by-default / dormant): the
+// broker acts on nothing. Only when BRIDGE_EXECUTOR_LIVE=true is IActCommandDispatcher bound to the real
+// E1.4 target-side ExecutorDispatcher (via ExecutorWiring.SelectDispatcher). Flipping that flag is a
+// trust-boundary flip (always-escalate, docs/66 §10) and is out of scope for E1.4 — the live Garmin network
+// integration is intentionally left un-provisioned (NotProvisioned*), so even a flipped flag executes nothing.
+builder.Services.AddSingleton<IActCommandDispatcher>(_ => ExecutorWiring.SelectDispatcher(
+    live: cfg.ExecutorLive,
+    actionsDir: cfg.ActionsDir,
+    secretsRootDir: cfg.ExecutorSecretsRoot,
+    handlers: [new GarminOAuthExchangeExecutor(new NotProvisionedGarminEndpoint(), new NotProvisionedGarminTokenStore())]));
 builder.Services.AddSingleton<IRateLimiter, InMemoryRateLimiter>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<INonceSource, CryptoNonceSource>();
@@ -53,12 +63,14 @@ builder.Services.AddSingleton<BridgeBroker>();
 var app = builder.Build();
 
 // Liveness (unauthenticated). Advertises the shadow posture so no one mistakes it for live.
-app.MapGet("/health", (BrokerConfig c, IActionRegistry reg) => Results.Json(new
+app.MapGet("/health", (BrokerConfig c, IActionRegistry reg, IActCommandDispatcher disp) => Results.Json(new
 {
     status = "ok",
     version = BrokerConfig.Version,
-    shadow = true,
-    dispatch = "deny-by-default (NullActCommandDispatcher)",
+    shadow = !c.ExecutorLive,
+    dispatch = disp is NullActCommandDispatcher
+        ? "deny-by-default (NullActCommandDispatcher)"
+        : "executor (ExecutorDispatcher)",
     actions = reg.ActionIds.Count,
 }));
 
@@ -78,7 +90,7 @@ app.MapPost("/approve", async (ApproveBody body, BridgeBroker broker, Cancellati
 {
     var o = await broker.ApproveAsync(body.request_id ?? "", body.approver_identity ?? "", body.nonce, ct);
     return o.Accepted
-        ? Results.Json(new { dispatched = o.Dispatched, executor_accepted = o.ExecutorAccepted, detail = o.Detail })
+        ? Results.Json(new { dispatched = o.Dispatched, executor_accepted = o.ExecutorAccepted, detail = o.Detail, result = o.ResultJson })
         : Results.Json(new { rejected = o.Reason.ToString() }, statusCode: 409);
 });
 

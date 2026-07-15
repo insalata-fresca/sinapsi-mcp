@@ -15,10 +15,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\servers\ApprovalBridge.Broker\ApprovalBridge.Broker.csproj" />
-    <!-- The E1.4 executor SDK, so a broker-boundary seal test can wire the REAL ExecutorDispatcher and prove
-         the non-secret result flows back through the broker while no secret reaches any broker-visible surface. -->
     <ProjectReference Include="..\..\src\servers\ApprovalBridge.Executor\ApprovalBridge.Executor.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The real E1.1 allowlist entry, copied verbatim, so the executor-side loader is proven against the
+         actual shipped YAML (result_schema included). -->
+    <None Include="fixtures\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

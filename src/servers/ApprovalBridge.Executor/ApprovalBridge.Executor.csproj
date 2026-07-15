@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The Operator Approval Bridge EXECUTOR SDK (E1.4), home-server docs/66 §3.4/§4.
+    A target-side component: it receives an approved, allowlisted act-command from the broker's
+    C2 IActCommandDispatcher seam, runs the pre-registered scoped action UNDER THE TARGET'S OWN
+    identity, reads its own secret via register-secret Path D, and returns ONLY a non-secret result
+    conforming to the action's result_schema. The secret NEVER enters broker or agent context (the seal).
+
+    It is a library, not a live worker: E1.4 is SHADOW. The broker keeps NullActCommandDispatcher as its
+    default; the real ExecutorDispatcher here is selected only when explicitly configured live (out of scope).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RootNamespace>ApprovalBridge.Executor</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="ApprovalBridge.Executor.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The MERGED C2 event-plane seam: ActCommand / ActPayload / IActCommandDispatcher /
+         ActCommandAck / EventPlaneChannels. The executor is an IActCommandDispatcher impl. -->
+    <ProjectReference Include="../../libs/Sinapsi.Nats/Sinapsi.Nats.csproj" />
+    <!-- Validate params ∈ param_schema (defense-in-depth) and result ∈ result_schema (no secret fields). -->
+    <PackageReference Include="JsonSchema.Net" Version="7.3.4" />
+    <!-- Load the git-backed allowlist YAML target-side (result_schema + target identity + executor name). -->
+    <PackageReference Include="YamlDotNet" Version="16.2.1" />
+  </ItemGroup>
+
+</Project>

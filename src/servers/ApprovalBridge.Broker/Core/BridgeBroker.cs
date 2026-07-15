@@ -123,14 +123,18 @@ internal sealed class BridgeBroker
         var approved = e with { Status = RequestStatus.Consumed, ApproverIdentity = approverIdentity };
         await EmitAsync(spec, approved, "approved", "nonce consumed (one-shot)", resultStatus: null, ct);
 
-        // Dispatch through the C2 deny-by-default seam. Carries NO secret — only action_id/target/correlation.
+        // Dispatch through the C2 seam. The command carries NO target secret — only action_id + the already
+        // schema-validated, NON-SECRET params (docs/66 §3.4: "dispatches (action_id, params) … carrying no
+        // secret"). Under the default NullActCommandDispatcher this is still rejected (deny-by-default); the
+        // real target-side ExecutorDispatcher (E1.4) reads the secret itself, target-side, and never returns it.
         var command = new ActCommand(
             CommandId: Guid.NewGuid().ToString("N"),
             Kind: ActCommandKind.ApprovalBridgeExecute,
             Target: spec.TargetHost,
             CorrelationId: requestId,
             RequestedBy: $"operator:{approverIdentity}",
-            Reason: "approved; one-shot nonce consumed; executed under target identity");
+            Reason: "approved; one-shot nonce consumed; executed under target identity",
+            Payload: new ActPayload(spec.ActionId, approved.ParamsJson));
         var ack = await _dispatcher.DispatchAsync(command, ct);
 
         var executedReason = ack.Accepted
@@ -138,7 +142,8 @@ internal sealed class BridgeBroker
             : $"deny-by-default: {ack.Reason}; nothing acted";
         await EmitAsync(spec, approved, "executed", executedReason, resultStatus: ack.Accepted ? "ok" : null, ct);
 
-        return new ApprovalOutcome(Accepted: true, Dispatched: true, ExecutorAccepted: ack.Accepted, BrokerRejectReason.None, ack.Reason);
+        // Surface ONLY the executor's non-secret result (result_schema) to the resumed agent — never a secret.
+        return new ApprovalOutcome(Accepted: true, Dispatched: true, ExecutorAccepted: ack.Accepted, BrokerRejectReason.None, ack.Reason, ResultJson: ack.ResultJson);
     }
 
     /// <summary>REJECT (the COMMAND): the operator declines a pending request. CAS <c>pending→rejected</c>
