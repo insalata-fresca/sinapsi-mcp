@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RootNamespace>ApprovalBridge.Mcp</RootNamespace>
+    <AssemblyName>ApprovalBridge.Mcp</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The MCP host helpers come from the in-repo lib via ProjectReference, so the
+         server builds without any NuGet feed. No other package is needed — this
+         server only ever calls the ApprovalBridge.Broker's REQUEST intake over
+         plain HttpClient (System.Net.Http.Json, in the BCL). -->
+    <ProjectReference Include="../../libs/Sinapsi.Mcp/Sinapsi.Mcp.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Expose the internal hardening helpers (validation/errors) to the server's own
+         test project only, so they can be unit tested without being made part of the
+         public API. -->
+    <InternalsVisibleTo Include="ApprovalBridge.Mcp.Tests" />
+  </ItemGroup>
+
+</Project>
