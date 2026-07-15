@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RootNamespace>ConfigSpine.Mcp</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- MCP host helpers (AddSinapsiMcpServer / MapSinapsiMcp) and the CloudEvents+NKey+TLS
+         NATS publisher both come from in-repo libs via ProjectReference, so the server builds
+         with no private NuGet feed (nuget.org only) — mirrors Sinapsi.SentinelConsole. -->
+    <ProjectReference Include="../../libs/Sinapsi.Mcp/Sinapsi.Mcp.csproj" />
+    <ProjectReference Include="../../libs/Sinapsi.Nats/Sinapsi.Nats.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Expose the internal subject-validation + error-sanitization helpers to this server's own
+         test project only, so the least-privilege guarantee (nothing outside homelab.config.>)
+         can be unit-tested without widening the public API. -->
+    <InternalsVisibleTo Include="ConfigSpine.Mcp.Tests" />
+  </ItemGroup>
+
+</Project>
