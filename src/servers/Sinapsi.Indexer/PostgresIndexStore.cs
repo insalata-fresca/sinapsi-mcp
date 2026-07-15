@@ -77,6 +77,14 @@ public sealed class PostgresIndexStore : IIndexStore
             ALTER TABLE documents ADD COLUMN IF NOT EXISTS embedding vector(384);
             CREATE INDEX IF NOT EXISTS idx_documents_embedding
                 ON documents USING hnsw (embedding vector_cosine_ops);
+            -- Additive (M3): per-document facet metadata (book chunks: isbn/authors/
+            -- categories/chapter/heading/anchor; NULL for every existing git-source
+            -- doc — zero behavior change for shared/career/cervello/learnings).
+            -- Mirrors the "embedding" column precedent: ADD COLUMN IF NOT EXISTS,
+            -- no rename/retype of any existing column.
+            ALTER TABLE documents ADD COLUMN IF NOT EXISTS metadata jsonb;
+            CREATE INDEX IF NOT EXISTS idx_documents_metadata
+                ON documents USING GIN (metadata);
             """;
         await using var c = await OpenAsync(ct);
         await using var cmd = new NpgsqlCommand(ddl, c);
@@ -90,12 +98,13 @@ public sealed class PostgresIndexStore : IIndexStore
         // tombstoned and is reappearing). No replay-doubling — re-processing the
         // same source is a no-op. Un-tombstones on a real change.
         const string sql = """
-            INSERT INTO documents (doc_id, source, path, kind, title, body, scope, content_sha, is_deleted, updated_at)
-            VALUES (@id, @source, @path, @kind, @title, @body, @scope, @sha, FALSE, now())
+            INSERT INTO documents (doc_id, source, path, kind, title, body, scope, content_sha, metadata, is_deleted, updated_at)
+            VALUES (@id, @source, @path, @kind, @title, @body, @scope, @sha, @metadata::jsonb, FALSE, now())
             ON CONFLICT (doc_id) DO UPDATE SET
                 source = EXCLUDED.source, path = EXCLUDED.path, kind = EXCLUDED.kind,
                 title = EXCLUDED.title, body = EXCLUDED.body, scope = EXCLUDED.scope,
-                content_sha = EXCLUDED.content_sha, is_deleted = FALSE, updated_at = now(),
+                content_sha = EXCLUDED.content_sha, metadata = EXCLUDED.metadata,
+                is_deleted = FALSE, updated_at = now(),
                 embedding = NULL  -- content changed → re-embed (the backfill picks it up)
             WHERE documents.content_sha IS DISTINCT FROM EXCLUDED.content_sha
                OR documents.is_deleted;
@@ -110,6 +119,9 @@ public sealed class PostgresIndexStore : IIndexStore
         cmd.Parameters.AddWithValue("body", doc.Body);
         cmd.Parameters.AddWithValue("scope", doc.Scope);
         cmd.Parameters.AddWithValue("sha", doc.ContentSha);
+        // NULL for every existing caller (Document.Metadata defaults to null) —
+        // additive, backward-compatible: non-book documents get a NULL jsonb cell.
+        cmd.Parameters.AddWithValue("metadata", (object?)doc.Metadata ?? DBNull.Value);
         var rows = await cmd.ExecuteNonQueryAsync(ct);
         return rows > 0;
     }

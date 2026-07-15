@@ -19,6 +19,11 @@
          via ProjectReference, so the solution builds with no private NuGet feed
          (nuget.org only). The neutral env-driven NatsConnectionOptions is used. -->
     <ProjectReference Include="../../libs/Sinapsi.Nats/Sinapsi.Nats.csproj" />
+    <!-- BookChunk model + BookChunker (M3) — the chunk->Document mapper below
+         needs Sinapsi.Opds's BookChunk; M4's OpdsSourceScanner will need the
+         rest of this library anyway (EpubExtractor/OpdsClient), so this
+         reference is added here rather than deferred. -->
+    <ProjectReference Include="../../libs/Sinapsi.Opds/Sinapsi.Opds.csproj" />
     <!-- Postgres data tier (tsvector FTS + pgvector). -->
     <PackageReference Include="Npgsql" Version="8.0.3" />
     <!-- C# MCP HTTP surface. -->
