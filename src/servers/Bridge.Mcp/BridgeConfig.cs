@@ -138,6 +138,36 @@ public sealed class BridgeConfig
     public string EffectiveCervelloPackToken =>
         !string.IsNullOrEmpty(CervelloPackToken) ? CervelloPackToken : CervelloOpenPointsToken;
 
+    // ----- Personal-health tools (health-mcp + withings-mcp via the CT121 PEP) -----
+    // These tools are MCP tools/call proxies through the agentgateway PEP, NOT REST-bearer forwards
+    // (unlike cervello). They mint the bridge's scoped agent identity (Sinapsi.AgentJwt) and forward
+    // via the Sinapsi.Mcp GatewayMcpClient — the SageCouncil.Mcp pattern.
+
+    /// <summary>
+    /// The CT121-mcp-gateway MCP PEP endpoint the health/withings tool proxies call through
+    /// (GATEWAY_URL). Default matches SageCouncil.Mcp (<c>http://127.0.0.1:8443/mcp</c>); in prod
+    /// point it at the gateway's <c>/mcp</c> (e.g. <c>http://10.42.0.121:8443/mcp</c>).
+    /// </summary>
+    public string GatewayUrl { get; init; } = "http://127.0.0.1:8443/mcp";
+
+    /// <summary>
+    /// The bridge's SCOPED agent identity name (BRIDGE_HEALTH_AGENT) — the JWK file
+    /// <c>&lt;AGENT_KEY_DIR&gt;/&lt;name&gt;.json</c> the <see cref="Sinapsi.AgentJwt.AgentJwtMinter"/>
+    /// signs a short-lived RFC 7523 assertion with to reach the health/withings backends through the
+    /// PEP. Empty → the health/withings tools return not_configured before any I/O. This identity is
+    /// distinct from the shared claude.ai bearer; it must hold an agentgateway grant for the
+    /// <c>health_*</c> + <c>withings_*</c> tools (see the deploy follow-up in the README).
+    /// </summary>
+    public string HealthAgent { get; init; } = "";
+
+    /// <summary>
+    /// Emergency-disable master switch for the personal-health tools (HEALTH_EXPOSED). false/0/no/off
+    /// severs the health/withings proxies at the bridge edge — they return {status:"disabled"} before
+    /// any I/O — without a redeploy. Default true (the PEP grant is the real fail-closed control; an
+    /// unconfigured agent already fails closed as not_configured, a missing grant as unauthorized).
+    /// </summary>
+    public bool HealthExposed { get; init; } = true;
+
     // ----- OAuth scopes (informational — advertised in RFC 9728 metadata) -----
     /// <summary>
     /// Scopes declared in /.well-known/oauth-protected-resource.
@@ -156,6 +186,7 @@ public sealed class BridgeConfig
         "bridge:context_pack",
         "bridge:cervello:read",
         "bridge:cervello:deposit",
+        "bridge:health:read",
     ];
 
     // ----- Rate limits (requests per minute) -----
@@ -212,6 +243,11 @@ public sealed class BridgeConfig
             CervelloSearchUrl        = Env("CERVELLO_SEARCH_URL", "http://cervello.internal:8009"),
             CervelloSearchToken      = Env("CERVELLO_SEARCH_TOKEN", ""),
             CervelloPackBudgetDefault = EnvInt("CERVELLO_PACK_BUDGET_DEFAULT", 30_000),
+
+            // Personal-health tools: MCP proxies through the CT121 PEP (SageCouncil pattern).
+            GatewayUrl    = Env("GATEWAY_URL", "http://127.0.0.1:8443/mcp"),
+            HealthAgent   = Env("BRIDGE_HEALTH_AGENT", ""),
+            HealthExposed = EnvBool("HEALTH_EXPOSED", true),
 
             RateLimitDepositPerMin   = EnvInt("BRIDGE_RATE_LIMIT_DEPOSIT_PER_MIN",   30),
             RateLimitReadPerMin      = EnvInt("BRIDGE_RATE_LIMIT_READ_PER_MIN",       60),

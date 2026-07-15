@@ -14,8 +14,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Shared MCP bootstrap + stateless HTTP transport. -->
+    <!-- Shared MCP bootstrap + stateless HTTP transport + upstream GatewayMcpClient. -->
     <ProjectReference Include="../../libs/Sinapsi.Mcp/Sinapsi.Mcp.csproj" />
+    <!-- Per-agent RFC 7523 JWT minter for the personal-health tools' PEP calls (health/withings). -->
+    <ProjectReference Include="../../libs/Sinapsi.AgentJwt/Sinapsi.AgentJwt.csproj" />
     <!-- Forgejo REST API adapter (GiteaForgeClient / IForgeClient). -->
     <ProjectReference Include="../../libs/Sinapsi.Forge/Sinapsi.Forge.csproj" />
     <!-- NATS CloudEvent emission — wired in B4b-9 (bus audit trace); referenced now so the

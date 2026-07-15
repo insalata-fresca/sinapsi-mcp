@@ -149,8 +149,9 @@ public sealed class BridgeAuthMiddleware(
         {
             Mode     = "bearer",
             Subject  = "legacy-bearer",
-            // Auto-granted set = LegacyScopes.All (+ cervello scopes iff CERVELLO_EXPOSED=true).
-            Scopes   = new HashSet<string>(LegacyScopes.Granted(config.CervelloExposed), StringComparer.Ordinal),
+            // Auto-granted set = LegacyScopes.All (+ cervello scopes iff CERVELLO_EXPOSED=true,
+            // + health scope iff HEALTH_EXPOSED=true).
+            Scopes   = new HashSet<string>(LegacyScopes.Granted(config.CervelloExposed, config.HealthExposed), StringComparer.Ordinal),
             RawToken = token,
         };
     }
@@ -165,7 +166,8 @@ public sealed class BridgeAuthMiddleware(
             signingKeys,
             config.ZitadelIssuer.TrimEnd('/'),
             [config.McpResourceUri, config.ZitadelClientId],
-            config.CervelloExposed);
+            config.CervelloExposed,
+            config.HealthExposed);
     }
 
     /// <summary>
@@ -183,7 +185,8 @@ public sealed class BridgeAuthMiddleware(
         IEnumerable<SecurityKey> signingKeys,
         string validIssuer,
         string[] validAudiences,
-        bool cervelloExposed = false)
+        bool cervelloExposed = false,
+        bool healthExposed = false)
     {
         var handler = new JwtSecurityTokenHandler { MapInboundClaims = false };
         var parameters = new TokenValidationParameters
@@ -223,7 +226,7 @@ public sealed class BridgeAuthMiddleware(
         // Zitadel's auth-code flow strips the unknown bridge:cervello:* scopes from the token
         // claim, so a cervello-exposed session would otherwise fail the scope check even though
         // CT146 (the real auth boundary) would accept the bearer.
-        foreach (var s in LegacyScopes.Granted(cervelloExposed)) scopes.Add(s);
+        foreach (var s in LegacyScopes.Granted(cervelloExposed, healthExposed)) scopes.Add(s);
 
         var sub = principal.FindFirst("sub")?.Value ?? "<unknown>";
 
