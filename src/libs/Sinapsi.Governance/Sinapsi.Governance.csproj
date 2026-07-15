@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RootNamespace>Sinapsi.Governance</RootNamespace>
+
+    <!-- Packed + consumed as a NuGet package (like the other src/libs), so the
+         pipeline / evaluator hosts can PackageReference the exact version whose
+         trust ledger they read. -->
+    <IsPackable>true</IsPackable>
+    <PackageId>Sinapsi.Governance</PackageId>
+    <!-- Version inherited from Directory.Build.props (repo-wide pin). -->
+    <Authors>ste</Authors>
+    <Description>Sinapsi.Governance — the continuous-trust governance layer that keeps
+      the delivery evaluator honest OVER TIME (home-server docs/64 §3, docs/66, Mission
+      D1). Graduated + revocable per-change-class trust (auto-proceed authority ratchets
+      up only on proven shadow reliability, decays toward a conservative baseline on any
+      miss, with a starvation floor, and a hard trust-plane cap so the trust plane can
+      never self-clear to auto-allow); an independent audit line (different mechanism +
+      different owner — Three Lines of Defense, not self-attestation) with a named
+      accountable owner; scheduled retrospective + daily North-Star inspection sampling;
+      an escalation-rate SLO (alerts on overwhelming-HITL over-escalation AND on
+      suspiciously-low rubber-stamping); a continuous gate red-team hook; and a
+      per-tier Algorithmic-Impact-Assessment stub. Pure, deterministic, shadow-only —
+      it computes trust as DATA the evaluator/pipeline reads; it flips no enforcement.
+      A personal research-lab library; offered as-is.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Sinapsi.Governance.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Reuse the C2/C3 event-plane discipline: governance signals are FACTS
+         (many consumers, never a trigger), emitted under a fact tree that mirrors
+         EventPlaneChannels' verdict-fact / act-command separation. Feed-free
+         intra-repo project reference. -->
+    <ProjectReference Include="..\Sinapsi.Nats\Sinapsi.Nats.csproj" />
+  </ItemGroup>
+
+</Project>
