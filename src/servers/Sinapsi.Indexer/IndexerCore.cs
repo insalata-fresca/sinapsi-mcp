@@ -73,6 +73,45 @@ internal sealed class IndexerCore
             await ReindexSourceAsync(source, ct);
         // No inline embedding: the background EmbedLoop owns that work so the
         // CPU-bound ONNX step never blocks scan/consume or pegs the host.
+
+        await PruneRetiredSourcesAsync(ct);
+    }
+
+    /// <summary>
+    /// Auto-tombstone docs whose <c>source</c> is no longer in the tenant's
+    /// CONFIGURED source set (e.g. a tenant repointed from a git source to an
+    /// OPDS source — the old source is never scanned again so its docs would
+    /// otherwise linger forever and pollute search). Runs once per
+    /// <see cref="ReindexAllAsync"/> pass, after every configured source has had
+    /// its scan attempted.
+    /// <para>
+    /// Precision: <c>keepSources</c> is the set of ALL CONFIGURED sources
+    /// (<c>_scanner.Sources</c>), regardless of whether each one's
+    /// <see cref="ReindexSourceAsync"/> succeeded THIS pass. A source that merely
+    /// had a transient <c>SyncAsync</c> failure this pass is still in the config
+    /// -> still kept -> its docs are NEVER tombstoned by this path (only
+    /// <see cref="IIndexStore.TombstoneMissingAsync"/>, scoped to a source that
+    /// itself scanned successfully, ever removes docs within a live source).
+    /// Only a source that was REMOVED from config entirely gets pruned here.
+    /// </para>
+    /// <para>
+    /// HARD fail-safe: if the configured-source set is empty (config misparse /
+    /// no sources wired), this is a no-op — never wipe the whole store because
+    /// of a bad/empty config.
+    /// </para></summary>
+    private async Task PruneRetiredSourcesAsync(CancellationToken ct)
+    {
+        var keepSources = _scanner.Sources.Select(s => s.Source).Distinct().ToArray();
+        if (keepSources.Length == 0)
+        {
+            _log.LogWarning("skipping retired-source prune — configured source set is empty (refusing to tombstone everything)");
+            return;
+        }
+
+        var pruned = await _store.TombstoneSourcesNotInAsync(keepSources, ct);
+        if (pruned > 0)
+            _log.LogInformation("pruned {count} docs from sources no longer configured (kept: {kept})",
+                pruned, string.Join(", ", keepSources));
     }
 
     public async Task ReindexSourceAsync(ISourceRef source, CancellationToken ct)

@@ -239,6 +239,8 @@ public sealed class OpdsSourceScannerTests
             return Task.FromResult(0);
         }
 
+        public Task<int> TombstoneSourcesNotInAsync(IReadOnlyCollection<string> keepSources, CancellationToken ct) => Task.FromResult(0);
+
         public Task EnsureSchemaAsync(CancellationToken ct) => Task.CompletedTask;
         public Task PingAsync(CancellationToken ct) => Task.CompletedTask;
         public Task<IReadOnlyList<SearchHit>> SearchAsync(string q, string? source, string? kind, int limit, CancellationToken ct) => throw new NotSupportedException();
