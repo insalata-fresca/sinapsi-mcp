@@ -102,6 +102,7 @@ public static class OpdsFeedParser
             Identifier = string.IsNullOrEmpty(identifier) ? null : identifier,
             Summary = (e.Element(Atom + "summary")?.Value ?? e.Element(Atom + "content")?.Value)?.Trim(),
             AcquisitionLinks = resolved.Where(l => l.IsAcquisition).ToList(),
+            NavigationLinks = resolved.Where(l => l.IsNavigationDescent).ToList(),
         };
     }
 

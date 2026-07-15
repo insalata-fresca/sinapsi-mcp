@@ -48,11 +48,27 @@ switch (IndexerConfig.SourceKind())
         var opdsOptions = OpdsSourceScanner.ClientOptionsFromEnv();
         var opdsThrottleMs = IndexerConfig.OpdsDownloadThrottleMs();
         // One long-lived HttpClient for the scanner (its lifetime is the process's).
-        builder.Services.AddSingleton<ISourceScanner>(sp => new OpdsSourceScanner(
-            opdsSources,
-            new Sinapsi.Opds.OpdsClient(new HttpClient(), opdsOptions),
-            opdsThrottleMs,
-            sp.GetRequiredService<ILoggerFactory>().CreateLogger<OpdsSourceScanner>()));
+        builder.Services.AddSingleton<ISourceScanner>(sp =>
+        {
+            var opdsLog = sp.GetRequiredService<ILoggerFactory>().CreateLogger<OpdsSourceScanner>();
+            // Bridge the library's dependency-free (level, message) sink to ILogger so
+            // the nav-traversal's fail-safe bound-hit warnings surface in the logs.
+            var wiredOptions = opdsOptions with
+            {
+                Log = (level, message) =>
+                {
+                    if (string.Equals(level, "warn", StringComparison.OrdinalIgnoreCase))
+                        opdsLog.LogWarning("{opdsTraversal}", message);
+                    else
+                        opdsLog.LogInformation("{opdsTraversal}", message);
+                },
+            };
+            return new OpdsSourceScanner(
+                opdsSources,
+                new Sinapsi.Opds.OpdsClient(new HttpClient(), wiredOptions),
+                opdsThrottleMs,
+                opdsLog);
+        });
         break;
 }
 
