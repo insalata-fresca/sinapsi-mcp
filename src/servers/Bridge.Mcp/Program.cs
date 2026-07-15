@@ -3,6 +3,7 @@ using Bridge.Mcp.Audit;
 using Bridge.Mcp.Auth;
 using Bridge.Mcp.Git;
 using Bridge.Mcp.Tools;
+using Sinapsi.AgentJwt;
 using Sinapsi.Forge;
 using Sinapsi.Forge.Gitea;
 using Sinapsi.Mcp;
@@ -69,6 +70,14 @@ builder.Services.AddHttpClient("forge-raw", http =>
     http.Timeout = TimeSpan.FromSeconds(30);
 });
 
+// Personal-health tools (health-mcp + withings-mcp) reach their backends as MCP tools/call
+// through the CT121 agentgateway PEP, minting the bridge's scoped agent identity — the
+// SageCouncil.Mcp pattern (NOT the cervello REST-bearer path). The upstream GatewayMcpClient is
+// already registered by AddSinapsiMcpServer below; here we add the agent-JWT minter (env-driven:
+// OIDC_ISSUER / OIDC_AUDIENCE_PROJECT_ID / AGENT_KEY_DIR / JWT_TTL_MIN) it needs.
+builder.Services.AddSingleton(AgentJwtOptions.FromEnvironment());
+builder.Services.AddHttpClient<AgentJwtMinter>(); // token mint is quick; default timeout is fine
+
 // Audit service (background writer to audit repo).
 builder.Services.AddSingleton<AuditService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AuditService>());
@@ -94,7 +103,10 @@ builder
     // CB-BRIDGE §5: cervello dialogue READ tools (context_pack, search, get, timeline_walk).
     .WithTools<BridgeCervelloReadTools>()
     // CB-BRIDGE §5: cervello dialogue DEPOSIT tools (capture_fact, set_goal, link_evidence).
-    .WithTools<BridgeCervelloDepositTools>();
+    .WithTools<BridgeCervelloDepositTools>()
+    // Personal-health READ tools: health-mcp (weight/sleep/steps/datapoints/data_types) +
+    // withings-mcp (weight/body_composition/measures/measure_types), 1:1 proxies via the CT121 PEP.
+    .WithTools<BridgeHealthTools>();
 
 var app = builder.Build();
 

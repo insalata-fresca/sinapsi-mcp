@@ -36,16 +36,30 @@ public static class LegacyScopes
     };
 
     /// <summary>
-    /// The effective auto-granted scope set for this deployment: always <see cref="All"/>,
-    /// plus <see cref="Cervello"/> when <paramref name="cervelloExposed"/> is true. Used by
-    /// both auth paths (legacy bearer + Zitadel JWT) so a cervello-exposed session authorizes
-    /// the cervello tools without those scopes surviving in the token claim.
+    /// Personal-health scope (health-mcp + withings-mcp via the CT121 PEP). Auto-granted ONLY when
+    /// the deployment exposes health (HEALTH_EXPOSED=true) — the same rationale as <see cref="Cervello"/>:
+    /// Zitadel's auth-code flow strips unknown custom scopes from the token, so a health-exposed
+    /// deployment auto-grants the scope here to make the scope-claim check pass. The real access
+    /// control is the agentgateway PEP grant on the bridge's scoped agent identity — the bridge only
+    /// forwards a minted agent JWT; this grant makes the SCOPE claim pass, nothing more.
     /// </summary>
-    public static IReadOnlyCollection<string> Granted(bool cervelloExposed)
+    public static readonly HashSet<string> Health = new(StringComparer.Ordinal)
     {
-        if (!cervelloExposed) return All;
+        "bridge:health:read",
+    };
+
+    /// <summary>
+    /// The effective auto-granted scope set for this deployment: always <see cref="All"/>, plus
+    /// <see cref="Cervello"/> when <paramref name="cervelloExposed"/> is true, plus <see cref="Health"/>
+    /// when <paramref name="healthExposed"/> is true. Used by both auth paths (legacy bearer + Zitadel
+    /// JWT) so an exposed session authorizes the tools without those scopes surviving in the token claim.
+    /// </summary>
+    public static IReadOnlyCollection<string> Granted(bool cervelloExposed, bool healthExposed = false)
+    {
+        if (!cervelloExposed && !healthExposed) return All;
         var set = new HashSet<string>(All, StringComparer.Ordinal);
-        foreach (var s in Cervello) set.Add(s);
+        if (cervelloExposed) foreach (var s in Cervello) set.Add(s);
+        if (healthExposed) foreach (var s in Health) set.Add(s);
         return set;
     }
 }

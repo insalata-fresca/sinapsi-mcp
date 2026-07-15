@@ -22,6 +22,9 @@ public sealed class AuthService(BridgeConfig config, BridgeRateLimiter limiter)
     // token (ACCESS.md §2). read = list the pending open-points; deposit = answer (write-back).
     public const string CervelloReadScope         = "bridge:cervello:read";
     public const string CervelloDepositScope      = "bridge:cervello:deposit";
+    // Personal-health tools (health-mcp + withings-mcp via the CT121 PEP): a read-only scope,
+    // auto-granted only when the deployment exposes health (HEALTH_EXPOSED=true), mirroring cervello.
+    public const string HealthReadScope           = "bridge:health:read";
 
     // ── Bucket names ──────────────────────────────────────────────────────────
     public const string DepositBucket   = "deposit";
