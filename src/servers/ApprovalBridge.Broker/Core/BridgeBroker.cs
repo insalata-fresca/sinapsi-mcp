@@ -161,6 +161,43 @@ internal sealed class BridgeBroker
         return new ApprovalOutcome(Accepted: true, Dispatched: false, ExecutorAccepted: false, BrokerRejectReason.None, "rejected");
     }
 
+    /// <summary>
+    /// READ-ONLY pending-queue projection for the Sentinel Console's pending-approval queue (E1.7,
+    /// docs/66 §6 step 3). Joins every currently-<c>pending</c> store entry with its registry
+    /// <see cref="ActionSpec"/> so the Console can render the <c>title</c> + typed params + provenance
+    /// without ever seeing a secret or an untrusted free-text rationale (none exists in this model).
+    /// A request whose action was de-registered since it was filed is dropped from the list (fail
+    /// closed — never surface an orphaned entry an operator could be misled into approving; it will
+    /// still fail deny-by-default in <see cref="ApproveAsync"/> if ever presented). This performs no
+    /// state transition and enforces nothing — the security checks live only in
+    /// <see cref="ApproveAsync"/> / <see cref="RejectAsync"/>.
+    /// </summary>
+    public async Task<IReadOnlyList<PendingApprovalView>> ListPendingAsync(CancellationToken ct = default)
+    {
+        var pending = await _store.ListPendingAsync(ct);
+        var views = new List<PendingApprovalView>(pending.Count);
+        foreach (var stored in pending)
+        {
+            var e = stored.Value;
+            var spec = _registry.Find(e.ActionId);
+            if (spec is null) continue; // de-registered since request — fail closed, don't surface an orphan
+            JsonNode? paramsNode;
+            try { paramsNode = JsonNode.Parse(string.IsNullOrWhiteSpace(e.ParamsJson) ? "{}" : e.ParamsJson); }
+            catch (JsonException) { paramsNode = null; } // stored params were somehow malformed — render null, not a crash
+            views.Add(new PendingApprovalView(
+                RequestId: e.RequestId,
+                ActionId: e.ActionId,
+                Title: spec.Title,
+                Description: spec.Description,
+                Params: paramsNode,
+                RequesterIdentity: e.RequesterIdentity,
+                ExpiresAt: e.ExpiresAt,
+                RiskTier: spec.RiskTier));
+        }
+        // Soonest-expiring first — the operator should see the most time-pressured requests up top.
+        return views.OrderBy(v => v.ExpiresAt).ToList();
+    }
+
     /// <summary>Expiry reaper: CAS every due <c>pending</c> entry to <c>expired</c> and emit <c>...expired</c>.
     /// An expired request can never be approved (docs/66 §5.2). Returns the count expired.</summary>
     public async Task<int> ExpireDueAsync(CancellationToken ct = default)

@@ -46,6 +46,39 @@ step (Scope 50 phase 9).
 > home-server Ansible change (`playbooks/roles/nats_server/`), tracked
 > separately. It fails safe (silently idle), never open.
 
+### Operator Approval Bridge lane (E1.7) — the pending-approval queue
+
+The operator-facing surface for the Operator Approval Bridge (home-server
+`docs/66`): a pending-approval queue where the operator Approves or Rejects a
+request — the in-chat/Console replacement for manual terminal ops.
+
+- **Pending queue (current state).** `GET /api/approvals/pending` is a
+  READ-ONLY, transparent proxy to the `ApprovalBridge.Broker`'s (E1.3)
+  `GET /pending` (E1.7): the registry **title** + the **TYPED, schema-validated
+  params** + provenance (requester identity, action_id, expiry). The card
+  **never** renders the requesting agent's free-text rationale as an
+  actionable field — none exists anywhere upstream of it (`docs/66 §8` T4);
+  the broker's model only ever carries `action_id` + schema-validated params.
+- **Approve / Reject.** `POST /api/approvals/approve` / `POST
+  /api/approvals/reject` forward the click **verbatim** to the broker's own
+  COMMAND API (`POST /approve` / `POST /reject`, single receiver, rejectable).
+  The Console performs **no security check of its own** here — it cannot
+  bypass the broker's server-side one-shot / approver≠requester / atomic-CAS
+  enforcement, because it never re-implements it; `BrokerClient` is a pure
+  relay. The approver identity is a **server-side-configured** value
+  (`SENTINEL_CONSOLE_OPERATOR_IDENTITY`), never taken from the browser
+  request, so a client cannot spoof a different approver to dodge the
+  self-approval check.
+- **Lifecycle feed (audit trail).** A third subscriber (`ApprovalBusSubscriber`)
+  listens (core NATS, read-only) to `homelab.security.approval.>` — a subject
+  family already covered by the Console's existing `homelab.security.>`
+  subscribe grant, so **no NATS ACL widening is needed** for this lane (unlike
+  the deploy lane above). Normalizes each event into an `ApprovalEvent` and
+  maintains a bounded read-model (`ApprovalQueueModel`): the
+  requested→approved/rejected→executed/expired history, joined by
+  `correlation_id` (== `request_id`), rendered as a click-to-expand chain like
+  the Live decisions feed.
+
 ## Tool surface (HTTP)
 
 | Route | Returns |
@@ -56,7 +89,12 @@ step (Scope 50 phase 9).
 | `GET /api/chain/{id}` | all decisions sharing a `correlation_id` (the per-request chain) |
 | `GET /api/deploys?n=` | recent `DeployEvent`s (release + applied/failed), newest first |
 | `GET /api/deploy-state` | per-service latest state: last released version/digest + last applied version/digest/ctid/result |
-| `GET /api/stats` | `{ total, ingested, connected, clients, deploysTotal, deploysIngested, deployBusConnected }` |
+| `GET /api/approvals/pending` | `{ brokerReachable, items[] }` — READ-ONLY proxy to the broker's `GET /pending`: title + typed params + provenance per open request |
+| `POST /api/approvals/approve` | body `{request_id}`; forwarded verbatim to the broker's `POST /approve` (the broker's own response — accepted or a structured rejection — is returned as-is) |
+| `POST /api/approvals/reject` | body `{request_id}`; forwarded verbatim to the broker's `POST /reject` |
+| `GET /api/approvals/recent?n=` | recent bridge lifecycle events (requested/approved/rejected/executed/expired), newest first |
+| `GET /api/approvals/chain/{id}` | all bridge lifecycle events sharing a `correlation_id` (== `request_id`) |
+| `GET /api/stats` | `{ total, ingested, connected, clients, deploysTotal, deploysIngested, deployBusConnected, approvalsTotal, approvalsIngested, approvalBusConnected }` |
 | `GET /events` | Server-Sent-Events live decision stream (authz only — the deploy lane is poll-based, see below) |
 | `GET /healthz` | 200 when the security bus is connected, 503 (degraded) otherwise |
 
@@ -67,8 +105,11 @@ step (Scope 50 phase 9).
 | `SENTINEL_CONSOLE_PORT` | `8140` | listen port |
 | `SENTINEL_CONSOLE_BUFFER` | `2000` | authz live-feed ring capacity (bounds memory) |
 | `SENTINEL_CONSOLE_DEPLOY_BUFFER` | `500` | deploy-events ring capacity (bounds memory) |
+| `SENTINEL_CONSOLE_APPROVAL_BUFFER` | `1000` | approval-lifecycle ring capacity (bounds memory) |
+| `BRIDGE_BROKER_URL` | `http://127.0.0.1:8013` | the `ApprovalBridge.Broker`'s base URL — the Console's only path to the pending-queue read + Approve/Reject command API |
+| `SENTINEL_CONSOLE_OPERATOR_IDENTITY` | `operator:console` | the approver identity the Console approves/rejects AS (server-side only, never client-supplied) — a placeholder until live per-operator SSO-bound authz (E1.5) lands |
 | `SENTINEL_CONSOLE_DEMO` | — | `1` ⇒ seed synthetic decisions so the page renders populated with NO live bus (dev/first-look only; off by default) |
-| `NATS_*` | — | the shared connection env (URL / TLS / NKey seed). Use a **read-only** identity — subscribe-only on `homelab.security.>` + (once the follow-up below lands) `homelab.release.>` / `homelab.deploy.>`; this service never publishes. |
+| `NATS_*` | — | the shared connection env (URL / TLS / NKey seed). Use a **read-only** identity — subscribe-only on `homelab.security.>` (which already covers `homelab.security.approval.>`) + (once the follow-up below lands) `homelab.release.>` / `homelab.deploy.>`; this service never publishes. |
 
 ## Correlation — the per-request chain
 

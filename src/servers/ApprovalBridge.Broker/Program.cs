@@ -62,6 +62,13 @@ app.MapGet("/health", (BrokerConfig c, IActionRegistry reg) => Results.Json(new
     actions = reg.ActionIds.Count,
 }));
 
+// Pending queue — READ-ONLY inspection surface for the Sentinel Console's pending-approval queue
+// (E1.7, docs/66 §6 step 3). Joins the store with the registry so the Console gets the title + typed
+// params + provenance without a second round trip. Performs no state transition; Approve/Reject below
+// remain the ONLY endpoints that can act.
+app.MapGet("/pending", async (BridgeBroker broker, CancellationToken ct) =>
+    Results.Json(await broker.ListPendingAsync(ct)));
+
 // Request intake — the EVENT (a fact). Agent-facing binding (MCP tool) is E1.6; here the identity is
 // carried in the body for the shadow surface. Deny-by-default on unknown action / bad params.
 app.MapPost("/request", async (RequestBody body, BridgeBroker broker, CancellationToken ct) =>
