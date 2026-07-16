@@ -30,9 +30,12 @@ Nine read-only 1:1 proxies over two internal MCP backends that live behind the
 CT121-mcp-gateway PEP:
 
 - **health-mcp** (`ste/health-mcp`, Google Health API v4 — Withings + Garmin + phone,
-  aggregated via Health Connect): `health_list_weight/_sleep/_steps` (each optional
+  aggregated via Health Connect): reads `health_list_weight/_sleep/_steps` (each optional
   ISO-8601 `start`/`end`), `health_list_datapoints` (`dataType` + optional window),
-  `health_list_data_types` (no args).
+  `health_list_data_types` (no args); write `health_log_nutrition` (`calories` +
+  `mealType` [breakfast|lunch|dinner|snack] required; optional `name`, `time`, `protein_g`,
+  `carbs_g`, `fat_g`, `dedupeKey`) — the single write tool, gated at the PEP by a separate
+  `tool:health.log_nutrition` grant.
 - **withings-mcp** (`ste/withings-mcp`, Withings Public Health Data API): `withings_list_weight`,
   `withings_list_body_composition` (both optional `start`/`end`, ISO-8601 or unix seconds),
   `withings_list_measures` (`meastypes` + optional window), `withings_list_measure_types` (no args).

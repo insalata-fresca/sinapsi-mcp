@@ -9,13 +9,14 @@ using Sinapsi.Mcp;
 namespace Bridge.Mcp.Tools;
 
 /// <summary>
-/// Personal-health READ tools, exposed to the operator's claude.ai Project. Thin 1:1 proxies
-/// over two internal read-only MCP backends that live BEHIND the CT121-mcp-gateway PEP:
+/// Personal-health tools, exposed to the operator's claude.ai Project. Thin 1:1 proxies over two
+/// internal MCP backends that live BEHIND the CT121-mcp-gateway PEP:
 /// <list type="bullet">
 ///   <item><b>health-mcp</b> (CT121 :9226, Google Health API v4 — Withings + Garmin + phone,
-///     aggregated via Health Connect): <c>health_list_weight</c> / <c>_list_sleep</c> /
-///     <c>_list_steps</c> / <c>_list_datapoints</c> / <c>_list_data_types</c>.</item>
-///   <item><b>withings-mcp</b> (CT121 :9227, Withings Public Health Data API): <c>withings_list_weight</c>
+///     aggregated via Health Connect): READ <c>health_list_weight</c> / <c>_list_sleep</c> /
+///     <c>_list_steps</c> / <c>_list_datapoints</c> / <c>_list_data_types</c>; WRITE
+///     <c>health_log_nutrition</c> (the single write tool — logs a nutrition entry).</item>
+///   <item><b>withings-mcp</b> (CT121 :9227, Withings Public Health Data API): READ <c>withings_list_weight</c>
 ///     / <c>_list_body_composition</c> / <c>_list_measures</c> / <c>_list_measure_types</c>.</item>
 /// </list>
 ///
@@ -32,9 +33,14 @@ namespace Bridge.Mcp.Tools;
 /// <para>Fail-closed layers, per tool, BEFORE any I/O: (1) <c>HEALTH_EXPOSED=false</c> →
 /// <c>disabled</c>; (2) <c>BRIDGE_HEALTH_AGENT</c> empty → <c>not_configured</c>. A PEP DENY
 /// (401/403) surfaces as <c>unauthorized</c>; an unreachable gateway as <c>unreachable</c>. All
-/// tools are <see cref="AuthService.HealthReadScope"/> (<c>bridge:health:read</c>, read bucket).
-/// The backend response text (already JSON) is passed through verbatim; the audit records the tool
-/// + outcome only, never the query window.</para>
+/// tools (reads AND the single write, <c>health_log_nutrition</c>) share the same
+/// <see cref="AuthService.HealthReadScope"/> (<c>bridge:health:read</c>, read bucket): that
+/// bridge-level scope only gates whether health is exposed at all; the real per-tool authorization
+/// — and the write/read distinction — is enforced downstream at the CT121 PEP against the bridge
+/// agent's grant (OpenFGA <c>tool:health.log_nutrition</c> + the agentgateway CEL allow-list), so a
+/// write the grant doesn't cover fails closed as <c>unauthorized</c>. The backend response text
+/// (already JSON) is passed through verbatim; the audit records the tool + outcome only, never the
+/// payload.</para>
 /// </summary>
 [McpServerToolType]
 public sealed class BridgeHealthTools(
@@ -109,6 +115,49 @@ public sealed class BridgeHealthTools(
         "/ not configured / unauthorized / unreachable.")]
     public Task<object> HealthListDataTypes(CancellationToken cancellationToken = default)
         => CallAsync("health_list_data_types", new Dictionary<string, object>(StringComparer.Ordinal), cancellationToken);
+
+    // ── health-mcp WRITE (the single write tool) ────────────────────────────────────────────────
+
+    private static readonly HashSet<string> MealTypes =
+        new(StringComparer.Ordinal) { "breakfast", "lunch", "dinner", "snack" };
+
+    [McpServerTool(Name = "health_log_nutrition")]
+    [Description(
+        "Log a nutrition entry to Google Health (write). calories and mealType are required; mealType " +
+        "must be one of breakfast|lunch|dinner|snack. Optional: name (free-text food/meal label), time " +
+        "(ISO-8601 instant, defaults to now on the backend), protein_g / carbs_g / fat_g (grams), and " +
+        "dedupeKey (idempotency key — repeat writes with the same key are de-duplicated). Returns " +
+        "{status, id?, dataType, written?, note?}, or {status, note} when disabled / not configured / " +
+        "unauthorized / unreachable.")]
+    public Task<object> HealthLogNutrition(
+        [Description("Total calories for the entry (kcal). Required.")] double calories,
+        [Description("Meal type: one of breakfast|lunch|dinner|snack. Required.")] string mealType,
+        [Description("Optional free-text food/meal label, e.g. \"chicken salad\".")] string? name = null,
+        [Description("Optional ISO-8601 instant for the entry. Omit to let the backend default to now.")] string? time = null,
+        [Description("Optional protein in grams.")] double? protein_g = null,
+        [Description("Optional carbohydrates in grams.")] double? carbs_g = null,
+        [Description("Optional fat in grams.")] double? fat_g = null,
+        [Description("Optional idempotency key; repeat writes with the same key are de-duplicated.")] string? dedupeKey = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (calories <= 0)
+            return InvalidRequest("health_log_nutrition", "calories must be a positive number");
+        if (string.IsNullOrWhiteSpace(mealType) || !MealTypes.Contains(mealType))
+            return InvalidRequest("health_log_nutrition", "mealType must be one of breakfast|lunch|dinner|snack");
+
+        var args = new Dictionary<string, object>(StringComparer.Ordinal)
+        {
+            ["calories"] = calories,
+            ["mealType"] = mealType,
+        };
+        if (!string.IsNullOrWhiteSpace(name)) args["name"] = name;
+        if (!string.IsNullOrWhiteSpace(time)) args["time"] = time;
+        if (protein_g is not null) args["protein_g"] = protein_g.Value;
+        if (carbs_g is not null) args["carbs_g"] = carbs_g.Value;
+        if (fat_g is not null) args["fat_g"] = fat_g.Value;
+        if (!string.IsNullOrWhiteSpace(dedupeKey)) args["dedupeKey"] = dedupeKey;
+        return CallAsync("health_log_nutrition", args, cancellationToken);
+    }
 
     // ── withings-mcp (Withings Public Health Data API) ──────────────────────────────────────────
 
