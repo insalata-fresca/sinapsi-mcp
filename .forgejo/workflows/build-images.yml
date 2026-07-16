@@ -61,6 +61,13 @@ jobs:
           # S50 — the Authorization Console (read-only inspection surface of the
           # authz plane; subscribes to homelab.security.>, serves the live UI).
           - { server: Sinapsi.SentinelConsole, image: sinapsi-sentinel-console }
+          # Shadow-test trio (delivery/authz plane). C1 delivery-evaluator: subscribes the
+          # merge/deploy change stream, emits verdict FACTS (observe-only, no act path).
+          - { server: DeliveryEvaluator.Host, image: delivery-evaluator }
+          # ConfigSpine.Mcp (CanonFix-3, rule 6): publish_config_event MCP tool.
+          - { server: ConfigSpine.Mcp,  image: config-spine-mcp }
+          # ApprovalBridge.Broker (E1.3): operator-approval coordination core (shadow/deny-by-default).
+          - { server: ApprovalBridge.Broker, image: approval-bridge-broker }
           - { server: Sshgw.Mcp,        image: sshgw-mcp }
           - { server: StepCa.Mcp,       image: stepca-mcp }
           - { server: Zitadel.Mcp,      image: zitadel-mcp }
