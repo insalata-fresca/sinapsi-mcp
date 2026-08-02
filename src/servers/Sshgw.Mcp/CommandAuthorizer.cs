@@ -140,7 +140,7 @@ public sealed class CommandAuthorizer
         return verdict;
     }
 
-    // ── per-segment capability check ────────────────────────────────
+    // ── per-segment capability check ─────────────────────────────────────────
     private AuthResult AuthorizeSegment(List<string> tokens)
     {
         if (tokens.Count == 0)
@@ -214,7 +214,7 @@ public sealed class CommandAuthorizer
         return AuthResult.Allowed;
     }
 
-    // ── sub-command resolution ────────────────────────────────────
+    // ── sub-command resolution ───────────────────────────────────────────────
     private static string? ResolveSubcommand(string verb, List<string> tokens)
     {
         int i = 1;
@@ -267,7 +267,7 @@ public sealed class CommandAuthorizer
         return i < tokens.Count ? tokens[i] : null;
     }
 
-    // ── absolute-path extraction ────────────────────────────────────
+    // ── absolute-path extraction ─────────────────────────────────────────────
     // A token is a path candidate when it (or the value after a leading --opt=) is
     // an absolute path. URLs (http://, ssh://, docker://) are hosts, not files.
     private static string? AbsolutePathCandidate(string token)
@@ -279,7 +279,7 @@ public sealed class CommandAuthorizer
         return null;
     }
 
-    // ── flag forms for write-flag matching ──────────────────────────────
+    // ── flag forms for write-flag matching ───────────────────────────────────
     // Yields the comparable flag tokens for a raw argument: the long-flag head
     // (--data from --data=x), and — for a single-dash short cluster like -sO —
     // each expanded -s, -O so a bundled dangerous short flag is still caught.
@@ -328,112 +328,4 @@ public sealed class CommandAuthorizer
         int j = ampPrefixed ? i + 1 : i;
         if (j >= s.Length || s[j] != '>') return false;
         j++;
-        if (j < s.Length && s[j] == '>') j++;                 // '>>'
-        while (j < s.Length && (s[j] == ' ' || s[j] == '\t')) j++;
-
-        if (j < s.Length && s[j] == '&')                      // fd dup: >&N
-        {
-            j++;
-            int d = j;
-            while (j < s.Length && char.IsDigit(s[j])) j++;
-            if (j == d) return false;                         // need at least one digit
-        }
-        else                                                  // must be exactly /dev/null
-        {
-            const string devnull = "/dev/null";
-            if (j + devnull.Length > s.Length ||
-                string.CompareOrdinal(s, j, devnull, 0, devnull.Length) != 0)
-                return false;
-            j += devnull.Length;
-            if (j < s.Length && s[j] != ' ' && s[j] != '\t' && s[j] != '|')
-                return false;                                 // /dev/nullX ⇒ not the null device
-        }
-        i = j - 1;                                            // loop i++ moves past
-        return true;
-    }
-
-    private static string RedirError() =>
-        "command redirects output to a file — only the safe stream forms " +
-        "('2>/dev/null', '2>&1', '>/dev/null') are permitted on a read surface";
-
-    // ── quote-aware lexer + structural gate ─────────────────────────────
-    // Returns an error reason, or null with `segments` filled (one list of tokens
-    // per '|'-separated pipeline stage). Input is already control-char/newline-free
-    // (SshgwValidation.ValidateCommand runs first).
-    private static string? Lex(string command, out List<List<string>> segments)
-    {
-        segments = new List<List<string>>();
-        var seg = new List<string>();
-        var tok = new System.Text.StringBuilder();
-        bool inTok = false;
-        char quote = '\0';                    // '\0' none, '\'' single, '"' double
-
-        void EndTok()
-        {
-            if (inTok) { seg.Add(tok.ToString()); tok.Clear(); inTok = false; }
-        }
-
-        for (int i = 0; i < command.Length; i++)
-        {
-            char c = command[i];
-
-            if (quote != '\0')
-            {
-                if (c == quote) { quote = '\0'; continue; }
-                // Inside double quotes, expansion is still live → forbid it.
-                if (quote == '"' && (c == '$' || c == '`'))
-                    return $"command contains a shell expansion ('{c}') inside double quotes — not allowed on a read surface";
-                tok.Append(c); inTok = true;
-                continue;
-            }
-
-            switch (c)
-            {
-                case '\'':
-                case '"':
-                    quote = c; inTok = true;          // opening quote starts/continues a token
-                    break;
-                case ' ':
-                case '\t':
-                    EndTok();
-                    break;
-                case '|':
-                    EndTok();
-                    if (seg.Count == 0)
-                        return "pipeline has an empty stage (a leading or doubled '|')";
-                    segments.Add(seg); seg = new List<string>();
-                    break;
-                // Redirection: rejected EXCEPT the safe stream-redirection idioms that
-                // write no file — `N>/dev/null`, `&>/dev/null`, `N>&M` (fd suppress/dup).
-                // The fd prefix (`2`) is the current all-digit token; `&>` starts here.
-                case '>':
-                    if (IsAllDigits(tok) && TryConsumeRedirection(command, ref i))
-                    { tok.Clear(); inTok = false; break; }        // discard the whole redirection
-                    return RedirError();
-                case '&':
-                    if (i + 1 < command.Length && command[i + 1] == '>' &&
-                        TryConsumeRedirection(command, ref i, ampPrefixed: true))
-                    { EndTok(); break; }
-                    return $"command contains a shell control character ('&') — chaining and backgrounding are not allowed on a read surface; use a single read pipeline";
-                // structural gate — all other side-effecting constructs refused.
-                case ';': case '<':
-                case '(': case ')': case '{': case '}':
-                case '`': case '$': case '\\': case '\n': case '\r':
-                    return $"command contains a shell control character ('{(c == '\n' ? "\\n" : c == '\r' ? "\\r" : c.ToString())}') — chaining, redirection, subshell, and expansion are not allowed on a read surface; use a single read pipeline";
-                default:
-                    tok.Append(c); inTok = true;
-                    break;
-            }
-        }
-
-        if (quote != '\0')
-            return "command has an unterminated quote";
-        // A pending safe-redirection target (e.g. the '/dev/null' of a consumed
-        // redirection) is discarded above; only real tokens remain.
-        EndTok();
-        if (seg.Count > 0) segments.Add(seg);
-        else if (segments.Count > 0)
-            return "pipeline has an empty final stage (a trailing '|')";
-        return null;
-    }
-}
+        if (j < s.Length && s[j] == '>') j++
