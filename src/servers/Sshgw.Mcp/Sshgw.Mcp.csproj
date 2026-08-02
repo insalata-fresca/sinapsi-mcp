@@ -15,6 +15,9 @@
          the in-repo lib via ProjectReference, so the solution builds without any
          NuGet feed. The remaining packages are public (nuget.org). -->
     <ProjectReference Include="../../libs/Sinapsi.Mcp/Sinapsi.Mcp.csproj" />
+    <!-- AuthzDecisionPublisher emits each command-authorization verdict onto the
+         event bus (the decision envelope); it uses the in-repo NATS lib. -->
+    <ProjectReference Include="../../libs/Sinapsi.Nats/Sinapsi.Nats.csproj" />
     <PackageReference Include="ModelContextProtocol.AspNetCore" Version="1.3.0" />
     <!-- SSH transport (public). 2024.x is the current SSH.NET line. -->
     <PackageReference Include="SSH.NET" Version="2024.2.0" />
