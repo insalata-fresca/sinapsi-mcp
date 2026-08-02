@@ -140,7 +140,7 @@ public sealed class CommandAuthorizer
         return verdict;
     }
 
-    // ── per-segment capability check ────────────────────────────────────
+    // ── per-segment capability check ─────────────────────────────────────────
     private AuthResult AuthorizeSegment(List<string> tokens)
     {
         if (tokens.Count == 0)
@@ -214,7 +214,7 @@ public sealed class CommandAuthorizer
         return AuthResult.Allowed;
     }
 
-    // ── sub-command resolution ──────────────────────────────────────
+    // ── sub-command resolution ───────────────────────────────────────────────
     private static string? ResolveSubcommand(string verb, List<string> tokens)
     {
         int i = 1;
@@ -267,7 +267,7 @@ public sealed class CommandAuthorizer
         return i < tokens.Count ? tokens[i] : null;
     }
 
-    // ── absolute-path extraction ────────────────────────────────────
+    // ── absolute-path extraction ─────────────────────────────────────────────
     // A token is a path candidate when it (or the value after a leading --opt=) is
     // an absolute path. URLs (http://, ssh://, docker://) are hosts, not files.
     private static string? AbsolutePathCandidate(string token)
@@ -279,7 +279,7 @@ public sealed class CommandAuthorizer
         return null;
     }
 
-    // ── flag forms for write-flag matching ──────────────────────────────
+    // ── flag forms for write-flag matching ───────────────────────────────────
     // Yields the comparable flag tokens for a raw argument: the long-flag head
     // (--data from --data=x), and — for a single-dash short cluster like -sO —
     // each expanded -s, -O so a bundled dangerous short flag is still caught.
@@ -328,7 +328,7 @@ public sealed class CommandAuthorizer
         int j = ampPrefixed ? i + 1 : i;
         if (j >= s.Length || s[j] != '>') return false;
         j++;
-        if (j < s.Length && s[j] == '>') j++;                 // '>>'
+        if (j < s.Length && s[j] == '>') j++��eiǾ;                 // '>>'
         while (j < s.Length && (s[j] == ' ' || s[j] == '\t')) j++;
 
         if (j < s.Length && s[j] == '&')                      // fd dup: >&N
@@ -356,7 +356,7 @@ public sealed class CommandAuthorizer
         "command redirects output to a file — only the safe stream forms " +
         "('2>/dev/null', '2>&1', '>/dev/null') are permitted on a read surface";
 
-    // ── quote-aware lexer + structural gate ─────────────────────────────
+    // ── quote-aware lexer + structural gate ──────────────────────────────────
     // Returns an error reason, or null with `segments` filled (one list of tokens
     // per '|'-separated pipeline stage). Input is already control-char/newline-free
     // (SshgwValidation.ValidateCommand runs first).
