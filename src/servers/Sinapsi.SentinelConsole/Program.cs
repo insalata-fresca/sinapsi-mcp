@@ -69,7 +69,7 @@ app.UseStaticFiles(new StaticFileOptions
     }
 });
 
-// ── inspection API (read-only) ───────────────────────────────────
+// ── inspection API (read-only) ────────────────────────────────────────────────
 app.MapGet("/api/posture", (ReadModel rm) => Results.Json(rm.Posture()));
 app.MapGet("/api/recent", (ReadModel rm, int? n) => Results.Json(rm.Recent(Math.Clamp(n ?? 200, 1, 2000))));
 app.MapGet("/api/chain/{id}", (ReadModel rm, string id) => Results.Json(rm.Chain(id)));
@@ -78,7 +78,7 @@ app.MapGet("/api/chain/{id}", (ReadModel rm, string id) => Results.Json(rm.Chain
 app.MapGet("/api/deploys", (DeployModel dm, int? n) => Results.Json(dm.Recent(Math.Clamp(n ?? 200, 1, 2000))));
 app.MapGet("/api/deploy-state", (DeployModel dm) => Results.Json(dm.State()));
 
-// ── Operator Approval Bridge lane ──────────────────────────────────────────
+// ── Operator Approval Bridge lane ─────────────────────────────────────────────────────────────
 // The operator identity the Console approves/rejects AS. Server-side-configured, never taken from
 // the browser request — a client cannot spoof a different approver identity through this surface.
 // This is a placeholder until real per-operator SSO-bound identity lands with live approve-channel
@@ -132,7 +132,7 @@ app.MapGet("/api/stats", (
 app.MapGet("/healthz", (SecurityBusSubscriber sub) =>
     sub.Connected ? Results.Ok("ok") : Results.Json(new { status = "degraded", reason = "bus not connected" }, statusCode: 503));
 
-// ── live feed (Server-Sent Events) ────────────────────────────────
+// ── live feed (Server-Sent Events) ────────────────────────────────────────────
 app.MapGet("/events", async (HttpContext ctx, LiveFeed feed, CancellationToken ct) =>
 {
     ctx.Response.Headers.ContentType = "text/event-stream";
