@@ -1,0 +1,780 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="dark" />
+<meta name="theme-color" content="#0d1117" />
+<title>Sinapsi Sentinel</title>
+<link rel="icon" href="/favicon.ico" sizes="48x48" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Sentinel" />
+<style>
+  :root{
+    /* ── Sinapsi brand tokens ──
+       Grounded verbatim from the canonical design system:
+       Sinapsi/sinapsi-app · packages/ui/src/styles/theme.css (@theme block).
+       Palette + accent + semantic status + type stacks are the real values;
+       the legacy alias names below are remapped onto them so the existing
+       journey markup keeps working with a single source of truth. */
+    --base:#0d1117; --surface:#161b22; --raised:#1e2530; --overlay:#272e3b;
+    --border:rgba(160,176,200,.1); --border-strong:rgba(160,176,200,.18);
+    --text-1:#e8eef2; --text-2:#a8b3c0; --text-3:#8b97a6;
+    --accent:#5eead4; --accent-strong:#2dd4bf; --accent-ink:#04201b; --accent-dim:rgba(94,234,212,.13);
+    --status-active:#34d399; --status-busy:#fbbf24; --status-failed:#f87171; --status-idle:#97a4b3;
+
+    /* legacy alias names used across this page → remapped to brand tokens */
+    --bg:var(--base); --panel:var(--surface); --panel2:var(--raised);
+    --line:var(--border-strong); --line2:rgba(160,176,200,.24);
+    --text:var(--text-1); --dim:var(--text-3); --dim2:var(--text-2);
+    --allow:var(--status-active); --approval:var(--status-busy); --deny:var(--status-failed);
+    --neutral:var(--status-idle); --amber:var(--status-busy); --red:var(--status-failed);
+
+    --font-sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,Roboto,sans-serif;
+    --font-mono:"SF Mono",ui-monospace,"Cascadia Code",Menlo,monospace;
+    --thumb:64px;
+  }
+  *{box-sizing:border-box}
+  /* hard backstop: NOTHING may create horizontal page scroll, whatever the data.
+     overflow-x:clip (not hidden) avoids creating a scroll container / breaking the
+     sticky header. Paired with min-width:0 on flex/grid children + minmax(0,1fr)
+     on the main grid so a long unbreakable string can't grow the layout past 100vw. */
+  html,body{margin:0;overflow-x:clip;max-width:100%}
+  body{
+    background:var(--bg);color:var(--text);
+    font:15px/1.55 var(--font-sans);
+    letter-spacing:.01em;
+    -webkit-font-smoothing:antialiased;
+    -webkit-text-size-adjust:100%;
+    -webkit-tap-highlight-color:transparent;
+    padding-bottom:env(safe-area-inset-bottom);
+  }
+  .mono{font-family:var(--font-mono)}
+  a{color:var(--accent)}
+
+  /* ── header ─────────────────────────────────────────────── */
+  header{
+    display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;
+    padding:8px 14px;border-bottom:1px solid var(--line);
+    background:color-mix(in srgb, var(--base) 82%, transparent);
+    backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+    position:sticky;top:0;z-index:5;
+  }
+  /* brand lockup — sibling of Sinapsi Studio: the SHARED "sinapsi" wordmark is
+     the brand (kept identical across surfaces), but the leading glyph is
+     Sentinel's OWN dedicated mark (a shield + aperture-eye — guard + watch),
+     not Studio's reused "S" synapse. Same visual language as the sinapsi mark
+     (Sinapsi/sinapsi-app · packages/ui/src/assets/logo/mark.svg): 64-grid,
+     teal #2dd4bf, stroke-width 10, round caps/joins. Mono surface label reads
+     "Sentinel", mirroring Studio's "Studio". */
+  header .brand{display:flex;align-items:center;gap:10px;white-space:nowrap;margin:0;text-decoration:none}
+  header .brand .mark{height:26px;width:26px;display:block;flex:0 0 auto}
+  header .brand .wordmark{height:17px;width:auto;display:block;flex:0 0 auto;margin-left:-3px}
+  header .brand .label{font-family:var(--font-mono);font-size:11px;line-height:1.2;color:var(--text-3);letter-spacing:.2px}
+  .health{margin-left:auto;display:flex;gap:12px;flex-wrap:wrap;color:var(--dim);font-size:12px;align-items:center}
+  .health .m{white-space:nowrap}
+  .health b{color:var(--dim2);font-weight:600}
+  .dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:baseline;background:var(--deny)}
+  .dot.up{background:var(--allow)}
+
+  /* ── attention banner (polite live region) ─────────────── */
+  .attention{
+    padding:10px 16px;border-bottom:1px solid var(--line);
+    min-height:44px;display:flex;align-items:center;gap:10px;
+    font-size:16px;font-weight:600;
+  }
+  .attention.calm{color:var(--dim2);font-weight:500}
+  .attention.act{color:#fff;background:linear-gradient(90deg,#241a06,transparent)}
+  .attention .count{
+    display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:28px;
+    padding:0 8px;border-radius:14px;background:var(--approval);color:#1a1206;font-weight:800;font-size:15px;
+  }
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+
+  /* ── phone-only above-the-fold plane-health strip ───────────────
+     On phone the useful status was buried below a big empty "All clear" banner +
+     collapsed blocks. When the queue is empty (the normal state) we surface the
+     live per-layer allow/approval/deny counts here, in the first viewport, without
+     the operator scrolling or expanding. Hidden on desktop (the plane sits beside
+     the queue) and hidden whenever there are pending cards (those are primary). */
+  .phone-only{display:none}
+  @media(max-width:919px){ .phone-only:not([hidden]){display:block} }
+  #phonesummary{padding:12px 16px 2px}
+  #phonesummary .ps-h{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--dim);margin:0 0 8px;font-weight:700;display:flex;align-items:center;gap:7px}
+  #phonesummary .ps-h .ic{width:14px;height:14px;color:var(--accent)}
+  #phonesummary .ps-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+  #phonesummary .ps{border:1px solid var(--line);border-radius:10px;background:var(--panel2);padding:9px 10px;min-width:0}
+  #phonesummary .ps .psl{font-size:10px;font-weight:700;color:var(--dim);text-transform:uppercase;letter-spacing:.3px;overflow-wrap:anywhere}
+  #phonesummary .ps .psc{display:flex;flex-wrap:wrap;gap:4px 9px;font-size:12px;margin-top:6px}
+  #phonesummary .ps .psc .c-a{color:var(--allow);font-weight:700}
+  #phonesummary .ps .psc .c-p{color:var(--approval);font-weight:700}
+  #phonesummary .ps .psc .c-d{color:var(--deny);font-weight:700}
+  #phonesummary .ps .psc.none{color:var(--dim)}
+
+  /* ── layout ─────────────────────────────────────────────── */
+  main{max-width:1440px;margin:0 auto;padding:14px 16px 40px;overflow-x:clip;
+       display:grid;grid-template-columns:minmax(0,1fr);gap:20px;align-items:start}
+  @media(min-width:920px){
+    /* minmax(0,1fr) NOT 1fr — a bare 1fr is minmax(auto,1fr) whose auto-minimum
+       grows to a child's min-content (a long command / tuple), which was the
+       real cause of the multi-screen horizontal scroll on phone. */
+    main{grid-template-columns:minmax(380px,460px) minmax(0,1fr);gap:26px;padding:20px 22px 48px}
+    .plane{position:sticky;top:64px}
+  }
+  section h2{
+    font-size:12px;text-transform:uppercase;letter-spacing:.7px;color:var(--dim);
+    margin:0 0 12px;font-weight:700;display:flex;align-items:center;gap:8px
+  }
+  section h2 .n{color:var(--dim2)}
+  /* inline lucide icons (24×24 viewBox, stroke currentColor, round caps) —
+     the same icon set Sinapsi Studio uses (lucide-react); sized per context */
+  .ic{width:1em;height:1em;flex:0 0 auto;stroke:currentColor;stroke-width:2;
+      stroke-linecap:round;stroke-linejoin:round;fill:none;vertical-align:-.125em}
+  section h2 .ic{width:15px;height:15px;color:var(--accent)}
+  details.block>summary .ic{width:15px;height:15px;color:var(--text-3)}
+  /* Approve-preview disclosure — honest, unobtrusive; --dim passes AA on --bg */
+  .disclosure{font-size:12px;color:var(--dim);line-height:1.4;margin:-4px 0 12px}
+  .aconfirm .disclosure{margin:8px 0 12px}
+
+  /* ── pending-approval cards ─────────────────────────────── */
+  .cards{display:flex;flex-direction:column;gap:14px;min-height:120px}
+  /* modest reserve to keep CLS good on async card render, WITHOUT a giant empty
+     band pushing plane-health below the fold — the old 78vh reserve meant the
+     normal (all-clear) state showed nothing useful in the first viewport. When
+     empty on phone we surface the live plane-health strip above the fold instead. */
+  @media(max-width:919px){ .cards:has(.acard){min-height:40vh} }
+  .cards:has(.empty){justify-content:center;min-height:auto}
+  .acard{
+    border:1px solid var(--line2);border-radius:12px;background:var(--panel);
+    padding:16px 16px 14px;box-shadow:0 1px 0 rgba(0,0,0,.3)
+  }
+  .acard.tier-red{border-color:#7a2b26}
+  /* de-emphasise expired cards WITHOUT opacity (opacity dims text below AA); dashed
+     border + muted title carry the "terminal / no longer actionable" signal. */
+  .acard.expired{border-style:dashed;background:rgb(19,22,28)}
+  .acard.expired .atitle{color:var(--dim2)}
+  .acard .ahead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+  .acard .atitle{font-size:17px;font-weight:700;line-height:1.3;flex:1 1 200px;min-width:0;word-break:break-word}
+  .tier{
+    flex:0 0 auto;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:800;
+    text-transform:uppercase;letter-spacing:.5px;border:1px solid transparent;white-space:nowrap
+  }
+  .tier-green .tier,.tier.t-green{color:#0d1117;background:var(--neutral);border-color:var(--neutral)}
+  .tier-yellow .tier,.tier.t-yellow{color:#241a06;background:var(--amber);border-color:var(--amber)}
+  .tier-red .tier,.tier.t-red{color:#2a0f0d;background:var(--red);border-color:var(--red)}
+  .awhat{font-size:15px;color:var(--dim2);margin:4px 0 12px;word-break:break-word}
+  .ameta{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:13px;color:var(--dim);margin-bottom:12px}
+  .ameta b{color:var(--dim2);font-weight:600}
+  .ameta .expiry{font-weight:600}
+  .ameta .expiry.soon{color:var(--amber)}
+  .ameta .expiry.gone{color:var(--deny)}
+  details.adet{margin-bottom:12px;border-top:1px solid var(--line);padding-top:10px}
+  details.adet>summary{cursor:pointer;color:var(--accent);font-size:13px;min-height:26px;display:flex;align-items:center;list-style:none}
+  details.adet>summary::-webkit-details-marker{display:none}
+  details.adet>summary::before{content:"▸ ";color:var(--dim)}
+  details.adet[open]>summary::before{content:"▾ "}
+  .aparams{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:13px;margin-top:8px}
+  .prow{display:flex;flex-wrap:wrap;gap:2px 10px;padding:2px 0}
+  .pkey{color:var(--dim);min-width:96px;flex:0 0 auto}
+  .pval{color:var(--dim2);min-width:0;flex:1 1 200px;word-break:break-all;overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px}
+
+  .aactions{display:flex;gap:12px;align-items:stretch}
+  .aactions button{
+    font:inherit;font-weight:700;border-radius:10px;cursor:pointer;border:1px solid transparent;
+    min-height:48px;padding:0 18px;flex:1 1 0;display:inline-flex;align-items:center;justify-content:center;gap:8px
+  }
+  /* primary action = Sinapsi teal (matches Studio's primary CTA: accent fill, dark ink) */
+  .btn-approve{background:var(--accent-strong);border-color:var(--accent-strong);color:var(--accent-ink)}
+  .btn-approve:hover{background:var(--accent)}
+  .btn-reject{background:transparent;border-color:var(--line2);color:var(--dim2)}
+  .btn-reject:hover{border-color:var(--deny);color:var(--deny)}
+  .aactions button:disabled{opacity:.5;cursor:default}
+  .aactions button:focus-visible,details.adet>summary:focus-visible,.chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+  /* confirm sheet (in-card) */
+  .aconfirm{border-top:1px solid var(--line);margin-top:2px;padding-top:12px}
+  .aconfirm .msg{font-size:14px;color:var(--dim2);margin-bottom:12px}
+  .aconfirm .msg b{color:#fff}
+  .aconfirm.red .msg{color:#ffc9c4}
+  .aresult{font-size:13px;margin-top:10px;min-height:18px}
+  .aresult.err{color:var(--deny)}
+  .aresult.ok{color:var(--allow)}
+  .spin{width:14px;height:14px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;display:inline-block;animation:sp .7s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+
+  .empty{
+    padding:22px 16px;border:1px dashed var(--line);border-radius:12px;
+    text-align:center;color:var(--dim);font-size:14px;line-height:1.5
+  }
+  .empty.calm strong{color:var(--allow)}
+  .empty .big{font-size:30px;display:block;margin-bottom:6px}
+
+  /* ── monitor / plane ────────────────────────────────────── */
+  details.block{border:1px solid var(--line);border-radius:12px;background:var(--panel);margin-bottom:16px;overflow:hidden}
+  details.block>summary{
+    cursor:pointer;list-style:none;padding:13px 16px;font-size:13px;font-weight:700;color:var(--dim2);
+    display:flex;align-items:center;gap:10px;min-height:30px
+  }
+  details.block>summary::-webkit-details-marker{display:none}
+  details.block>summary::before{content:"▸";color:var(--dim);font-size:11px}
+  details.block[open]>summary::before{content:"▾"}
+  details.block>summary .tag{margin-left:auto;color:var(--dim);font-weight:500;font-size:12px}
+  .block .body{padding:0 16px 16px}
+  @media(min-width:920px){
+    /* on desktop the plane blocks are open by default via [data-desktop-open] */
+  }
+
+  /* posture summary — 3 layer cards */
+  .layers{display:grid;grid-template-columns:1fr;gap:10px}
+  @media(min-width:520px){.layers{grid-template-columns:repeat(3,1fr)}}
+  .lcard{border:1px solid var(--line);border-radius:10px;background:var(--panel2);padding:12px}
+  .lcard .lname{font-size:12px;font-weight:700;color:var(--dim2);margin-bottom:2px}
+  .lcard .ldesc{font-size:11px;color:var(--dim);margin-bottom:10px;min-height:26px}
+  .bar{display:flex;height:8px;border-radius:5px;overflow:hidden;background:#0d1117;margin-bottom:8px}
+  .bar i{display:block;height:100%}
+  .bar .ba{background:var(--allow)} .bar .bp{background:var(--approval)} .bar .bd{background:var(--deny)}
+  .lcounts{display:flex;gap:12px;font-size:12px;flex-wrap:wrap}
+  .lcounts .c-a{color:var(--allow)} .lcounts .c-p{color:var(--approval)} .lcounts .c-d{color:var(--deny)}
+  .lcounts b{font-weight:700}
+
+  .worth{margin-top:14px}
+  .worth h3{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--dim);margin:0 0 8px;font-weight:700}
+  .worth .wempty{color:var(--dim);font-size:13px}
+  .wrow{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline;padding:7px 0;border-bottom:1px solid #21262d;font-size:13px}
+  .wrow .layer{flex:0 0 auto;font-size:10px;font-weight:800;border-radius:4px;padding:2px 6px}
+  .layer.q1{color:#a5d6ff;background:#0d2740}.layer.q2{color:#d2a8ff;background:#231536}.layer.q3{color:#ffd7a8;background:#341c08}
+  .wrow .wtool{flex:0 1 auto;min-width:0;color:var(--dim2);font-weight:600;overflow-wrap:anywhere}
+  /* content-bearing → WRAP, never nowrap (nowrap made min-content = the whole
+     command string, which grew the main grid column past 100vw). */
+  .wrow .wcmd{flex:1 1 140px;min-width:0;color:var(--dim);overflow-wrap:anywhere;word-break:break-word}
+  .wrow .wv{flex:0 0 auto;font-weight:700;margin-left:auto}
+  .wv.requiresApproval{color:var(--approval)} .wv.deny{color:var(--deny)}
+
+  /* live decisions feed — capped + scroll container (CLS-stable) */
+  .controls{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+  .controls input{
+    background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:8px;
+    padding:8px 10px;font:inherit;font-size:13px;flex:1 1 160px;min-height:36px;min-width:0
+  }
+  .chip{
+    cursor:pointer;padding:6px 12px;border:1px solid var(--line);border-radius:16px;color:var(--dim);
+    user-select:none;font-size:13px;min-height:32px;display:inline-flex;align-items:center
+  }
+  .chip.on{color:var(--text);border-color:var(--accent);background:var(--accent-dim)}
+  .feed{
+    border:1px solid var(--line);border-radius:10px;background:var(--panel);
+    height:340px;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch
+  }
+  .feed:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .row{
+    display:grid;grid-template-columns:60px 32px minmax(0,1fr) auto;gap:10px;
+    padding:8px 12px;border-bottom:1px solid #21262d;cursor:pointer;align-items:start;font-size:13px
+  }
+  .row:hover{background:var(--panel2)}
+  .row .t{color:var(--dim);font-variant-numeric:tabular-nums;font-size:12px;white-space:nowrap;padding-top:1px}
+  .row .layer{font-weight:800;text-align:center;border-radius:4px;font-size:10px;padding:2px 0}
+  /* content-bearing → WRAP (was nowrap+ellipsis; the clamp hid text AND its
+     min-content still fed the grid-column blow-out). Long commands now wrap in place. */
+  .row .cmd{min-width:0;overflow-wrap:anywhere;word-break:break-word;color:var(--dim2)}
+  .row .cmd .verb{color:var(--accent);font-weight:600}
+  .row .v{font-weight:700;text-align:right;font-size:12px;white-space:nowrap}
+  .v.allow{color:var(--allow)} .v.requiresApproval{color:var(--approval)} .v.deny{color:var(--deny)}
+  .chain{
+    grid-column:1/-1;margin:2px 0;padding:10px 12px;border-left:3px solid var(--accent);
+    background:rgba(94,234,212,.06);border-radius:0 6px 6px 0;font-size:12.5px
+  }
+  .chain .step{color:var(--dim2);padding:2px 0} .chain .step b{color:#fff}
+  .chain .corr{color:var(--dim);font-size:11.5px;margin-top:6px;word-break:break-all}
+  .feedempty{padding:24px 16px;text-align:center;color:var(--dim);font-size:13px}
+
+  /* deploys table → responsive stacked on phone */
+  .dstate{width:100%;border-collapse:collapse;font-size:13px}
+  .dstate th{color:var(--dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.4px;text-align:left;padding:6px 10px;border-bottom:1px solid var(--line)}
+  .dstate td{padding:8px 10px;border-bottom:1px solid #21262d;vertical-align:top}
+  .dstate .svc{color:var(--dim2);font-weight:600}
+  .pill{padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;border:1px solid transparent}
+  .pill.applied{color:var(--allow);border-color:#238636;background:#0f2417}
+  .pill.failed{color:var(--deny);border-color:#8e2c26;background:#2a1211}
+  .pill.released{color:var(--accent);border-color:rgba(45,212,191,.4);background:var(--accent-dim)}
+  .counts{color:var(--dim);font-size:11px}
+  /* was #586069 (2.97:1 on --bg — fails WCAG AA); use the existing --dim muted
+     token (7.56:1) rather than opacity, which would silently drop contrast again. */
+  .none{color:var(--dim)}
+  @media(max-width:600px){
+    .dstate,.dstate tbody,.dstate tr,.dstate td{display:block;width:100%}
+    .dstate thead{display:none}
+    .dstate tr{border:1px solid var(--line);border-radius:8px;margin-bottom:8px;padding:4px}
+    .dstate td{border:0;padding:4px 8px}
+    .dstate td::before{content:attr(data-l);color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.4px;display:block}
+  }
+</style>
+</head>
+<body>
+<header>
+  <!-- Brand lockup: Sentinel's OWN mark (dedicated shield + aperture-eye glyph —
+       guard + watch — authored in the Sinapsi visual language: 64-grid, teal
+       #2dd4bf, stroke-width 10, round caps/joins, same family as the sinapsi "S"
+       synapse mark but a DISTINCT glyph) + the SHARED canonical "sinapsi" wordmark
+       (inlined verbatim from Sinapsi/sinapsi-app · packages/ui/src/assets/logo/wordmark.svg)
+       + a mono surface label "Sentinel" — the sibling of "Sinapsi Studio". -->
+  <h1 class="brand">
+    <svg class="mark" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 64 64" aria-hidden="true" focusable="false"><path d="M 15 13 H49 V28 Q49 41 32 50 Q15 41 15 28 Z" fill="none" stroke="#2dd4bf" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/><circle cx="32" cy="29" r="9" fill="#2dd4bf"/><circle cx="32" cy="29" r="4.6" fill="#0d1117"/><circle cx="32" cy="29" r="2.2" fill="#2dd4bf"/></svg>
+    <svg class="wordmark" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="2.2 25.18 354.3 91.82" role="img" aria-label="Sinapsi"><path fill="#e6edf3" d="M 28 101.2 28 101.2Q16.4 101.2 10.6 96.15 4.8 91.1 4.2 83.2L4.2 83.2 15.1 82.7Q15.8 87.1 18.7 89.7 21.6 92.3 28 92.3L28 92.3Q33 92.3 35.65 90.7 38.3 89.1 38.3 85.6L38.3 85.6Q38.3 83.6 37.4 82.3 36.5 81 33.9 80.05 31.3 79.1 26.2 78.2L26.2 78.2Q18.4 76.7 14.05 74.65 9.7 72.6 7.9 69.55 6.1 66.5 6.1 62.1L6.1 62.1Q6.1 54.9 11.6 50.25 17.1 45.6 27.5 45.6L27.5 45.6Q34.8 45.6 39.5 48.05 44.2 50.5 46.6 54.5 49 58.5 49.5 63.1L49.5 63.1 38.6 63.7Q38.3 59.9 35.75 57.2 33.2 54.5 27.3 54.5L27.3 54.5Q22.1 54.5 19.6 56.5 17.1 58.5 17.1 61.7L17.1 61.7Q17.1 65.2 19.45 66.95 21.8 68.7 28.3 69.7L28.3 69.7Q36.4 71 40.95 73.05 45.5 75.1 47.4 78.15 49.3 81.2 49.3 85.5L49.3 85.5Q49.3 93 43.4 97.1 37.5 101.2 28 101.2M 76.3 100 65.7 100 65.7 46.8 76.3 46.8 76.3 100M 106.4 100 95.8 100 95.8 46.8 105.5 46.8 105.7 56.1Q107.8 50.6 112.1 48.1 116.4 45.6 121.9 45.6L121.9 45.6Q127.8 45.6 131.8 48.25 135.8 50.9 137.85 55.45 139.9 60 139.9 65.8L139.9 65.8 139.9 100 129.3 100 129.3 69Q129.3 62 126.95 58.25 124.6 54.5 119 54.5L119 54.5Q113.3 54.5 109.85 58.25 106.4 62 106.4 69L106.4 69 106.4 100M 174.3 101.2 174.3 101.2Q166 101.2 161.05 97.4 156.1 93.6 156.1 86.7L156.1 86.7Q156.1 79.9 160.25 76 164.4 72.1 173.1 70.4L173.1 70.4 191.4 66.9Q191.4 54.6 179.9 54.6L179.9 54.6Q174.8 54.6 171.9 56.9 169 59.2 167.9 63.5L167.9 63.5 157 62.8Q158.5 54.8 164.45 50.2 170.4 45.6 179.9 45.6L179.9 45.6Q190.7 45.6 196.35 51.35 202 57.1 202 67.5L202 67.5 202 88.2Q202 90.1 202.65 90.85 203.3 91.6 204.8 91.6L204.8 91.6 206.7 91.6 206.7 100Q205.3 100.3 202.8 100.3L202.8 100.3Q198.3 100.3 195.65 98.45 193 96.6 192.3 92.1L192.3 92.1 192.3 91.8Q190.3 96 185.4 98.6 180.5 101.2 174.3 101.2M 176 92.8 176 92.8Q183.2 92.8 187.3 88.7 191.4 84.6 191.4 78.3L191.4 78.3 191.4 74.9 175.8 77.9Q171 78.8 169.05 80.75 167.1 82.7 167.1 85.7L167.1 85.7Q167.1 89.1 169.45 90.95 171.8 92.8 176 92.8M 231 115 220.4 115 220.4 46.8 230.4 46.8 230.6 54.9Q232.9 50.3 237.15 47.95 241.4 45.6 246.7 45.6L246.7 45.6Q254.5 45.6 259.55 49.45 264.6 53.3 267.05 59.6 269.5 65.9 269.5 73.4L269.5 73.4Q269.5 80.9 267.05 87.2 264.6 93.5 259.55 97.35 254.5 101.2 246.7 101.2L246.7 101.2Q241.6 101.2 237.4 98.95 233.2 96.7 231 92.8L231 92.8 231 115M 244.8 92 244.8 92Q251.2 92 254.85 87.1 258.5 82.2 258.5 73.4L258.5 73.4Q258.5 64.6 254.85 59.7 251.2 54.8 244.8 54.8L244.8 54.8Q238.4 54.8 234.7 59.5 231 64.2 231 73.4L231 73.4Q231 82.6 234.7 87.3 238.4 92 244.8 92M 306.2 101.2 306.2 101.2Q294.6 101.2 288.8 96.15 283 91.1 282.4 83.2L282.4 83.2 293.3 82.7Q294 87.1 296.9 89.7 299.8 92.3 306.2 92.3L306.2 92.3Q311.2 92.3 313.85 90.7 316.5 89.1 316.5 85.6L316.5 85.6Q316.5 83.6 315.6 82.3 314.7 81 312.1 80.05 309.5 79.1 304.4 78.2L304.4 78.2Q296.6 76.7 292.25 74.65 287.9 72.6 286.1 69.55 284.3 66.5 284.3 62.1L284.3 62.1Q284.3 54.9 289.8 50.25 295.3 45.6 305.7 45.6L305.7 45.6Q313 45.6 317.7 48.05 322.4 50.5 324.8 54.5 327.2 58.5 327.7 63.1L327.7 63.1 316.8 63.7Q316.5 59.9 313.95 57.2 311.4 54.5 305.5 54.5L305.5 54.5Q300.3 54.5 297.8 56.5 295.3 58.5 295.3 61.7L295.3 61.7Q295.3 65.2 297.65 66.95 300 68.7 306.5 69.7L306.5 69.7Q314.6 71 319.15 73.05 323.7 75.1 325.6 78.15 327.5 81.2 327.5 85.5L327.5 85.5Q327.5 93 321.6 97.1 315.7 101.2 306.2 101.2M 354.5 100 343.9 100 343.9 46.8 354.5 46.8 354.5 100"/><circle cx="71" cy="34.34" r="7.16" fill="#2dd4bf"/><circle cx="349.2" cy="34.34" r="7.16" fill="#2dd4bf"/></svg>
+    <span class="label">Sentinel</span>
+  </h1>
+  <div class="health" aria-hidden="true">
+    <span class="m"><span id="adot" class="dot"></span><span id="aconn">approval bus…</span></span>
+    <span class="m"><span id="dot" class="dot"></span>decisions <b id="total">0</b></span>
+    <span class="m"><span id="ddot" class="dot"></span>deploys <b id="dtotal">0</b></span>
+  </div>
+</header>
+
+<!-- The single POLITE live region: pending-count / all-clear. Never assertive
+     (streaming spam anti-pattern); it only announces the operator-actionable state. -->
+<div id="attention" class="attention calm" role="status" aria-live="polite" aria-atomic="true">
+  <span>Checking the approval queue…</span>
+</div>
+<!-- Second polite region: ambient decision counter (never assertive). -->
+<span id="planestatus" class="sr-only" role="status" aria-live="polite"></span>
+
+<!-- Phone-only, above-the-fold plane-health summary. Shown when the queue is empty
+     (the normal state) so the first viewport is genuinely useful; hidden on desktop
+     and whenever there are pending cards. aria-hidden: it duplicates the plane-health
+     block for sighted phone users; SR users get the posture block + polite counter. -->
+<div id="phonesummary" class="phone-only" hidden aria-hidden="true">
+  <p class="ps-h"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M 22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></svg>Plane health — live posture</p>
+  <div class="ps-grid" id="pslayers">
+    <div class="ps"><div class="psl">Q1 · id → tool</div><div class="psc none">…</div></div>
+    <div class="ps"><div class="psl">Q2 · cmd safety</div><div class="psc none">…</div></div>
+    <div class="ps"><div class="psl">Q3 · gates</div><div class="psc none">…</div></div>
+  </div>
+</div>
+
+<main>
+  <!-- ═══ ACT (primary) ═══ -->
+  <section id="approvals" aria-label="Pending approvals">
+    <h2><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M 20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m 9 12 2 2 4-4"/></svg>Pending approvals <span class="n" id="pendcount"></span></h2>
+    <p class="disclosure">Preview — approvals are recorded under a shared console identity and are not yet executed (pending per-operator sign-in + executor go-live).</p>
+    <div class="cards" id="pending">
+      <div class="empty"><span class="big">·</span>loading the pending queue…</div>
+    </div>
+  </section>
+
+  <!-- ═══ MONITOR (secondary) ═══ -->
+  <div class="plane">
+    <section aria-label="Plane health">
+      <h2><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M 22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></svg>Plane health</h2>
+      <details class="block" id="blk-health">
+        <summary><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M 20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m 9 12 2 2 4-4"/></svg>Authorization posture <span class="tag" id="posturetag"></span></summary>
+        <div class="body">
+          <div class="layers" id="layers">
+            <div class="lcard"><div class="lname">Q1 · identity → tool</div><div class="ldesc">gateway / ReBAC engine</div><div class="none">waiting…</div></div>
+            <div class="lcard"><div class="lname">Q2 · command safety</div><div class="ldesc">in-MCP authorizer</div><div class="none">waiting…</div></div>
+            <div class="lcard"><div class="lname">Q3 · operator gates</div><div class="ldesc">harness ask / deny floor</div><div class="none">waiting…</div></div>
+          </div>
+          <div class="worth">
+            <h3>Denials &amp; approvals worth a look</h3>
+            <div id="worth"><div class="wempty">nothing flagged — no denies or approval-gates recently.</div></div>
+          </div>
+        </div>
+      </details>
+
+      <details class="block" id="blk-feed">
+        <summary><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M 16.247 7.761a6 6 0 0 1 0 8.478"/><path d="M 19.075 4.933a10 10 0 0 1 0 14.134"/><path d="M 4.925 19.067a10 10 0 0 1 0-14.134"/><path d="M 7.753 16.239a6 6 0 0 1 0-8.478"/><circle cx="12" cy="12" r="2"/></svg>Live decisions <span class="tag" id="feedtag"></span></summary>
+        <div class="body">
+          <div class="controls">
+            <input id="search" placeholder="filter by tool / command…" aria-label="Filter decisions" />
+            <span class="chip on" data-v="all" role="button" tabindex="0">all</span>
+            <span class="chip" data-v="allow" role="button" tabindex="0">allow</span>
+            <span class="chip" data-v="requiresApproval" role="button" tabindex="0">approval</span>
+            <span class="chip" data-v="deny" role="button" tabindex="0">deny</span>
+          </div>
+          <div class="feed" id="feed" tabindex="0" role="log" aria-label="Live decisions feed (scrollable)"><div class="feedempty">no decisions yet — they stream in as agents act.</div></div>
+        </div>
+      </details>
+
+      <details class="block" id="blk-deploy">
+        <summary><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M 12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/><path d="M 4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09"/><path d="M 9 12a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.4 22.4 0 0 1-4 2z"/><path d="M 9 12H4s.55-3.03 2-4c1.62-1.08 5 .05 5 .05"/></svg>Deploys <span class="tag">release → applied</span></summary>
+        <div class="body">
+          <table class="dstate"><thead><tr><th>Service</th><th>Released</th><th>Applied</th><th>Result</th></tr></thead>
+            <tbody id="deploystate"><tr><td colspan="4" class="none">waiting for release/deploy events…</td></tr></tbody>
+          </table>
+        </div>
+      </details>
+    </section>
+  </div>
+</main>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const hhmmss = t => { try{return new Date(t).toLocaleTimeString();}catch{return '';} };
+const isPhone = () => window.matchMedia('(max-width:919px)').matches;
+
+/* Open the plane blocks by default on desktop, keep them collapsed on phone
+   (progressive disclosure — pending stays the first/primary surface on phone). */
+function applyDisclosure(){
+  const open = !isPhone();
+  ['#blk-health','#blk-feed','#blk-deploy'].forEach(id=>{ const el=$(id); if(el && !el.dataset.touched) el.open = open; });
+}
+['#blk-health','#blk-feed','#blk-deploy'].forEach(id=>{
+  const el=$(id); el.addEventListener('toggle',()=>{ el.dataset.touched='1'; });
+});
+applyDisclosure();
+window.matchMedia('(max-width:919px)').addEventListener('change',()=>{
+  ['#blk-health','#blk-feed','#blk-deploy'].forEach(id=>{ delete $(id).dataset.touched; });
+  applyDisclosure();
+});
+
+/* ── risk tier (source vocab: green|yellow|red) → domain language ───────────── */
+const TIER = {
+  green:  {cls:'t-green',  label:'read-only',   sentence:'read-only'},
+  yellow: {cls:'t-yellow', label:'reversible',  sentence:'a reversible change'},
+  red:    {cls:'t-red',    label:'irreversible',sentence:'an IRREVERSIBLE change'},
+};
+const tierOf = t => TIER[(t||'green').toLowerCase()] || TIER.green;
+/* agent role in domain terms; raw session id lives behind the details expander */
+function agentRole(id){
+  if(!id) return 'an agent';
+  return String(id).replace(/^agent:/,'').split('/')[0] || id;
+}
+function expiryInfo(iso){
+  const ms = new Date(iso).getTime() - Date.now();
+  if(!isFinite(ms)) return {txt:'', cls:''};
+  if(ms<=0) return {txt:'expired', cls:'gone', expired:true};
+  const s=Math.round(ms/1000);
+  const txt = s<60 ? `expires in ${s}s` : `expires in ${Math.round(s/60)}m`;
+  return {txt, cls: s<60?'soon':'', expired:false};
+}
+function paramsHtml(p){
+  if(p==null || typeof p!=='object' || !Object.keys(p).length)
+    return '<div class="prow"><span class="pkey">params</span><span class="pval">(none)</span></div>';
+  return Object.entries(p).map(([k,v])=>
+    `<div class="prow"><span class="pkey">${esc(k)}</span><span class="pval">${esc(typeof v==='object'?JSON.stringify(v):String(v))}</span></div>`
+  ).join('');
+}
+
+/* ── pending-approval cards (primary ACT surface) ──────────────────────────── */
+function cardHtml(it){
+  const tier = tierOf(it.riskTier);
+  const exp = expiryInfo(it.expiresAt);
+  const role = agentRole(it.requesterIdentity);
+  return `<div class="acard tier-${(it.riskTier||'green').toLowerCase()} ${exp.expired?'expired':''}" data-request-id="${esc(it.requestId)}" data-tier="${esc((it.riskTier||'green').toLowerCase())}" data-title="${esc(it.title||it.actionId)}" data-expires="${esc(it.expiresAt)}">
+    <div class="ahead">
+      <span class="atitle">${esc(it.title||it.actionId)}</span>
+      <span class="tier ${tier.cls}">${esc(tier.label)}</span>
+    </div>
+    ${it.description?`<div class="awhat">${esc(it.description)}</div>`:''}
+    <div class="ameta">
+      <span>requested by <b>${esc(role)}</b></span>
+      <span class="expiry ${exp.cls}">${esc(exp.txt)}</span>
+    </div>
+    <details class="adet">
+      <summary>What exactly will run</summary>
+      <div class="aparams">
+        ${paramsHtml(it.params)}
+        <div class="prow"><span class="pkey">action</span><span class="pval">${esc(it.actionId)}</span></div>
+        <div class="prow"><span class="pkey">requester</span><span class="pval">${esc(it.requesterIdentity)}</span></div>
+        <div class="prow"><span class="pkey">request id</span><span class="pval">${esc(it.requestId)}</span></div>
+      </div>
+    </details>
+    <div class="aslot">${exp.expired ? expiredSlot() : actionsSlot()}</div>
+    <div class="aresult" role="status" aria-live="polite"></div>
+  </div>`;
+}
+const actionsSlot = () => `<div class="aactions">
+    <button class="btn-approve" data-act="approve" type="button">Approve</button>
+    <button class="btn-reject" data-act="reject" type="button">Reject</button>
+  </div>`;
+const expiredSlot = () => `<div class="empty" style="padding:12px">expired — the agent must re-request. Nothing to approve.</div>`;
+
+/* server truth: soonest-expiring first (broker order). We do NOT reorder client-side. */
+let lastPendingIds = '';
+async function refreshPending(){
+  try{
+    const res = await (await fetch('/api/approvals/pending')).json();
+    const box = $('#pending');
+    // Don't stomp a card the operator is mid-confirm/submit on.
+    if(box.querySelector('.aconfirm, .aactions button:disabled')) return;
+    if(!res.brokerReachable){
+      box.innerHTML = '<div class="empty"><span class="big" style="color:var(--status-busy)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m 21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M 12 9v4"/><path d="M 12 17h.01"/></svg></span>Approval broker unreachable — the queue can\'t be shown. This fails <strong>safe</strong> (closed), not open. Nothing was approved.</div>';
+      setAttention(0,false); return;
+    }
+    const items = res.items||[];
+    const ids = items.map(i=>i.requestId).join(',');
+    if(ids===lastPendingIds && box.querySelector('.acard')){ retickExpiry(); setAttention(items.length,true); return; }
+    lastPendingIds = ids;
+    if(!items.length){
+      box.innerHTML = '<div class="empty calm"><span class="big" style="color:var(--status-active)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M 18 6 7 17l-5-5"/><path d="m 22 10-7.5 7.5L13 16"/></svg></span><strong>All clear</strong> — no requests need you. The plane is running itself.</div>';
+    } else {
+      box.innerHTML = items.map(cardHtml).join('');
+    }
+    setAttention(items.length,true);
+  }catch(e){ /* leave last-good view; fail soft */ }
+}
+/* live-tick the expiry countdown without a full re-render (keeps CLS 0) */
+function retickExpiry(){
+  document.querySelectorAll('#pending .acard').forEach(card=>{
+    const el = card.querySelector('.expiry'); if(!el) return;
+    const info = expiryInfo(card.dataset.expires);
+    el.textContent = info.txt; el.className = 'expiry '+info.cls;
+    if(info.expired && !card.classList.contains('expired')){
+      card.classList.add('expired');
+      const slot = card.querySelector('.aslot'); if(slot) slot.innerHTML = expiredSlot();
+    }
+  });
+}
+setInterval(retickExpiry, 1000);
+
+/* attention banner + polite announce */
+function setAttention(n, reachable){
+  const el = $('#attention');
+  $('#pendcount').textContent = n>0 ? `(${n})` : '';
+  if(!reachable){ el.className='attention calm'; el.innerHTML='<span>Approval broker unreachable — failing safe.</span>'; return; }
+  if(n<=0){ el.className='attention calm'; el.innerHTML='<span>✓ All clear — no requests need you.</span>'; }
+  else{
+    el.className='attention act';
+    const word = n===1 ? 'request needs' : 'requests need';
+    el.innerHTML = `<span class="count">${n}</span><span>${word} your decision.</span>`;
+  }
+  // Phone fold: show the live plane-health strip above the fold when the queue is
+  // empty (normal state); hide it when there are cards to act on (cards are primary).
+  const ps = $('#phonesummary'); if(ps) ps.hidden = !(reachable && n<=0);
+}
+
+/* confirm flow — restate the consequence in the card, then submit */
+$('#pending').addEventListener('click', e=>{
+  const btn = e.target.closest('button[data-act]'); if(!btn) return;
+  const card = e.target.closest('.acard'); const act = btn.dataset.act;
+  const tier = card.dataset.tier, title = card.dataset.title;
+  const slot = card.querySelector('.aslot');
+  if(act==='reject'){
+    slot.innerHTML = confirmHtml('reject', title, tier);
+  } else {
+    slot.innerHTML = confirmHtml('approve', title, tier);
+  }
+});
+function confirmHtml(act, title, tier){
+  const red = tier==='red';
+  const msg = act==='approve'
+    ? `Approve <b>${esc(title)}</b>? This will run ${esc(tierOf(tier).sentence)} on your behalf${red?' that cannot be undone':''}.`
+    : `Reject <b>${esc(title)}</b>? The agent stays blocked.`;
+  const preview = act==='approve'
+    ? `<p class="disclosure">Preview — approvals are recorded under a shared console identity and are not yet executed (pending per-operator sign-in + executor go-live).</p>`
+    : '';
+  return `<div class="aconfirm ${red&&act==='approve'?'red':''}">
+    <div class="msg">${msg}</div>
+    ${preview}
+    <div class="aactions">
+      <button class="${act==='approve'?'btn-approve':'btn-reject'}" data-do="${act}" type="button">${act==='approve'?'Yes, approve':'Yes, reject'}</button>
+      <button class="btn-reject" data-do="cancel" type="button">Cancel</button>
+    </div>
+  </div>`;
+}
+$('#pending').addEventListener('click', async e=>{
+  const btn = e.target.closest('button[data-do]'); if(!btn) return;
+  const card = e.target.closest('.acard'); const doAct = btn.dataset.do;
+  const slot = card.querySelector('.aslot'); const out = card.querySelector('.aresult');
+  if(doAct==='cancel'){ slot.innerHTML = actionsSlot(); out.textContent=''; out.className='aresult'; return; }
+  const requestId = card.dataset.requestId;
+  slot.querySelectorAll('button').forEach(b=>b.disabled=true);
+  btn.innerHTML = `<span class="spin"></span>${doAct==='approve'?'approving…':'rejecting…'}`;
+  out.textContent=''; out.className='aresult';
+  try{
+    const r = await fetch(`/api/approvals/${doAct}`,{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({request_id: requestId})
+    });
+    const body = await r.json().catch(()=>({}));
+    if(r.ok){
+      out.textContent = doAct==='approve' ? '✓ approved — dispatched to the executor' : '✓ rejected';
+      out.className='aresult ok';
+      card.style.transition='opacity .5s'; card.style.opacity='.4';
+      slot.innerHTML=''; lastPendingIds='__force__';
+      setTimeout(refreshPending, 900);
+    } else {
+      // NEVER lose the card: restore actions so the operator can retry.
+      out.textContent = 'Broker refused: ' + (body.rejected || body.error || ('HTTP '+r.status));
+      out.className='aresult err';
+      slot.innerHTML = actionsSlot();
+    }
+  }catch{
+    out.textContent = 'Network error reaching the broker — the card is kept. Retry.';
+    out.className='aresult err';
+    slot.innerHTML = actionsSlot();
+  }
+});
+
+/* ── plane health: aggregate posture by layer ──────────────────────────────── */
+const LAYER_META = {q1:'gateway / ReBAC engine', q2:'in-MCP authorizer', q3:'harness ask / deny floor'};
+const LAYER_TITLE = {q1:'Q1 · identity → tool', q2:'Q2 · command safety', q3:'Q3 · operator gates'};
+function bar(a,p,d){
+  const tot=a+p+d||1;
+  return `<div class="bar">
+    <i class="ba" style="width:${100*a/tot}%"></i>
+    <i class="bp" style="width:${100*p/tot}%"></i>
+    <i class="bd" style="width:${100*d/tot}%"></i></div>`;
+}
+async function refreshPosture(){
+  try{
+    const rows = await (await fetch('/api/posture')).json();
+    const agg = {q1:{a:0,p:0,d:0}, q2:{a:0,p:0,d:0}, q3:{a:0,p:0,d:0}};
+    let total=0;
+    for(const r of rows){
+      const L=(r.layer||'').toLowerCase(); if(!agg[L]) continue;
+      agg[L].a+=r.allow; agg[L].p+=r.approval; agg[L].d+=r.deny;
+      total+=r.allow+r.approval+r.deny;
+    }
+    $('#layers').innerHTML = ['q1','q2','q3'].map(L=>{
+      const c=agg[L];
+      return `<div class="lcard">
+        <div class="lname">${esc(LAYER_TITLE[L])}</div>
+        <div class="ldesc">${esc(LAYER_META[L])}</div>
+        ${bar(c.a,c.p,c.d)}
+        <div class="lcounts"><span class="c-a"><b>${c.a}</b> allow</span><span class="c-p"><b>${c.p}</b> approval</span><span class="c-d"><b>${c.d}</b> deny</span></div>
+      </div>`;
+    }).join('');
+    $('#posturetag').textContent = total ? `${total} decisions` : '';
+    // Mirror the counts into the phone above-the-fold strip (short labels).
+    const psl = $('#pslayers');
+    if(psl){
+      const PS_TITLE = {q1:'Q1 · id → tool', q2:'Q2 · cmd safety', q3:'Q3 · gates'};
+      psl.innerHTML = ['q1','q2','q3'].map(L=>{
+        const c=agg[L];
+        return `<div class="ps"><div class="psl">${esc(PS_TITLE[L])}</div><div class="psc"><span class="c-a">${c.a} allow</span><span class="c-p">${c.p} appr</span><span class="c-d">${c.d} deny</span></div></div>`;
+      }).join('');
+    }
+  }catch{}
+}
+/* "denies worth a look" — recent non-allow decisions (not the allow flood) */
+async function refreshWorth(){
+  try{
+    const rows = await (await fetch('/api/recent?n=200')).json();
+    const flagged = rows.filter(d=>d.verdict!=='allow').slice(0,8);
+    const box = $('#worth');
+    if(!flagged.length){ box.innerHTML='<div class="wempty">nothing flagged — no denies or approval-gates recently.</div>'; return; }
+    box.innerHTML = flagged.map(d=>{
+      const L=(d.layer||'').toLowerCase();
+      return `<div class="wrow">
+        <span class="layer ${L}">${esc((d.layer||'').toUpperCase())}</span>
+        <span class="wtool">${esc(d.tool)}</span>
+        <span class="wcmd">${esc(d.command||d.reason||'')}</span>
+        <span class="wv ${d.verdict}">${d.verdict==='requiresApproval'?'approval':d.verdict}</span>
+      </div>`;
+    }).join('');
+  }catch{}
+}
+
+/* ── live decisions feed (capped/windowed, CLS-stable scroll container) ──────── */
+const feed = $('#feed'); let vFilter='all', search='';
+const MAXROWS = 80;   // windowed: bound the DOM (was ~1000+)
+const vClass = v => v==='allow'?'allow':v==='deny'?'deny':'requiresApproval';
+const vLabel = v => v==='requiresApproval'?'approval':v;
+function matches(d){
+  if(vFilter!=='all' && d.verdict!==vFilter) return false;
+  if(search){ const h=((d.tool||'')+' '+(d.verb||'')+' '+(d.command||'')+' '+(d.server||'')).toLowerCase(); if(!h.includes(search)) return false; }
+  return true;
+}
+function rowHtml(d){
+  const L=(d.layer||'').toLowerCase();
+  const cmd = d.verb
+    ? `<span class="verb">${esc(d.verb)}</span> ${esc((d.command||'').replace(new RegExp('^'+d.verb),'').trim())}`
+    : esc(d.command||d.reason||'');
+  // NOTE: correlation id is intentionally NOT a visible column (contrast/overflow fix);
+  // it lives in the expand-on-click chain drawer.
+  return `<div class="row" data-corr="${esc(d.correlationId)}">
+    <span class="t">${hhmmss(d.time)}</span>
+    <span class="layer ${L}">${esc((d.layer||'').toUpperCase())}</span>
+    <span class="cmd" title="${esc(d.tool)} — ${esc(d.reason)}">${cmd}</span>
+    <span class="v ${vClass(d.verdict)}">${vLabel(d.verdict)}</span></div>`;
+}
+let newSinceAnnounce = 0;
+function addRow(d){
+  if(!matches(d)) return;
+  const fe = feed.querySelector('.feedempty'); if(fe) feed.innerHTML='';
+  feed.insertAdjacentHTML('afterbegin', rowHtml(d));
+  while(feed.children.length>MAXROWS) feed.lastElementChild.remove();
+  newSinceAnnounce++;
+  $('#feedtag').textContent = '';
+}
+feed.addEventListener('click', async e=>{
+  const row=e.target.closest('.row'); if(!row) return;
+  const nx=row.nextElementSibling;
+  if(nx && nx.classList.contains('chain')){ nx.remove(); return; }
+  const corr=row.dataset.corr; if(!corr) return;
+  let chain=[]; try{ chain = await (await fetch('/api/chain/'+encodeURIComponent(corr))).json(); }catch{}
+  const steps = chain.length ? chain.map(c=>
+    `<div class="step"><b>${esc((c.layer||'').toUpperCase())}</b> ${esc(vLabel(c.verdict))} — ${esc(c.reason||'')}</div>`).join('')
+    : '<div class="step">no other layers recorded for this request yet.</div>';
+  row.insertAdjacentHTML('afterend', `<div class="chain">${steps}<div class="corr">correlation: ${esc(corr)}</div></div>`);
+});
+document.querySelectorAll('.chip').forEach(c=>{
+  const act=()=>{ document.querySelectorAll('.chip').forEach(x=>x.classList.remove('on')); c.classList.add('on'); vFilter=c.dataset.v; };
+  c.onclick=act; c.onkeydown=ev=>{ if(ev.key==='Enter'||ev.key===' '){ ev.preventDefault(); act(); } };
+});
+$('#search').oninput=e=>{ search=e.target.value.toLowerCase(); };
+
+/* ── deploys (demoted, collapsed) ──────────────────────────────────────────── */
+const shortDigest = d => d ? d.replace(/^sha256:/,'').slice(0,12) : '';
+async function refreshDeployState(){
+  try{
+    const rows=await (await fetch('/api/deploy-state')).json();
+    const body=$('#deploystate');
+    if(!rows.length){ body.innerHTML='<tr><td colspan="4" class="none">waiting for release/deploy events…</td></tr>'; return; }
+    body.innerHTML = rows.map(r=>{
+      const released = r.lastReleasedVersion ? `${esc(r.lastReleasedVersion)} <span class="counts">${esc(shortDigest(r.lastReleasedDigest))} · ${hhmmss(r.lastReleasedAt)}</span>` : '<span class="none">—</span>';
+      const applied = r.lastAppliedVersion ? `${esc(r.lastAppliedVersion)} <span class="counts">ct${esc(r.lastAppliedCtid)} · ${hhmmss(r.lastAppliedAt)}</span>` : '<span class="none">—</span>';
+      const result = r.lastResult ? `<span class="pill ${esc(r.lastResult)}">${esc(r.lastResult)}</span>` : '<span class="none">—</span>';
+      return `<tr><td data-l="Service" class="svc">${esc(r.svc)}</td><td data-l="Released">${released}</td><td data-l="Applied">${applied}</td><td data-l="Result">${result}</td></tr>`;
+    }).join('');
+  }catch{}
+}
+
+/* ── health strip + ambient (polite) decision counter ──────────────────────── */
+async function refreshStats(){
+  try{
+    const s=await (await fetch('/api/stats')).json();
+    $('#total').textContent=s.total ?? 0;
+    $('#dtotal').textContent=s.deploysTotal ?? 0;
+    $('#dot').className='dot '+(s.connected?'up':'');
+    $('#ddot').className='dot '+(s.deployBusConnected?'up':'');
+    $('#adot').className='dot '+(s.approvalBusConnected?'up':'');
+    $('#aconn').textContent = s.approvalBusConnected?'approval bus':'approval bus down';
+  }catch{}
+}
+setInterval(()=>{ // polite ambient announce, throttled (never assertive)
+  if(newSinceAnnounce>0){ $('#planestatus').textContent = `${newSinceAnnounce} new decision${newSinceAnnounce===1?'':'s'} on the plane.`; newSinceAnnounce=0; }
+}, 12000);
+
+/* ── boot ───────────────────────────────────────────────────────────────────── */
+async function backfill(){ try{ const rows=await (await fetch('/api/recent?n=80')).json(); rows.reverse().forEach(addRow); newSinceAnnounce=0; }catch{} }
+function connect(){
+  const es=new EventSource('/events');
+  es.onmessage=e=>{ try{ addRow(JSON.parse(e.data)); }catch{} };
+  es.onerror=()=>{ es.close(); setTimeout(connect,3000); };
+}
+refreshPending(); refreshPosture(); refreshWorth(); refreshStats(); refreshDeployState();
+backfill().then(connect);
+setInterval(refreshPending,3000);
+setInterval(refreshPosture,4000);
+setInterval(refreshWorth,5000);
+setInterval(refreshStats,4000);
+setInterval(refreshDeployState,5000);
+
+/* ── PWA: register the app-shell service worker (installability + offline shell) ──
+   Same approach as Sinapsi Console/Studio (apps/console · public/sw.js): kept out of
+   the render path, best-effort, never caches /api/* or /events (live data must stay
+   fresh). Chrome/Android require a registered SW with a fetch handler to offer install. */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {/* best-effort; app works without it */});
+  });
+}
+</script>
+</body>
+</html>
