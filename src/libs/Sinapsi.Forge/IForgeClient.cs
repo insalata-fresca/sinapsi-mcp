@@ -70,7 +70,7 @@ public interface IForgeClient
     Task<ForgePullRequest> GetPullRequestAsync(string owner, string repo, long number, CancellationToken ct = default);
     Task<IReadOnlyList<ForgePullRequest>> ListPullRequestsAsync(string owner, string repo, string? state, int limit = 30, CancellationToken ct = default);
     Task<ForgePullRequest> UpdatePullRequestAsync(string owner, string repo, long number, UpdatePullRequest req, CancellationToken ct = default);
-    Task<ForgeMergeResult> MergePullRequestAsync(string owner, string repo, long number, string method, string? title, string? message, CancellationToken ct = default);
+    Task<ForgeMergeResult> MergePullRequestAsync(string owner, string repo, long number, string method, string? title, string? message, bool? deleteBranchAfterMerge = null, CancellationToken ct = default);
     Task<IReadOnlyList<ForgePullFile>> ListPullRequestFilesAsync(string owner, string repo, long number, CancellationToken ct = default);
     Task<string> GetPullRequestDiffAsync(string owner, string repo, long number, CancellationToken ct = default);
     Task<IReadOnlyList<ForgeReview>> ListPullReviewsAsync(string owner, string repo, long number, CancellationToken ct = default);
@@ -126,6 +126,33 @@ public interface IForgeClient
     Task<IReadOnlyList<string>> AddRepoTopicAsync(string owner, string repo, string topic, CancellationToken ct = default);
     Task<IReadOnlyList<string>> RemoveRepoTopicAsync(string owner, string repo, string topic, CancellationToken ct = default);
     Task<IReadOnlyList<string>> SetRepoTopicsAsync(string owner, string repo, IReadOnlyList<string> topics, CancellationToken ct = default);
+
+    // ── Insights (GitHub-only; gated by ForgeCapabilities.Insights) ────────────
+    // The repository "Insights" surface: traffic, contributor/commit statistics,
+    // the community profile, the dependency-graph SBOM, forks, and languages.
+    //
+    // These return <c>object</c> rather than a typed record on purpose: each one is a
+    // UNION of a mapped payload and a structured NON-ERROR envelope the caller must be
+    // able to read as an answer —
+    //   • <c>{ ok:false, status:202, retry:true, note }</c> — GitHub is still computing a
+    //     <c>stats/*</c> cache and answered 202 with an empty body (see the adapter);
+    //   • <c>{ ok:false, status:403, note }</c> — <c>traffic/*</c> needs push access;
+    //   • <c>{ ok:false, status:422, note }</c> — the repo is too large for code frequency.
+    // A 404 (and every other non-2xx) stays on the normal ForgeApiException path.
+    Task<object> GetTrafficViewsAsync(string owner, string repo, string per, CancellationToken ct = default);
+    Task<object> GetTrafficClonesAsync(string owner, string repo, string per, CancellationToken ct = default);
+    Task<object> GetTrafficReferrersAsync(string owner, string repo, CancellationToken ct = default);
+    Task<object> GetTrafficPathsAsync(string owner, string repo, CancellationToken ct = default);
+    Task<object> ListContributorsAsync(string owner, string repo, bool anon, int limit, CancellationToken ct = default);
+    Task<object> GetContributorStatsAsync(string owner, string repo, CancellationToken ct = default);
+    Task<object> GetCommitActivityAsync(string owner, string repo, CancellationToken ct = default);
+    Task<object> GetCodeFrequencyAsync(string owner, string repo, CancellationToken ct = default);
+    Task<object> GetParticipationAsync(string owner, string repo, CancellationToken ct = default);
+    Task<object> GetPunchCardAsync(string owner, string repo, CancellationToken ct = default);
+    Task<object> GetCommunityProfileAsync(string owner, string repo, CancellationToken ct = default);
+    Task<object> GetSbomAsync(string owner, string repo, int limit, CancellationToken ct = default);
+    Task<object> ListForksAsync(string owner, string repo, string sort, int limit, CancellationToken ct = default);
+    Task<object> GetLanguagesAsync(string owner, string repo, CancellationToken ct = default);
 }
 
 public enum ForgeProvider { Gitea, GitHub }
@@ -148,7 +175,15 @@ public sealed record EditRepoRequest(
     bool? HasIssues = null,
     bool? HasWiki = null,
     bool? Archived = null,
-    bool? HasReleases = null);
+    bool? HasReleases = null,
+    /// <summary>Delete the head branch automatically when a pull request is merged.
+    /// Forgejo/Gitea field <c>default_delete_branch_after_merge</c>; GitHub calls it
+    /// <c>delete_branch_on_merge</c> — each adapter maps to its own name.</summary>
+    bool? DefaultDeleteBranchAfterMerge = null,
+    /// <summary>The repository's homepage / website URL. Forgejo/Gitea field <c>website</c>;
+    /// GitHub calls it <c>homepage</c> — each adapter maps to its own name. Pass an empty
+    /// string to clear it; omit (null) to leave the current value untouched.</summary>
+    string? Homepage = null);
 
 public sealed record CreateIssueRequest(
     string Title,

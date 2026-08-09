@@ -54,6 +54,12 @@ public sealed partial class GitHubForgeClient
             ["has_issues"] = req.HasIssues,
             ["has_wiki"] = req.HasWiki,
             ["archived"] = req.Archived,
+            // GitHub's name for the same setting is `delete_branch_on_merge`, NOT the
+            // Forgejo/Gitea `default_delete_branch_after_merge`. Pruned when null.
+            ["delete_branch_on_merge"] = req.DefaultDeleteBranchAfterMerge,
+            // GitHub calls the homepage `homepage` (Forgejo: `website`). Pruned when null;
+            // an explicit "" clears it. Without this the About sidebar could not be set at all.
+            ["homepage"] = req.Homepage,
         });
         return MapRepo((await SendJsonAsync(HttpMethod.Patch, $"repos/{Esc(owner)}/{Esc(repo)}", body, ct))!.Value);
     }
@@ -74,7 +80,8 @@ public sealed partial class GitHubForgeClient
         HtmlUrl: Str(r, "html_url"),
         Stars: Num(r, "stargazers_count") ?? Num(r, "stars_count"),
         Forks: Num(r, "forks_count"),
-        OpenIssues: Num(r, "open_issues_count"));
+        OpenIssues: Num(r, "open_issues_count"),
+        Homepage: Str(r, "homepage"));
 
     // ── Contents / files ───────────────────────────────────────────────────────
     public async Task<ForgeContentListing> GetContentsAsync(string owner, string repo, string path, string? gitRef, CancellationToken ct = default)

@@ -24,6 +24,7 @@
     <Compile Include="../../src/servers/Github.Mcp/Forge/GitHubForgeClient.IssuesPullsEtc.cs" />
     <Compile Include="../../src/servers/Github.Mcp/Forge/GitHubForgeClient.Actions.cs" />
     <Compile Include="../../src/servers/Github.Mcp/Forge/GitHubForgeClient.Topics.cs" />
+    <Compile Include="../../src/servers/Github.Mcp/Forge/GitHubForgeClient.Insights.cs" />
   </ItemGroup>
 
 </Project>

@@ -102,7 +102,7 @@ public sealed partial class GitHubForgeClient
         return MapPull((await SendJsonAsync(HttpMethod.Patch, $"repos/{Esc(owner)}/{Esc(repo)}/pulls/{number}", body, ct))!.Value);
     }
 
-    public async Task<ForgeMergeResult> MergePullRequestAsync(string owner, string repo, long number, string method, string? title, string? message, CancellationToken ct = default)
+    public async Task<ForgeMergeResult> MergePullRequestAsync(string owner, string repo, long number, string method, string? title, string? message, bool? deleteBranchAfterMerge = null, CancellationToken ct = default)
     {
         var m = (method ?? "merge").ToLowerInvariant() switch
         {

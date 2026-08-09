@@ -24,6 +24,7 @@ public enum ForgeCapabilities
     TimeTracking      = 1 << 12,   // Gitea-only
     CommitStatus      = 1 << 13,   // GitHub-only (here)
     BranchProtection  = 1 << 14,
+    Insights          = 1 << 15,   // GitHub-only — traffic / stats / community / SBOM
 
     All = Repos | Contents | Branches | Commits | Issues | PullRequests | Releases
         | Orgs | Notifications | Search | Webhooks | Actions | BranchProtection,

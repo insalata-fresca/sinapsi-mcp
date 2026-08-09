@@ -60,16 +60,18 @@ public sealed class RepoTools
             async () => await forge.ForkRepoAsync(owner, repo, organization, ct));
 
     [McpServerTool(Name = "edit_repo", Destructive = true)]
-    [Description("Edit repository settings (description, visibility, default branch, issues/wiki, releases unit, archived).")]
+    [Description("Edit repository settings (description, homepage, visibility, default branch, issues/wiki, releases unit, archived, auto-delete branch after merge).")]
     public static Task<object> EditRepo(IForgeClient forge, string owner, string repo,
         string? description = null, bool? @private = null, string? default_branch = null,
         bool? has_issues = null, bool? has_wiki = null, bool? archived = null,
         [Description("Enable/disable the Releases unit. Set true to fix release endpoints 404ing on a repo with has_releases:false.")] bool? has_releases = null,
+        [Description("Delete the head branch automatically when a pull request is merged. Set true to stop merged branches accumulating forever — unbounded branch growth is what makes branch lists unreadable and forces periodic manual purges. Omit to leave the repo's current setting untouched.")] bool? default_delete_branch_after_merge = null,
+        [Description("The repository's homepage / website URL, shown beside the description. Pass an empty string to clear it; omit to leave the current value untouched.")] string? homepage = null,
         CancellationToken ct = default)
         => ForgeToolGuard.RunAsync(
             () => SinapsiForgeValidation.ValidateOwnerRepo(owner, repo)
                   ?? SinapsiForgeValidation.ValidateRef(default_branch, "default_branch", required: false),
-            async () => await forge.EditRepoAsync(owner, repo, new(description, @private, default_branch, has_issues, has_wiki, archived, has_releases), ct));
+            async () => await forge.EditRepoAsync(owner, repo, new(description, @private, default_branch, has_issues, has_wiki, archived, has_releases, default_delete_branch_after_merge, homepage), ct));
 
     [McpServerTool(Name = "delete_repo", Destructive = true)]
     [Description("Delete a repository. Irreversible.")]

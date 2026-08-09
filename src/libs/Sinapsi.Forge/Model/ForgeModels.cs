@@ -26,14 +26,18 @@ public sealed record ForgeRepo(
     string? HtmlUrl,
     long? Stars,
     long? Forks,
-    long? OpenIssues);
+    long? OpenIssues,
+    /// <summary>Repository homepage / website URL — Forgejo/Gitea <c>website</c>, GitHub
+    /// <c>homepage</c>. Appended with a default so existing positional construction still
+    /// compiles; both adapters populate it by name.</summary>
+    string? Homepage = null);
 
 public sealed record ForgeBranch(
     string Name,
     string CommitSha,
     bool? Protected);
 
-public sealed record ForgeCommitAuthor(string? Name, string? Email, DateTimeOffset? Date);
+public sealed record ForgeCommitAuthor(string? Name, string? Email, DateTimeOffset? Date, string? DateRaw = null);
 
 public sealed record ForgeCommit(
     string Sha,

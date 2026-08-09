@@ -375,6 +375,40 @@ public sealed class GiteaForgeClientTests
         Assert.Equal(new[] { "a", "b" }, topics);
     }
 
+    // ── edit_repo: default_delete_branch_after_merge ────────────────────────────
+    // Without this setting merged branches are never pruned and the branch list grows
+    // without bound (a manual purge took ste/sinapsi-mcp from 460 branches to 12).
+    // The load-bearing case is the NULL one: an omitted flag must never reset the repo.
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task EditRepo_sends_default_delete_branch_after_merge_when_set(bool value)
+    {
+        var (client, handler) = Make(HttpStatusCode.OK, """{"full_name":"o/r","private":false}""");
+
+        await client.EditRepoAsync("o", "r", new EditRepoRequest(DefaultDeleteBranchAfterMerge: value));
+
+        Assert.Equal(HttpMethod.Patch, handler.Request!.Method);
+        Assert.EndsWith("/repos/o/r", handler.Request!.RequestUri!.AbsolutePath);
+        using var doc = JsonDocument.Parse(handler.Body!);
+        Assert.Equal(value, doc.RootElement.GetProperty("default_delete_branch_after_merge").GetBoolean());
+    }
+
+    [Fact]
+    public async Task EditRepo_omits_default_delete_branch_after_merge_when_null()
+    {
+        // Editing only the description must NOT carry the flag — sending it would silently
+        // reset whatever the repo already has configured.
+        var (client, handler) = Make(HttpStatusCode.OK, """{"full_name":"o/r","private":false}""");
+
+        await client.EditRepoAsync("o", "r", new EditRepoRequest(Description: "just a description"));
+
+        using var doc = JsonDocument.Parse(handler.Body!);
+        Assert.Equal("just a description", doc.RootElement.GetProperty("description").GetString());
+        Assert.False(doc.RootElement.TryGetProperty("default_delete_branch_after_merge", out _));
+    }
+
     // ── Codeberg: the same Gitea adapter, just a different base address ──────────
 
     [Fact]

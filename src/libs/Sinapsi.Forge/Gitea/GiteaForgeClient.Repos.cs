@@ -58,6 +58,10 @@ public sealed partial class GiteaForgeClient
             ["has_wiki"] = req.HasWiki,
             ["has_releases"] = req.HasReleases,
             ["archived"] = req.Archived,
+            // Forgejo/Gitea spelling. Pruned when null so an omitted flag never resets the repo's setting.
+            ["default_delete_branch_after_merge"] = req.DefaultDeleteBranchAfterMerge,
+            // Forgejo/Gitea calls the homepage `website`. Pruned when null; an explicit "" clears it.
+            ["website"] = req.Homepage,
         });
         var doc = await SendJsonAsync(HttpMethod.Patch, $"repos/{Esc(owner)}/{Esc(repo)}", body, ct);
         return MapRepo(doc!.Value);
@@ -79,7 +83,8 @@ public sealed partial class GiteaForgeClient
         HtmlUrl: Str(r, "html_url"),
         Stars: Num(r, "stars_count"),
         Forks: Num(r, "forks_count"),
-        OpenIssues: Num(r, "open_issues_count"));
+        OpenIssues: Num(r, "open_issues_count"),
+        Homepage: Str(r, "website"));
 
     /// <summary>Drop null values so the forge applies its own defaults.</summary>
     internal static Dictionary<string, object?> Prune(Dictionary<string, object?> d)

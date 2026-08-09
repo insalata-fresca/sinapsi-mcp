@@ -151,6 +151,44 @@ public sealed class GitHubForgeClientTests
         Assert.Equal("cafe", run.HeadSha);
     }
 
+    // ── edit_repo: auto-delete branch on merge ─────────────────────────────────
+    // GitHub spells this `delete_branch_on_merge`; the Forgejo/Gitea name
+    // `default_delete_branch_after_merge` must NEVER appear in a GitHub payload.
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task EditRepo_maps_the_flag_to_the_GitHub_field_name(bool value)
+    {
+        var handler = new ScriptedHandler(new[] { """{"full_name":"o/r","private":false}""" });
+        var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.github.com/") };
+        var client = new GitHubForgeClient(http);
+
+        await client.EditRepoAsync("o", "r", new EditRepoRequest(DefaultDeleteBranchAfterMerge: value));
+
+        var patch = handler.Calls.Single(c => c.Method == "PATCH");
+        Assert.Equal("/repos/o/r", patch.Path);
+        using var doc = JsonDocument.Parse(patch.Body!);
+        Assert.Equal(value, doc.RootElement.GetProperty("delete_branch_on_merge").GetBoolean());
+        Assert.False(doc.RootElement.TryGetProperty("default_delete_branch_after_merge", out _));
+    }
+
+    [Fact]
+    public async Task EditRepo_omits_delete_branch_on_merge_when_null()
+    {
+        // An unrelated edit must not carry the flag — sending it would reset the repo setting.
+        var handler = new ScriptedHandler(new[] { """{"full_name":"o/r","private":false}""" });
+        var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.github.com/") };
+        var client = new GitHubForgeClient(http);
+
+        await client.EditRepoAsync("o", "r", new EditRepoRequest(Description: "unrelated edit"));
+
+        var patch = handler.Calls.Single(c => c.Method == "PATCH");
+        using var doc = JsonDocument.Parse(patch.Body!);
+        Assert.Equal("unrelated edit", doc.RootElement.GetProperty("description").GetString());
+        Assert.False(doc.RootElement.TryGetProperty("delete_branch_on_merge", out _));
+    }
+
     [Fact]
     public async Task SetRepoTopics_puts_names_payload_and_returns_them()
     {

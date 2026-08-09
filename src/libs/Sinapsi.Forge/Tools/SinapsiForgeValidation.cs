@@ -141,6 +141,26 @@ public static class SinapsiForgeValidation
     public static string? ValidatePositiveId(long id, string paramName)
         => id <= 0 ? $"{paramName} must be a positive id (got {id})" : null;
 
+    /// <summary>
+    /// Validate a closed-set enum-ish parameter that reaches a forge query string —
+    /// e.g. traffic <c>per=day|week</c>, forks <c>sort=newest|oldest|stargazers</c>.
+    /// The comparison is ordinal case-sensitive: the forge's own vocabulary is
+    /// lowercase and silently accepting a differently-cased value would hide a caller
+    /// bug. Returns <c>null</c> when valid, otherwise a reason listing the allowed set.
+    /// </summary>
+    public static string? ValidateChoice(string? value, string paramName, params string[] allowed)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return $"{paramName} is required (one of: {string.Join(" | ", allowed)})";
+        foreach (var a in allowed)
+            if (string.Equals(value, a, StringComparison.Ordinal))
+                return null;
+        // Echo the offending value only when it is short + printable, so a hostile blob
+        // cannot smuggle control characters into the message we hand back.
+        var shown = value.Length <= 40 && !ContainsControlOrNewline(value) ? $" (got \"{value}\")" : "";
+        return $"{paramName} must be one of: {string.Join(" | ", allowed)}{shown}";
+    }
+
     private static bool ContainsControlOrNewline(string s)
     {
         foreach (var c in s)

@@ -13,13 +13,17 @@ namespace Github.Mcp.Forge;
 ///     multi-file commits (GitHub has no Gitea ChangeFiles endpoint);
 ///   • search → the {items:[…]} wrapper;
 ///   • release asset upload → the uploads.github.com host;
-///   • time-tracking → unsupported (Gitea-only) ⇒ <see cref="ForgeNotSupportedException"/>.
+///   • time-tracking → unsupported (Gitea-only) ⇒ <see cref="ForgeNotSupportedException"/>;
+///   • insights (traffic / stats / community / SBOM) → GitHub-only, in
+///     <c>GitHubForgeClient.Insights.cs</c>, which handles the 202 "still computing" and the
+///     403 "traffic needs push access" answers as envelopes rather than exceptions.
 /// Auth + Accept + User-Agent headers are set on the injected <see cref="HttpClient"/> by the host.
 /// </summary>
 public sealed partial class GitHubForgeClient(HttpClient http) : IForgeClient
 {
     public ForgeProvider Provider => ForgeProvider.GitHub;
-    public ForgeCapabilities Capabilities => ForgeCapabilities.All & ~ForgeCapabilities.TimeTracking;
+    public ForgeCapabilities Capabilities =>
+        (ForgeCapabilities.All & ~ForgeCapabilities.TimeTracking) | ForgeCapabilities.Insights;
 
     // ── Users ────────────────────────────────────────────────────────────────
     public async Task<ForgeUser> GetMeAsync(CancellationToken ct = default)

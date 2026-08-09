@@ -51,9 +51,17 @@ public sealed class PullRequestTools
 
     [McpServerTool(Name = "merge_pull_request", Destructive = true)]
     [Description("Merge a pull request. method = merge | rebase | rebase-merge | squash (default merge). " +
-        "Confirms the merge actually landed (merged=true) rather than trusting the POST; on rejection returns the HTTP status + Forgejo body.")]
+        "Confirms the merge actually landed (merged=true) rather than trusting the POST; on rejection returns the HTTP status + Forgejo body. " +
+        "The head branch is DELETED by default (delete_branch_after_merge=true) \u2014 pass false to keep it.")]
     public static async Task<object> MergePullRequest(IForgeClient forge, string owner, string repo, long number,
-        string method = "merge", string? title = null, string? message = null, CancellationToken ct = default)
+        string method = "merge", string? title = null, string? message = null,
+        [Description("Delete the head branch on a successful merge. Defaults TRUE: the repo-level " +
+            "`default_delete_branch_after_merge` only pre-ticks the UI checkbox and does NOT govern API " +
+            "merges, so without this every automated merge leaves its branch behind \u2014 which is how 460 " +
+            "branches accumulated across two repos by 2026-08-07, surviving two manual purges. Pass false " +
+            "only when the branch is still needed (e.g. a stacked PR builds on it).")]
+        bool deleteBranchAfterMerge = true,
+        CancellationToken ct = default)
     {
         // Validate at the TOP before any HTTP call — same envelope shape as the guard.
         var reason = SinapsiForgeValidation.ValidateOwnerRepo(owner, repo) ?? SinapsiForgeValidation.ValidatePositiveId(number, "number");
@@ -62,7 +70,7 @@ public sealed class PullRequestTools
         try
         {
             // ForgeMergeResult: { number, merged, message } — merged=false carries the reason (e.g. raced).
-            return await forge.MergePullRequestAsync(owner, repo, number, method, title, message, ct);
+            return await forge.MergePullRequestAsync(owner, repo, number, method, title, message, deleteBranchAfterMerge, ct);
         }
         catch (Sinapsi.Forge.ForgeApiException ex)
         {

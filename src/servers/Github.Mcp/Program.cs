@@ -42,7 +42,17 @@ builder
     .WithTools<SearchTools>()
     .WithTools<OrgTools>()
     .WithTools<NotificationTools>()
-    .WithTools<WebhookTools>();
+    .WithTools<WebhookTools>()
+    // Optional on the Gitea hosts (FORGE_TOOLSETS can drop them for a forge that lacks the
+    // endpoints); GitHub always exposes both, so they are unconditional here. Omitting them
+    // was a registration bug, not a capability gap — GitHubForgeClient has implemented the
+    // topics and actions methods all along, so `set_repo_topics` and friends simply never
+    // reached the tool surface and repo topics had to be set by hand.
+    .WithTools<TopicsTools>()
+    .WithTools<ActionsTools>()
+    // GitHub-only: the repository "Insights" surface (traffic / stats / community / SBOM /
+    // forks / languages). Registered HERE ONLY — the Gitea-family hosts have no analogue.
+    .WithTools<InsightsTools>();
     // No TimeTrackingTools — Gitea-only.
 
 var app = builder.Build();

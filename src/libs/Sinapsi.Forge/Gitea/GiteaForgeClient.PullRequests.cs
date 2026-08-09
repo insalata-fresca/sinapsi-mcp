@@ -42,7 +42,7 @@ public sealed partial class GiteaForgeClient
         return MapPull(doc!.Value);
     }
 
-    public async Task<ForgeMergeResult> MergePullRequestAsync(string owner, string repo, long number, string method, string? title, string? message, CancellationToken ct = default)
+    public async Task<ForgeMergeResult> MergePullRequestAsync(string owner, string repo, long number, string method, string? title, string? message, bool? deleteBranchAfterMerge = null, CancellationToken ct = default)
     {
         // Gitea wants the merge style in `Do`: merge | rebase | rebase-merge | squash.
         var body = Prune(new Dictionary<string, object?>
@@ -50,6 +50,12 @@ public sealed partial class GiteaForgeClient
             ["Do"] = string.IsNullOrWhiteSpace(method) ? "merge" : method,
             ["MergeTitleField"] = title,
             ["MergeMessageField"] = message,
+            // Forgejo/Gitea deletes the head branch ONLY if the merge call asks for it.
+            // The repo-level `default_delete_branch_after_merge` merely pre-ticks the UI
+            // checkbox — it does NOT govern API merges. Every merge in this fleet is an API
+            // merge, which is why 460 branches accumulated by 2026-08-07 despite two manual
+            // purges. Pruned when null, so a caller can still opt out explicitly.
+            ["delete_branch_after_merge"] = deleteBranchAfterMerge,
         });
         var path = $"repos/{Esc(owner)}/{Esc(repo)}/pulls/{number}/merge";
 

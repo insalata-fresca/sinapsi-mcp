@@ -30,15 +30,34 @@ The adapter handles the GitHub-specific divergences from the Gitea API:
   multi-file commits;
 - search → the `{ items: [...] }` wrapper;
 - release-asset upload → the `uploads.github.com` host;
-- time-tracking → unsupported (Gitea-only) ⇒ `ForgeNotSupportedException`.
+- time-tracking → unsupported (Gitea-only) ⇒ `ForgeNotSupportedException`;
+- insights → GitHub-only (`GitHubForgeClient.Insights.cs`), where a `stats/*` `202 Accepted`
+  with an empty body, a `traffic/*` `403`, and a code-frequency `422` are mapped to structured
+  envelopes rather than exceptions.
 
 ## Toolset selection
 
-The GitHub host registers the full shared **core** surface (users, repos, contents, branches,
-commits, issues, pull requests, releases, search, orgs, notifications, webhooks, repository
-topics, and Actions). It **omits `TimeTrackingTools`** — time-tracking is a Gitea-only surface
-with no GitHub analogue. Every other tool has an identical name + contract to the Forge.Mcp host;
-the full list is in the [library README](../../libs/Sinapsi.Forge/README.md#tool-surface-77).
+The GitHub host registers the shared **core** surface (users, repos, contents, branches,
+commits, issues, pull requests, releases, search, orgs, notifications, webhooks), plus
+**`TopicsTools`** and **`ActionsTools`**, plus the GitHub-only **`InsightsTools`**. It **omits
+`TimeTrackingTools`** — time-tracking is a Gitea-only surface with no GitHub analogue. Every
+shared tool has an identical name + contract to the Forge.Mcp host; the full list is in the
+[library README](../../libs/Sinapsi.Forge/README.md#tool-surface-91).
+
+Topics and actions are *optional* on the Forge.Mcp host (`FORGE_TOOLSETS` can drop them for a
+forge that lacks the endpoints) but **unconditional here** — GitHub always exposes both. They
+were previously absent from `Program.cs` while `GitHubForgeClient` implemented them all along:
+a registration gap, not a capability gap, and one that left `set_repo_topics` unreachable so
+repo topics had to be set by hand.
+
+`InsightsTools` is the repository "Insights" tab as tools — traffic (`get_traffic_views`,
+`get_traffic_clones`, `get_traffic_referrers`, `get_traffic_paths`), activity and contributors
+(`list_contributors`, `get_contributor_stats`, `get_commit_activity`, `get_code_frequency`,
+`get_participation`, `get_punch_card`), community and dependencies (`get_community_profile`,
+`get_sbom`, `list_forks`), plus `get_languages`. All 14 are `ReadOnly`, and all of them need
+only the token this host already holds — no PAT scope change. See the
+[library README](../../libs/Sinapsi.Forge/README.md#insights-three-upstream-answers-that-are-not-failures)
+for the 202 / 403 / 422 envelope contract.
 
 ## Configuration
 
@@ -86,6 +105,11 @@ Every tool returns a JSON object. On a validation failure it returns
 `{ "ok": false, "status": null, "error": "<reason>" }` with **no HTTP call made**; on an upstream
 failure, `{ "ok": false, "status": <http-status|null>, "error": "<scrubbed>" }`. See the
 [library error contract](../../libs/Sinapsi.Forge/README.md#error-contract).
+
+The Insights tools add three `ok:false` envelopes that are **answers, not failures** — a
+`status:202` + `retry:true` while GitHub warms a `stats/*` cache, a `status:403` when traffic
+data needs push access, and a `status:422` when a repo is too large for code frequency. They
+carry a `note` instead of an `error`; treat `retry:true` as "ask again in a few seconds".
 
 ## Testing
 

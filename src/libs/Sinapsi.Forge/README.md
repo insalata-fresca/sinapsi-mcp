@@ -12,7 +12,7 @@ scrubbed of credential material, and the tool surface is covered by a fake-trans
 ## Contents
 
 - [Overview](#overview)
-- [Tool surface](#tool-surface-77)
+- [Tool surface](#tool-surface-91)
 - [Hardening seams](#hardening-seams)
 - [Configuration](#configuration)
 - [Security notes](#security-notes)
@@ -30,14 +30,14 @@ READMEs). Architecturally it is a small number of seams:
 |------|---------|----------------|
 | Abstraction | `IForgeClient.cs` | Provider-neutral git-forge operations + capability flags. |
 | Adapter | `Gitea/GiteaForgeClient*.cs` | The Gitea-REST adapter — drives **Forgejo, Gitea, and Codeberg** (same API; only base URL + token differ). The GitHub adapter lives in the `Github.Mcp` server. |
-| Tools | `Tools/*Tools.cs` | The 77 shared `[McpServerTool]` methods. Each validates input (`SinapsiForgeValidation`) at the top, calls the injected `IForgeClient`, and surfaces scrubbed errors via `ForgeToolGuard`. |
+| Tools | `Tools/*Tools.cs` | The 91 shared `[McpServerTool]` methods. Each validates input (`SinapsiForgeValidation`) at the top, calls the injected `IForgeClient`, and surfaces scrubbed errors via `ForgeToolGuard`. |
 | Validation | `Tools/SinapsiForgeValidation.cs` | One `Validate*` helper per parameter shape; returns `string?` (null = ok), never throws. |
 | Error scrubbing | `Tools/SinapsiForgeErrors.cs` | `Sanitize()` — redacts credential/key material + length-caps any surfaced upstream string. |
 | Tool guard | `Tools/ForgeToolGuard.cs` | Validation-first wrapper → `{ ok:false, status, error }` envelope; routes every error through `Sanitize()`. |
 | Client options | `ForgeClientOptions.cs` | Fail-closed HTTP-timeout binding shared by both hosts. |
 | DTOs | `Model/ForgeModels.cs` | The provider-neutral request/response records. |
 
-## Tool surface (77)
+## Tool surface (91)
 
 Identical tool **names** across all forges; the host chooses which classes to register.
 
@@ -58,10 +58,45 @@ Identical tool **names** across all forges; the host chooses which classes to re
 | `TopicsTools` (optional) | `list_repo_topics`, `add_repo_topic`, `remove_repo_topic`, `set_repo_topics` |
 | `ActionsTools` (optional) | `dispatch_workflow`, `list_workflow_runs` |
 | `TimeTrackingTools` (Gitea-only) | `list_issue_tracked_times`, `add_issue_time` |
+| `InsightsTools` (GitHub-only) | `get_traffic_views`, `get_traffic_clones`, `get_traffic_referrers`, `get_traffic_paths`, `list_contributors`, `get_contributor_stats`, `get_commit_activity`, `get_code_frequency`, `get_participation`, `get_punch_card`, `get_community_profile`, `get_sbom`, `list_forks`, `get_languages` |
 
-`TopicsTools` / `ActionsTools` are opt-out per forge (a Codeberg instance may lack those
-endpoints); `TimeTrackingTools` is Gitea-only and never registered by the GitHub host. See each
-host README for the exact selection.
+`TopicsTools` / `ActionsTools` are opt-out per forge on the Gitea-family hosts (a Codeberg
+instance may lack those endpoints) and unconditional on the GitHub host, which always exposes
+both; `TimeTrackingTools` is Gitea-only and never registered by the GitHub host, and
+`InsightsTools` is the mirror image — GitHub-only, never registered by a Gitea-family host.
+See each host README for the exact selection.
+
+### `edit_repo`: one parameter, two upstream spellings
+
+`edit_repo`'s `default_delete_branch_after_merge` turns on auto-deletion of the head branch when a
+PR is merged — the setting that stops merged branches accumulating without bound. The two forges
+name the same field differently, so each adapter maps it: Forgejo/Gitea sends
+`default_delete_branch_after_merge`, GitHub sends `delete_branch_on_merge`. As with every other
+`edit_repo` field, a `null` is pruned from the PATCH body, so omitting the parameter leaves the
+repo's current setting untouched rather than resetting it.
+
+`homepage` is the same shape: one tool parameter, mapped to Forgejo/Gitea's `website` and to
+GitHub's `homepage`. It is the URL shown beside the description in the repo's "About" box, and
+`get_repo` returns it as `homepage` on both forges. Here `null` and `""` are meaningfully
+different — `null` is pruned (leave the current value alone), while an explicit empty string
+clears it. A repo with no description or homepage is not merely sparse: GitHub substitutes
+boilerplate ("Contribute to …") in link previews and search results.
+
+### Insights: three upstream answers that are not failures
+
+`InsightsTools` is read-only analytics, but three GitHub responses are legitimate outcomes and
+would be misleading as tool errors, so the GitHub adapter surfaces them as structured envelopes
+instead:
+
+| Upstream | Envelope | Why |
+|----------|----------|-----|
+| `202 Accepted` + **empty body** on any `stats/*` | `{ ok:false, status:202, retry:true, endpoint, note }` | GitHub computes those series asynchronously; the first request only kicks the job off. 202 *is* a success status, so a naive `JsonDocument.Parse("")` would throw. The tool does **not** poll — the caller retries. |
+| `403` on any `traffic/*` | `{ ok:false, status:403, endpoint, note }` | Traffic data requires push access. Expected on a repo we can read but not write. |
+| `422` on `stats/code_frequency` | `{ ok:false, status:422, endpoint, note }` | The repo has too many commits for GitHub to compute the series. Not retryable, so no `retry` flag. |
+
+`404` and every other non-2xx stay on the normal `ForgeApiException` → `ForgeToolGuard` path.
+A `ForgeNotSupportedException` (this surface on a Gitea-family forge) is likewise an
+`{ ok:false, status:null, error }` envelope rather than an unhandled throw.
 
 ## Hardening seams
 

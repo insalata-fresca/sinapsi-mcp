@@ -40,6 +40,14 @@ public static class ForgeToolGuard
             // Real upstream HTTP failure — status is the RAW verdict; the body is scrubbed.
             return new { ok = false, status = ex.Status, error = SinapsiForgeErrors.Sanitize(ex.Message) };
         }
+        catch (ForgeNotSupportedException ex)
+        {
+            // The provider genuinely has no such endpoint (e.g. insights on Gitea, time
+            // tracking on GitHub). That is an ANSWER, not a crash: without this arm the MCP
+            // SDK flattens it to a generic "An error occurred invoking 'X'" and the caller
+            // cannot tell "unsupported here" from "the call blew up".
+            return new { ok = false, status = (int?)null, error = SinapsiForgeErrors.Sanitize(ex.Message) };
+        }
         catch (Exception ex) when (
             ex is ArgumentException        // e.g. not exactly one upload source
               or IOException               // incl. FileNotFoundException (bad source_path)
