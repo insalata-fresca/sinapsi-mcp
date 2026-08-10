@@ -155,7 +155,7 @@
   .acard.tier-red{border-color:#7a2b26}
   /* de-emphasise expired cards WITHOUT opacity (opacity dims text below AA); dashed
      border + muted title carry the "terminal / no longer actionable" signal. */
-  .acard.expired{border-style:dashed;background:rgb(19,22,28)}
+  .acard.expired{border-style:dashed;background:#13161c}
   .acard.expired .atitle{color:var(--dim2)}
   .acard .ahead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px}
   .acard .atitle{font-size:17px;font-weight:700;line-height:1.3;flex:1 1 200px;min-width:0;word-break:break-word}
@@ -322,8 +322,8 @@
        (inlined verbatim from Sinapsi/sinapsi-app · packages/ui/src/assets/logo/wordmark.svg)
        + a mono surface label "Sentinel" — the sibling of "Sinapsi Studio". -->
   <h1 class="brand">
-    <svg class="mark" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 64 64" aria-hidden="true" focusable="false"><path d="M 15 13 H49 V28 Q49 41 32 50 Q15 41 15 28 Z" fill="none" stroke="#2dd4bf" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/><circle cx="32" cy="29" r="9" fill="#2dd4bf"/><circle cx="32" cy="29" r="4.6" fill="#0d1117"/><circle cx="32" cy="29" r="2.2" fill="#2dd4bf"/></svg>
-    <svg class="wordmark" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="2.2 25.18 354.3 91.82" role="img" aria-label="Sinapsi"><path fill="#e6edf3" d="M 28 101.2 28 101.2Q16.4 101.2 10.6 96.15 4.8 91.1 4.2 83.2L4.2 83.2 15.1 82.7Q15.8 87.1 18.7 89.7 21.6 92.3 28 92.3L28 92.3Q33 92.3 35.65 90.7 38.3 89.1 38.3 85.6L38.3 85.6Q38.3 83.6 37.4 82.3 36.5 81 33.9 80.05 31.3 79.1 26.2 78.2L26.2 78.2Q18.4 76.7 14.05 74.65 9.7 72.6 7.9 69.55 6.1 66.5 6.1 62.1L6.1 62.1Q6.1 54.9 11.6 50.25 17.1 45.6 27.5 45.6L27.5 45.6Q34.8 45.6 39.5 48.05 44.2 50.5 46.6 54.5 49 58.5 49.5 63.1L49.5 63.1 38.6 63.7Q38.3 59.9 35.75 57.2 33.2 54.5 27.3 54.5L27.3 54.5Q22.1 54.5 19.6 56.5 17.1 58.5 17.1 61.7L17.1 61.7Q17.1 65.2 19.45 66.95 21.8 68.7 28.3 69.7L28.3 69.7Q36.4 71 40.95 73.05 45.5 75.1 47.4 78.15 49.3 81.2 49.3 85.5L49.3 85.5Q49.3 93 43.4 97.1 37.5 101.2 28 101.2M 76.3 100 65.7 100 65.7 46.8 76.3 46.8 76.3 100M 106.4 100 95.8 100 95.8 46.8 105.5 46.8 105.7 56.1Q107.8 50.6 112.1 48.1 116.4 45.6 121.9 45.6L121.9 45.6Q127.8 45.6 131.8 48.25 135.8 50.9 137.85 55.45 139.9 60 139.9 65.8L139.9 65.8 139.9 100 129.3 100 129.3 69Q129.3 62 126.95 58.25 124.6 54.5 119 54.5L119 54.5Q113.3 54.5 109.85 58.25 106.4 62 106.4 69L106.4 69 106.4 100M 174.3 101.2 174.3 101.2Q166 101.2 161.05 97.4 156.1 93.6 156.1 86.7L156.1 86.7Q156.1 79.9 160.25 76 164.4 72.1 173.1 70.4L173.1 70.4 191.4 66.9Q191.4 54.6 179.9 54.6L179.9 54.6Q174.8 54.6 171.9 56.9 169 59.2 167.9 63.5L167.9 63.5 157 62.8Q158.5 54.8 164.45 50.2 170.4 45.6 179.9 45.6L179.9 45.6Q190.7 45.6 196.35 51.35 202 57.1 202 67.5L202 67.5 202 88.2Q202 90.1 202.65 90.85 203.3 91.6 204.8 91.6L204.8 91.6 206.7 91.6 206.7 100Q205.3 100.3 202.8 100.3L202.8 100.3Q198.3 100.3 195.65 98.45 193 96.6 192.3 92.1L192.3 92.1 192.3 91.8Q190.3 96 185.4 98.6 180.5 101.2 174.3 101.2M 176 92.8 176 92.8Q183.2 92.8 187.3 88.7 191.4 84.6 191.4 78.3L191.4 78.3 191.4 74.9 175.8 77.9Q171 78.8 169.05 80.75 167.1 82.7 167.1 85.7L167.1 85.7Q167.1 89.1 169.45 90.95 171.8 92.8 176 92.8M 231 115 220.4 115 220.4 46.8 230.4 46.8 230.6 54.9Q232.9 50.3 237.15 47.95 241.4 45.6 246.7 45.6L246.7 45.6Q254.5 45.6 259.55 49.45 264.6 53.3 267.05 59.6 269.5 65.9 269.5 73.4L269.5 73.4Q269.5 80.9 267.05 87.2 264.6 93.5 259.55 97.35 254.5 101.2 246.7 101.2L246.7 101.2Q241.6 101.2 237.4 98.95 233.2 96.7 231 92.8L231 92.8 231 115M 244.8 92 244.8 92Q251.2 92 254.85 87.1 258.5 82.2 258.5 73.4L258.5 73.4Q258.5 64.6 254.85 59.7 251.2 54.8 244.8 54.8L244.8 54.8Q238.4 54.8 234.7 59.5 231 64.2 231 73.4L231 73.4Q231 82.6 234.7 87.3 238.4 92 244.8 92M 306.2 101.2 306.2 101.2Q294.6 101.2 288.8 96.15 283 91.1 282.4 83.2L282.4 83.2 293.3 82.7Q294 87.1 296.9 89.7 299.8 92.3 306.2 92.3L306.2 92.3Q311.2 92.3 313.85 90.7 316.5 89.1 316.5 85.6L316.5 85.6Q316.5 83.6 315.6 82.3 314.7 81 312.1 80.05 309.5 79.1 304.4 78.2L304.4 78.2Q296.6 76.7 292.25 74.65 287.9 72.6 286.1 69.55 284.3 66.5 284.3 62.1L284.3 62.1Q284.3 54.9 289.8 50.25 295.3 45.6 305.7 45.6L305.7 45.6Q313 45.6 317.7 48.05 322.4 50.5 324.8 54.5 327.2 58.5 327.7 63.1L327.7 63.1 316.8 63.7Q316.5 59.9 313.95 57.2 311.4 54.5 305.5 54.5L305.5 54.5Q300.3 54.5 297.8 56.5 295.3 58.5 295.3 61.7L295.3 61.7Q295.3 65.2 297.65 66.95 300 68.7 306.5 69.7L306.5 69.7Q314.6 71 319.15 73.05 323.7 75.1 325.6 78.15 327.5 81.2 327.5 85.5L327.5 85.5Q327.5 93 321.6 97.1 315.7 101.2 306.2 101.2M 354.5 100 343.9 100 343.9 46.8 354.5 46.8 354.5 100"/><circle cx="71" cy="34.34" r="7.16" fill="#2dd4bf"/><circle cx="349.2" cy="34.34" r="7.16" fill="#2dd4bf"/></svg>
+    <svg class="mark" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 64 64" aria-hidden="true" focusable="false"><path d="M15 13 H49 V28 Q49 41 32 50 Q15 41 15 28 Z" fill="none" stroke="#2dd4bf" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/><circle cx="32" cy="29" r="9" fill="#2dd4bf"/><circle cx="32" cy="29" r="4.6" fill="#0d1117"/><circle cx="32" cy="29" r="2.2" fill="#2dd4bf"/></svg>
+    <svg class="wordmark" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="2.2 25.18 354.3 91.82" role="img" aria-label="Sinapsi"><path fill="#e6edf3" d="M28 101.2 28 101.2Q16.4 101.2 10.6 96.15 4.8 91.1 4.2 83.2L4.2 83.2 15.1 82.7Q15.8 87.1 18.7 89.7 21.6 92.3 28 92.3L28 92.3Q33 92.3 35.65 90.7 38.3 89.1 38.3 85.6L38.3 85.6Q38.3 83.6 37.4 82.3 36.5 81 33.9 80.05 31.3 79.1 26.2 78.2L26.2 78.2Q18.4 76.7 14.05 74.65 9.7 72.6 7.9 69.55 6.1 66.5 6.1 62.1L6.1 62.1Q6.1 54.9 11.6 50.25 17.1 45.6 27.5 45.6L27.5 45.6Q34.8 45.6 39.5 48.05 44.2 50.5 46.6 54.5 49 58.5 49.5 63.1L49.5 63.1 38.6 63.7Q38.3 59.9 35.75 57.2 33.2 54.5 27.3 54.5L27.3 54.5Q22.1 54.5 19.6 56.5 17.1 58.5 17.1 61.7L17.1 61.7Q17.1 65.2 19.45 66.95 21.8 68.7 28.3 69.7L28.3 69.7Q36.4 71 40.95 73.05 45.5 75.1 47.4 78.15 49.3 81.2 49.3 85.5L49.3 85.5Q49.3 93 43.4 97.1 37.5 101.2 28 101.2M76.3 100 65.7 100 65.7 46.8 76.3 46.8 76.3 100M106.4 100 95.8 100 95.8 46.8 105.5 46.8 105.7 56.1Q107.8 50.6 112.1 48.1 116.4 45.6 121.9 45.6L121.9 45.6Q127.8 45.6 131.8 48.25 135.8 50.9 137.85 55.45 139.9 60 139.9 65.8L139.9 65.8 139.9 100 129.3 100 129.3 69Q129.3 62 126.95 58.25 124.6 54.5 119 54.5L119 54.5Q113.3 54.5 109.85 58.25 106.4 62 106.4 69L106.4 69 106.4 100M174.3 101.2 174.3 101.2Q166 101.2 161.05 97.4 156.1 93.6 156.1 86.7L156.1 86.7Q156.1 79.9 160.25 76 164.4 72.1 173.1 70.4L173.1 70.4 191.4 66.9Q191.4 54.6 179.9 54.6L179.9 54.6Q174.8 54.6 171.9 56.9 169 59.2 167.9 63.5L167.9 63.5 157 62.8Q158.5 54.8 164.45 50.2 170.4 45.6 179.9 45.6L179.9 45.6Q190.7 45.6 196.35 51.35 202 57.1 202 67.5L202 67.5 202 88.2Q202 90.1 202.65 90.85 203.3 91.6 204.8 91.6L204.8 91.6 206.7 91.6 206.7 100Q205.3 100.3 202.8 100.3L202.8 100.3Q198.3 100.3 195.65 98.45 193 96.6 192.3 92.1L192.3 92.1 192.3 91.8Q190.3 96 185.4 98.6 180.5 101.2 174.3 101.2M176 92.8 176 92.8Q183.2 92.8 187.3 88.7 191.4 84.6 191.4 78.3L191.4 78.3 191.4 74.9 175.8 77.9Q171 78.8 169.05 80.75 167.1 82.7 167.1 85.7L167.1 85.7Q167.1 89.1 169.45 90.95 171.8 92.8 176 92.8M231 115 220.4 115 220.4 46.8 230.4 46.8 230.6 54.9Q232.9 50.3 237.15 47.95 241.4 45.6 246.7 45.6L246.7 45.6Q254.5 45.6 259.55 49.45 264.6 53.3 267.05 59.6 269.5 65.9 269.5 73.4L269.5 73.4Q269.5 80.9 267.05 87.2 264.6 93.5 259.55 97.35 254.5 101.2 246.7 101.2L246.7 101.2Q241.6 101.2 237.4 98.95 233.2 96.7 231 92.8L231 92.8 231 115M244.8 92 244.8 92Q251.2 92 254.85 87.1 258.5 82.2 258.5 73.4L258.5 73.4Q258.5 64.6 254.85 59.7 251.2 54.8 244.8 54.8L244.8 54.8Q238.4 54.8 234.7 59.5 231 64.2 231 73.4L231 73.4Q231 82.6 234.7 87.3 238.4 92 244.8 92M306.2 101.2 306.2 101.2Q294.6 101.2 288.8 96.15 283 91.1 282.4 83.2L282.4 83.2 293.3 82.7Q294 87.1 296.9 89.7 299.8 92.3 306.2 92.3L306.2 92.3Q311.2 92.3 313.85 90.7 316.5 89.1 316.5 85.6L316.5 85.6Q316.5 83.6 315.6 82.3 314.7 81 312.1 80.05 309.5 79.1 304.4 78.2L304.4 78.2Q296.6 76.7 292.25 74.65 287.9 72.6 286.1 69.55 284.3 66.5 284.3 62.1L284.3 62.1Q284.3 54.9 289.8 50.25 295.3 45.6 305.7 45.6L305.7 45.6Q313 45.6 317.7 48.05 322.4 50.5 324.8 54.5 327.2 58.5 327.7 63.1L327.7 63.1 316.8 63.7Q316.5 59.9 313.95 57.2 311.4 54.5 305.5 54.5L305.5 54.5Q300.3 54.5 297.8 56.5 295.3 58.5 295.3 61.7L295.3 61.7Q295.3 65.2 297.65 66.95 300 68.7 306.5 69.7L306.5 69.7Q314.6 71 319.15 73.05 323.7 75.1 325.6 78.15 327.5 81.2 327.5 85.5L327.5 85.5Q327.5 93 321.6 97.1 315.7 101.2 306.2 101.2M354.5 100 343.9 100 343.9 46.8 354.5 46.8 354.5 100"/><circle cx="71" cy="34.34" r="7.16" fill="#2dd4bf"/><circle cx="349.2" cy="34.34" r="7.16" fill="#2dd4bf"/></svg>
     <span class="label">Sentinel</span>
   </h1>
   <div class="health" aria-hidden="true">
@@ -346,7 +346,7 @@
      and whenever there are pending cards. aria-hidden: it duplicates the plane-health
      block for sighted phone users; SR users get the posture block + polite counter. -->
 <div id="phonesummary" class="phone-only" hidden aria-hidden="true">
-  <p class="ps-h"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M 22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></svg>Plane health — live posture</p>
+  <p class="ps-h"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></svg>Plane health — live posture</p>
   <div class="ps-grid" id="pslayers">
     <div class="ps"><div class="psl">Q1 · id → tool</div><div class="psc none">…</div></div>
     <div class="ps"><div class="psl">Q2 · cmd safety</div><div class="psc none">…</div></div>
@@ -357,7 +357,7 @@
 <main>
   <!-- ═══ ACT (primary) ═══ -->
   <section id="approvals" aria-label="Pending approvals">
-    <h2><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M 20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m 9 12 2 2 4-4"/></svg>Pending approvals <span class="n" id="pendcount"></span></h2>
+    <h2><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>Pending approvals <span class="n" id="pendcount"></span></h2>
     <p class="disclosure">Preview — approvals are recorded under a shared console identity and are not yet executed (pending per-operator sign-in + executor go-live).</p>
     <div class="cards" id="pending">
       <div class="empty"><span class="big">·</span>loading the pending queue…</div>
@@ -367,12 +367,12 @@
   <!-- ═══ MONITOR (secondary) ═══ -->
   <div class="plane">
     <section aria-label="Plane health">
-      <h2><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M 22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></svg>Plane health</h2>
+      <h2><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></svg>Plane health</h2>
       <details class="block" id="blk-health">
-        <summary><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M 20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m 9 12 2 2 4-4"/></svg>Authorization posture <span class="tag" id="posturetag"></span></summary>
+        <summary><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>Authorization posture <span class="tag" id="posturetag"></span></summary>
         <div class="body">
           <div class="layers" id="layers">
-            <div class="lcard"><div class="lname">Q1 · identity → tool</div><div class="ldesc">gateway / ReBAC engine</div><div class="none">waiting…</div></div>
+            <div class="lcard"><div class="lname">Q1 · identity → tool</div><div class="ldesc">gateway / OpenFGA</div><div class="none">waiting…</div></div>
             <div class="lcard"><div class="lname">Q2 · command safety</div><div class="ldesc">in-MCP authorizer</div><div class="none">waiting…</div></div>
             <div class="lcard"><div class="lname">Q3 · operator gates</div><div class="ldesc">harness ask / deny floor</div><div class="none">waiting…</div></div>
           </div>
@@ -384,7 +384,7 @@
       </details>
 
       <details class="block" id="blk-feed">
-        <summary><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M 16.247 7.761a6 6 0 0 1 0 8.478"/><path d="M 19.075 4.933a10 10 0 0 1 0 14.134"/><path d="M 4.925 19.067a10 10 0 0 1 0-14.134"/><path d="M 7.753 16.239a6 6 0 0 1 0-8.478"/><circle cx="12" cy="12" r="2"/></svg>Live decisions <span class="tag" id="feedtag"></span></summary>
+        <summary><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M16.247 7.761a6 6 0 0 1 0 8.478"/><path d="M19.075 4.933a10 10 0 0 1 0 14.134"/><path d="M4.925 19.067a10 10 0 0 1 0-14.134"/><path d="M7.753 16.239a6 6 0 0 1 0-8.478"/><circle cx="12" cy="12" r="2"/></svg>Live decisions <span class="tag" id="feedtag"></span></summary>
         <div class="body">
           <div class="controls">
             <input id="search" placeholder="filter by tool / command…" aria-label="Filter decisions" />
@@ -398,7 +398,7 @@
       </details>
 
       <details class="block" id="blk-deploy">
-        <summary><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M 12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/><path d="M 4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09"/><path d="M 9 12a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.4 22.4 0 0 1-4 2z"/><path d="M 9 12H4s.55-3.03 2-4c1.62-1.08 5 .05 5 .05"/></svg>Deploys <span class="tag">release → applied</span></summary>
+        <summary><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09"/><path d="M9 12a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.4 22.4 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 .05 5 .05"/></svg>Deploys <span class="tag">release → applied</span></summary>
         <div class="body">
           <table class="dstate"><thead><tr><th>Service</th><th>Released</th><th>Applied</th><th>Result</th></tr></thead>
             <tbody id="deploystate"><tr><td colspan="4" class="none">waiting for release/deploy events…</td></tr></tbody>
@@ -502,7 +502,7 @@ async function refreshPending(){
     // Don't stomp a card the operator is mid-confirm/submit on.
     if(box.querySelector('.aconfirm, .aactions button:disabled')) return;
     if(!res.brokerReachable){
-      box.innerHTML = '<div class="empty"><span class="big" style="color:var(--status-busy)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m 21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M 12 9v4"/><path d="M 12 17h.01"/></svg></span>Approval broker unreachable — the queue can\'t be shown. This fails <strong>safe</strong> (closed), not open. Nothing was approved.</div>';
+      box.innerHTML = '<div class="empty"><span class="big" style="color:var(--status-busy)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg></span>Approval broker unreachable — the queue can\'t be shown. This fails <strong>safe</strong> (closed), not open. Nothing was approved.</div>';
       setAttention(0,false); return;
     }
     const items = res.items||[];
@@ -510,7 +510,7 @@ async function refreshPending(){
     if(ids===lastPendingIds && box.querySelector('.acard')){ retickExpiry(); setAttention(items.length,true); return; }
     lastPendingIds = ids;
     if(!items.length){
-      box.innerHTML = '<div class="empty calm"><span class="big" style="color:var(--status-active)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M 18 6 7 17l-5-5"/><path d="m 22 10-7.5 7.5L13 16"/></svg></span><strong>All clear</strong> — no requests need you. The plane is running itself.</div>';
+      box.innerHTML = '<div class="empty calm"><span class="big" style="color:var(--status-active)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/></svg></span><strong>All clear</strong> — no requests need you. The plane is running itself.</div>';
     } else {
       box.innerHTML = items.map(cardHtml).join('');
     }
@@ -611,7 +611,7 @@ $('#pending').addEventListener('click', async e=>{
 });
 
 /* ── plane health: aggregate posture by layer ──────────────────────────────── */
-const LAYER_META = {q1:'gateway / ReBAC engine', q2:'in-MCP authorizer', q3:'harness ask / deny floor'};
+const LAYER_META = {q1:'gateway / OpenFGA', q2:'in-MCP authorizer', q3:'harness ask / deny floor'};
 const LAYER_TITLE = {q1:'Q1 · identity → tool', q2:'Q2 · command safety', q3:'Q3 · operator gates'};
 function bar(a,p,d){
   const tot=a+p+d||1;

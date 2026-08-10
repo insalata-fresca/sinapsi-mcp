@@ -7,7 +7,7 @@ namespace Sinapsi.SentinelConsole;
 
 /// <summary>
 /// The bus ingest for the Console's deploy-visibility lane: a core-NATS subscriber on
-/// <c>release.&gt;</c> + <c>deploy.&gt;</c> that parses each event into a
+/// <c>homelab.release.&gt;</c> + <c>homelab.deploy.&gt;</c> that parses each event into a
 /// <see cref="DeployEvent"/> and feeds the <see cref="DeployModel"/>. Mirrors
 /// <see cref="SecurityBusSubscriber"/> exactly (separate class because it is a distinct
 /// subject family + read-model, not because the mechanics differ). Read-only: it never
@@ -15,17 +15,17 @@ namespace Sinapsi.SentinelConsole;
 /// the process.
 ///
 /// NOTE (follow-up, not done here): the Console's NATS identity today is scoped
-/// subscribe-only on <c>security.&gt;</c> (see <c>config.env.example</c>).
-/// Going live with this subscriber requires
+/// subscribe-only on <c>homelab.security.&gt;</c> (see <c>config.env.example</c> /
+/// <c>nats_server_users</c> in home-server). Going live with this subscriber requires
 /// widening that identity's subscribe permissions to also include
-/// <c>release.&gt;</c> + <c>deploy.&gt;</c> — a separate infrastructure change,
+/// <c>homelab.release.&gt;</c> + <c>homelab.deploy.&gt;</c> — a home-server Ansible change,
 /// out of scope for this PR (code-only). Until that widening lands, this subscriber
 /// connects but receives nothing (Ingested stays 0) — it fails safe, not open.
 /// </summary>
 public sealed class DeployBusSubscriber : BackgroundService
 {
-    private const string ReleaseSubject = "release.>";
-    private const string DeploySubject = "deploy.>";
+    private const string ReleaseSubject = "homelab.release.>";
+    private const string DeploySubject = "homelab.deploy.>";
 
     private readonly NatsConnectionOptions _opts;
     private readonly DeployModel _model;

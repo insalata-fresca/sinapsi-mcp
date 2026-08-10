@@ -7,10 +7,11 @@ namespace Sinapsi.SentinelConsole;
 
 /// <summary>
 /// The operator-facing projection of one open request, mirroring the broker's
-/// <c>PendingApprovalView</c>: the registry <see cref="Title"/> + the
+/// <c>PendingApprovalView</c> (E1.3/E1.7, docs/66 §6 step 3): the registry <see cref="Title"/> + the
 /// TYPED <see cref="Params"/> + provenance (<see cref="RequesterIdentity"/>, <see cref="ActionId"/>,
 /// <see cref="ExpiresAt"/>). There is no free-text-rationale field here, or anywhere upstream of it —
-/// the executor and the audit trail only ever see <c>action_id</c> + schema-validated params.
+/// the executor and the audit trail only ever see <c>action_id</c> + schema-validated params
+/// (docs/66 §8 T4).
 /// </summary>
 public sealed record PendingApprovalDto(
     string RequestId,
@@ -39,13 +40,13 @@ public sealed record ApprovalCommandResult(bool Reached, int StatusCode, string 
 }
 
 /// <summary>
-/// The Console's ONLY path to the Operator Approval Bridge broker's command API: a thin,
+/// The Console's ONLY path to the Operator Approval Bridge broker's command API (E1.3): a thin,
 /// transparent HTTP client. The Console never re-implements, shortcuts, or bypasses the broker's
 /// server-side one-shot / approver≠requester / CAS checks — every Approve/Reject click is forwarded
 /// verbatim to the broker's <c>POST /approve</c> / <c>POST /reject</c>, and the broker's own response
 /// (accepted, or a structured rejection with its reason) is what the operator sees. The pending-queue
 /// read (<see cref="GetPendingAsync"/>) is likewise a pure proxy to the broker's READ-ONLY
-/// <c>GET /pending</c> — it performs no state transition.
+/// <c>GET /pending</c> (E1.7) — it performs no state transition.
 ///
 /// <para>Configured via <c>BRIDGE_BROKER_URL</c> (the <see cref="HttpClient.BaseAddress"/>). Every call
 /// fails soft: an unreachable broker degrades the Console's approval lane to "broker unreachable" (like
@@ -88,8 +89,8 @@ public sealed class BrokerClient
     }
 
     /// <summary>Forward an operator Approve click to the broker's COMMAND endpoint (single receiver,
-    /// rejectable). <paramref name="approverIdentity"/> is never the requester's identity
-    /// by construction on this path; the broker still re-checks it regardless.</summary>
+    /// rejectable — docs/66 §3.2). <paramref name="approverIdentity"/> is never the requester's identity
+    /// by construction on this path; the broker still re-checks it (I7/T1) regardless.</summary>
     public Task<ApprovalCommandResult> ApproveAsync(string requestId, string approverIdentity, CancellationToken ct = default)
         => PostCommandAsync("/approve", requestId, approverIdentity, ct);
 

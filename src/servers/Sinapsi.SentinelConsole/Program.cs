@@ -7,7 +7,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton(new ReadModel(
     capacity: EnvInt("SENTINEL_CONSOLE_BUFFER", 2000)));
 builder.Services.AddSingleton<LiveFeed>();
-// Deploy-visibility lane: same pattern, separate read-model + subscriber.
+// Deploy-visibility lane: same pattern, separate read-model + subscriber (M12).
 builder.Services.AddSingleton(new DeployModel(
     capacity: EnvInt("SENTINEL_CONSOLE_DEPLOY_BUFFER", 500)));
 builder.Services.AddSingleton(NatsConnectionOptions.FromEnvironment() with
@@ -16,12 +16,12 @@ builder.Services.AddSingleton(NatsConnectionOptions.FromEnvironment() with
 });
 builder.Services.AddHostedService<SecurityBusSubscriber>();
 builder.Services.AddHostedService<DeployBusSubscriber>();
-// Operator Approval Bridge lane: same lifecycle-feed pattern, separate read-model +
-// subscriber on security.approval.>.
+// Operator Approval Bridge lane (E1.7): same lifecycle-feed pattern, separate read-model +
+// subscriber on homelab.security.approval.> (docs/66 §9).
 builder.Services.AddSingleton(new ApprovalQueueModel(
     capacity: EnvInt("SENTINEL_CONSOLE_APPROVAL_BUFFER", 1000)));
 builder.Services.AddHostedService<ApprovalBusSubscriber>();
-// The Console's only path to the broker's command API — pending-queue read + approve/reject,
+// The Console's only path to the broker's command API (E1.3) — pending-queue read + approve/reject,
 // both a transparent proxy (see BrokerClient doc comment). BRIDGE_BROKER_URL defaults to the
 // broker's own default listen address (config.env.example: ASPNETCORE_URLS=http://0.0.0.0:8013).
 builder.Services.AddHttpClient<BrokerClient>(c =>
@@ -54,7 +54,7 @@ app.UseDefaultFiles();     // serve wwwroot/index.html at "/"
 // page (no manifest link / no registered SW → no "Install app"). The working Sinapsi Studio /
 // Console PWAs serve these files with `Cache-Control: no-cache` (nginx); mirror that here so the
 // shell is byte-revalidated on every load (cheap 304 via the existing ETag). Icons keep the
-// default (immutable-ish, safe to cache). See the Sentinel PWA install investigation.
+// default (immutable-ish, safe to cache). See docs/66 + the Sentinel PWA install investigation.
 app.UseStaticFiles(new StaticFileOptions
 {
     OnPrepareResponse = ctx =>
@@ -74,19 +74,19 @@ app.MapGet("/api/posture", (ReadModel rm) => Results.Json(rm.Posture()));
 app.MapGet("/api/recent", (ReadModel rm, int? n) => Results.Json(rm.Recent(Math.Clamp(n ?? 200, 1, 2000))));
 app.MapGet("/api/chain/{id}", (ReadModel rm, string id) => Results.Json(rm.Chain(id)));
 
-// Deploy-visibility lane — "did my merge actually deploy?" without SSH.
+// Deploy-visibility lane (M12) — "did my merge actually deploy?" without SSH.
 app.MapGet("/api/deploys", (DeployModel dm, int? n) => Results.Json(dm.Recent(Math.Clamp(n ?? 200, 1, 2000))));
 app.MapGet("/api/deploy-state", (DeployModel dm) => Results.Json(dm.State()));
 
-// ── Operator Approval Bridge lane ─────────────────────────────────────────────────────────────
+// ── Operator Approval Bridge lane (E1.7, docs/66 §3.5/§6) ─────────────────────────────────────
 // The operator identity the Console approves/rejects AS. Server-side-configured, never taken from
 // the browser request — a client cannot spoof a different approver identity through this surface.
 // This is a placeholder until real per-operator SSO-bound identity lands with live approve-channel
-// authz (deferred); the broker still independently enforces
+// authz (E1.5, deferred — docs/66 §10 B5); the broker still independently enforces
 // approver_identity != requester_identity regardless of what this value is.
 var operatorIdentity = EnvStr("SENTINEL_CONSOLE_OPERATOR_IDENTITY", "operator:console");
 
-// The pending queue — READ-ONLY proxy to the broker's GET /pending: title + typed params +
+// The pending queue — READ-ONLY proxy to the broker's GET /pending (E1.7): title + typed params +
 // provenance per open request. Never mutates broker state.
 app.MapGet("/api/approvals/pending", async (BrokerClient bc, CancellationToken ct) =>
 {
@@ -96,7 +96,7 @@ app.MapGet("/api/approvals/pending", async (BrokerClient bc, CancellationToken c
 
 // Approve / Reject — forwarded VERBATIM to the broker's COMMAND API (single receiver, rejectable).
 // The Console performs no security check of its own here; it is a transparent relay so the broker's
-// one-shot / self-approval / CAS enforcement is the only enforcement that exists.
+// one-shot / self-approval / CAS enforcement is the only enforcement that exists (docs/66 §3.2/§3.3).
 app.MapPost("/api/approvals/approve", async (ApprovalActionBody body, BrokerClient bc, CancellationToken ct) =>
 {
     if (string.IsNullOrWhiteSpace(body.request_id)) return Results.BadRequest(new { error = "request_id is required" });

@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -69,7 +70,10 @@ public sealed class InfisicalClient(HttpClient http, InfisicalOptions opt, ILogg
                 $"set secret {secretPath}/{name}: POST {(int)pres.StatusCode}, PATCH {(int)ures.StatusCode}");
     }
 
-    /// <summary>Secret NAMES (never values) at a path.</summary>
+    /// <summary>Secret NAMES (never values) at a path. A 404 means the path has never been
+    /// provisioned (no folder/secrets exist there yet) — that is a valid EMPTY result, not a
+    /// failure. Treating it as an error would break the sanctioned "does this secret already
+    /// exist" check for exactly the common case of a not-yet-provisioned service.</summary>
     public async Task<IReadOnlyList<string>> ListSecretNamesAsync(string secretPath, CancellationToken ct)
     {
         var token = await TokenAsync(ct).ConfigureAwait(false);
@@ -78,6 +82,8 @@ public sealed class InfisicalClient(HttpClient http, InfisicalOptions opt, ILogg
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         using var res = await http.SendAsync(req, ct).ConfigureAwait(false);
+        if (res.StatusCode == HttpStatusCode.NotFound)
+            return Array.Empty<string>();
         res.EnsureSuccessStatusCode();
         var doc = await res.Content.ReadFromJsonAsync<JsonElement>(_json, ct).ConfigureAwait(false);
         var names = new List<string>();

@@ -1,15 +1,15 @@
 namespace Sinapsi.SentinelConsole;
 
 /// <summary>
-/// The in-memory read-model behind the Console's Operator Approval Bridge lifecycle feed.
-/// It ingests normalized <see cref="ApprovalEvent"/>s
-/// from <c>security.approval.&gt;</c> and serves the requested→approved/rejected→executed/expired
+/// The in-memory read-model behind the Console's Operator Approval Bridge lifecycle feed (E1.7,
+/// home-server <c>docs/66 §3.5</c>/<c>§6</c> step 3+7). It ingests normalized <see cref="ApprovalEvent"/>s
+/// from <c>homelab.security.approval.&gt;</c> and serves the requested→approved/rejected→executed/expired
 /// history, joined by <c>correlation_id</c> (mirrors <see cref="ReadModel"/>'s shape exactly — a
 /// distinct model because the bridge lifecycle has its own fields, not because the mechanics differ).
 ///
 /// <para>This model does NOT hold the currently-open pending queue with its typed params/title — that
 /// view is proxied live from the broker (<see cref="BrokerClient.GetPendingAsync"/>), because the bus
-/// envelope deliberately never carries raw params or the registry title. This model is the
+/// envelope deliberately never carries raw params or the registry title (docs/66 §9). This model is the
 /// AUDIT TRAIL of what happened; the broker proxy is the CURRENT STATE of what's open.</para>
 ///
 /// Bounded + thread-safe: the feed is a fixed-capacity ring (oldest evicted), so memory is capped

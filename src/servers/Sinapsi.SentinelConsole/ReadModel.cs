@@ -2,8 +2,8 @@ namespace Sinapsi.SentinelConsole;
 
 /// <summary>
 /// The in-memory read-model behind the Sentinel Console — the missing projection that
-/// makes the authorization posture visible without an agent session.
-/// It ingests normalized <see cref="AuthzDecision"/>s from the bus
+/// makes the authorization posture visible without an agent session (home-server
+/// <c>docs/61 §7</c>). It ingests normalized <see cref="AuthzDecision"/>s from the bus
 /// and serves three views:
 ///   • <see cref="Posture"/>  — the at-a-glance grid: per tool × layer, the latest verdict
 ///                              + running allow/approval/deny counts + last-seen;

@@ -6,8 +6,8 @@ using Sinapsi.Nats;
 namespace Sinapsi.SentinelConsole;
 
 /// <summary>
-/// The bus ingest for the Console's Operator Approval Bridge lane: a core-NATS subscriber on
-/// <c>security.approval.&gt;</c> that parses each event into an <see cref="ApprovalEvent"/> and
+/// The bus ingest for the Console's Operator Approval Bridge lane (E1.7): a core-NATS subscriber on
+/// <c>homelab.security.approval.&gt;</c> that parses each event into an <see cref="ApprovalEvent"/> and
 /// feeds the <see cref="ApprovalQueueModel"/> lifecycle feed (requirement 3: reflect the
 /// request/approved/rejected/executed lifecycle, correlation-id joined). Mirrors
 /// <see cref="SecurityBusSubscriber"/> / <see cref="DeployBusSubscriber"/> exactly (a separate class
@@ -16,8 +16,8 @@ namespace Sinapsi.SentinelConsole;
 /// <see cref="BrokerClient"/> to the broker's own command API, never through the bus. Resilient: a
 /// connection blip is retried with backoff, never crashing the process.
 ///
-/// <para><c>security.approval.&gt;</c> is a subject FAMILY under the same
-/// <c>security.&gt;</c> domain <see cref="SecurityBusSubscriber"/> already subscribes to — this
+/// <para><c>homelab.security.approval.&gt;</c> is a subject FAMILY under the same
+/// <c>homelab.security.&gt;</c> domain <see cref="SecurityBusSubscriber"/> already subscribes to — this
 /// is a separate subscriber (rather than widening <see cref="AuthzDecision"/> to parse a fourth "bridge"
 /// layer) because the bridge envelope's fields (action_id/requester/approver/params_digest/result_status)
 /// are genuinely different from the Q1/Q2/Q3 authz-decision shape, and mixing them would blur two
@@ -25,7 +25,7 @@ namespace Sinapsi.SentinelConsole;
 /// </summary>
 public sealed class ApprovalBusSubscriber : BackgroundService
 {
-    private const string Subject = "security.approval.>";
+    private const string Subject = "homelab.security.approval.>";
 
     private readonly NatsConnectionOptions _opts;
     private readonly ApprovalQueueModel _model;

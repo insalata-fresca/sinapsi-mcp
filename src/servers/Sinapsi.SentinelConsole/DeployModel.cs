@@ -5,8 +5,8 @@ namespace Sinapsi.SentinelConsole;
 /// <see cref="ReadModel"/>'s shape for the authz plane, but projects
 /// <see cref="DeployEvent"/>s instead: "did my merge actually deploy?" answered from the
 /// same screen, no SSH-to-check. It ingests normalized events from the release plane
-/// (<c>release.&lt;svc&gt;.published</c>) and the per-host deploy agent
-/// (<c>deploy.&lt;ctid&gt;.&lt;svc&gt;.applied|failed</c>) and serves two views:
+/// (<c>homelab.release.&lt;svc&gt;.published</c>) and the per-host deploy-controller
+/// (<c>homelab.deploy.&lt;ctid&gt;.&lt;svc&gt;.applied|failed</c>) and serves two views:
 ///   • <see cref="Recent"/> — the live event feed (newest first);
 ///   • <see cref="State"/>  — per-service latest: last released version/digest + last
 ///                            applied version/digest/ctid/result.
@@ -74,7 +74,7 @@ public sealed class DeployModel
         public string LastAppliedDigest = "";
         public string LastAppliedCtid = "";
         public DateTimeOffset LastAppliedAt;
-        public string LastResult = "";   // applied | failed — the deploy agent's latest outcome
+        public string LastResult = "";   // applied | failed — the deploy-controller's latest outcome
 
         public void Apply(DeployEvent e)
         {

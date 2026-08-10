@@ -4,7 +4,7 @@
 # (no private feed, no build secret). Build from the repo root:
 #   podman build --network=host -f src/servers/Sinapsi.SentinelConsole/Containerfile -t <img> .
 #
-# The service subscribes (read-only) to security.> on the NATS bus and
+# The service subscribes (read-only) to homelab.security.> on the NATS bus and
 # serves the Authorization Console page + inspection API. The scoped read-only
 # NATS identity + TLS CA are host-mounted at DEPLOY by the Quadlet, never baked.
 

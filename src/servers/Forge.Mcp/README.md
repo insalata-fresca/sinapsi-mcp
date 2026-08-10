@@ -42,7 +42,7 @@ The full Gitea surface is registered by default. Two optional groups are opt-out
 
 `FORGE_TOOLSETS` is a comma list of `+group` / `-group` tokens (e.g. `-topics,-actions` for a
 Codeberg instance lacking those endpoints). The full shared tool surface is documented in the
-[library README](../../libs/Sinapsi.Forge/README.md#tool-surface-77).
+[library README](../../libs/Sinapsi.Forge/README.md#tool-surface-91).
 
 ## Configuration
 

@@ -4,15 +4,15 @@ namespace Sinapsi.SentinelConsole;
 
 /// <summary>
 /// One normalized Operator Approval Bridge lifecycle event, parsed from a bus CloudEvent on
-/// <c>security.approval.&lt;action_id&gt;.&lt;verdict&gt;</c> (the
-/// <c>layer:"bridge"</c> extension of the common decision envelope emitted by the broker). This is
+/// <c>homelab.security.approval.&lt;action_id&gt;.&lt;verdict&gt;</c> (home-server <c>docs/66 §9</c>, the
+/// <c>layer:"bridge"</c> extension of the common decision envelope emitted by the E1.3 broker). This is
 /// the row the <see cref="ApprovalQueueModel"/> stores for the lifecycle feed and the Console renders,
 /// mirroring <see cref="AuthzDecision"/> / <see cref="DeployEvent"/> exactly (a distinct parser because
 /// this is a distinct subject family + envelope shape, not because the mechanics differ).
 ///
 /// <para>Note what this record deliberately does NOT carry: the raw request params (only
 /// <see cref="ParamsDigest"/>, a sha256) and — critically — no free-text rationale field exists
-/// anywhere in the bridge envelope (the audit stream is kept free of anything
+/// anywhere in the bridge envelope (docs/66 §9, §8 T4: the audit stream is kept free of anything
 /// sensitive or injection-bearing). The TYPED params for the currently-open queue come from a
 /// separate, broker-proxied source (<see cref="BrokerClient.GetPendingAsync"/>), never from this
 /// event.</para>
@@ -21,7 +21,7 @@ public sealed record ApprovalEvent(
     string ActionId,
     string Verdict,         // requested | approved | rejected | executed | expired
     string Target,
-    string Requester,       // provenance; the untrusted request text is never included
+    string Requester,       // provenance; the untrusted request text is never included (docs/66 §9)
     string Approver,        // "" until approved/rejected
     string Reason,
     string ParamsDigest,    // sha256 of the validated params — integrity, never the raw values
@@ -29,7 +29,7 @@ public sealed record ApprovalEvent(
     string CorrelationId,   // == request_id; threads requested→approved→executed
     DateTimeOffset Time)
 {
-    private const string SubjectPrefix = "security.approval.";
+    private const string SubjectPrefix = "homelab.security.approval.";
 
     public static readonly IReadOnlySet<string> OpenVerdicts =
         new HashSet<string>(StringComparer.Ordinal) { "requested" };
@@ -39,9 +39,9 @@ public sealed record ApprovalEvent(
 
     /// <summary>
     /// Parse a bridge lifecycle event from a bus CloudEvent (its raw JSON) delivered on
-    /// <paramref name="subject"/>. Only <c>security.approval.&lt;action_id&gt;.&lt;verdict&gt;</c>
-    /// subjects are recognized (a sibling of <c>security.authz.&gt;</c> under the shared
-    /// <c>security.&gt;</c> audited domain). Returns null for anything else, or anything
+    /// <paramref name="subject"/>. Only <c>homelab.security.approval.&lt;action_id&gt;.&lt;verdict&gt;</c>
+    /// subjects are recognized (a sibling of <c>homelab.security.authz.&gt;</c> under the shared
+    /// <c>homelab.security.&gt;</c> audited domain). Returns null for anything else, or anything
     /// unparseable — dropped, never thrown (the SentinelConsole bus subscribers never crash on a
     /// malformed message).
     /// </summary>

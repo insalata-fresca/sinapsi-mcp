@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using Zitadel.Mcp;
 
 namespace Zitadel.Mcp.Api;
 
@@ -15,9 +16,17 @@ namespace Zitadel.Mcp.Api;
 /// issuance) backs machine-to-machine (M2M) credential provisioning and is marked
 /// Destructive on its tools.
 /// </summary>
-public sealed class ZitadelClient(HttpClient http)
+public sealed class ZitadelClient(HttpClient http, ZitadelConfig opts)
 {
     private static readonly JsonSerializerOptions J = new(JsonSerializerDefaults.Web);
+
+    /// <summary>Host-side directory <c>create_machine_key</c> writes a machine user's JSON
+    /// private key into (from <c>AGENT_KEY_DIR</c>). Exposed as a read-through on the client so
+    /// the tool needs ONLY the <see cref="ZitadelClient"/> DI param — a second injected
+    /// parameter interleaved before the tool params breaks the MCP SDK's reflection marshaller
+    /// (it fails to bind the first tool param, e.g. <c>userId</c>). See ZitadelClient's single
+    /// leading-DI-param contract shared by every sibling tool.</summary>
+    public string AgentKeyDir => opts.AgentKeyDir;
 
     // ── Users ────────────────────────────────────────────────────────────────
 

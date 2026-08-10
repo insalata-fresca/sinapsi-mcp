@@ -4,9 +4,10 @@ namespace Sinapsi.SentinelConsole;
 
 /// <summary>
 /// One normalized deploy-visibility event, parsed from a bus CloudEvent, spanning the two
-/// halves of the image-first delivery pipeline: the release plane (<c>release.&lt;svc&gt;.published</c>,
+/// halves of the S34 image-first delivery pipeline (home-server <c>docs/23</c> §1.4 + §2,
+/// <c>patterns/deploy-service.md</c>): the release plane (<c>homelab.release.&lt;svc&gt;.published</c>,
 /// emitted by the <c>build-push-release</c> CI action once an image is pushed) and the
-/// per-host deploy agent's reconcile outcome (<c>deploy.&lt;ctid&gt;.&lt;svc&gt;.applied</c>
+/// per-host deploy-controller's reconcile outcome (<c>homelab.deploy.&lt;ctid&gt;.&lt;svc&gt;.applied</c>
 /// / <c>.failed</c>). Together these answer "did my merge actually deploy?" without an
 /// SSH-and-grep round trip. This is the row the <see cref="DeployModel"/> stores and the
 /// Console renders.
@@ -17,7 +18,7 @@ public sealed record DeployEvent(
     string Ctid,           // target container id (deploy events), or "" for a release event
     string Version,
     string Digest,         // sha256:... image digest, or "" when the payload omits it
-    string Result,         // deploy agent's raw result string ("ok" / "error: ...", or "" for a release)
+    string Result,         // deploy-controller's raw result string ("ok" / "error: ...", or "" for a release)
     DateTimeOffset Time)
 {
     public const string KindReleased = "released";
@@ -27,10 +28,10 @@ public sealed record DeployEvent(
     /// <summary>
     /// Parse a deploy event from a bus CloudEvent (its raw JSON) delivered on
     /// <paramref name="subject"/>. Routes by subject family:
-    ///   release.&lt;svc&gt;.published        → kind=released (svc from the subject —
+    ///   homelab.release.&lt;svc&gt;.published        → kind=released (svc from the subject —
     ///                                                  the release payload carries no svc field);
-    ///   deploy.&lt;ctid&gt;.&lt;svc&gt;.applied  → kind=applied  (ctid/svc read from the
-    ///   deploy.&lt;ctid&gt;.&lt;svc&gt;.failed   → kind=failed   payload, falling back to the
+    ///   homelab.deploy.&lt;ctid&gt;.&lt;svc&gt;.applied  → kind=applied  (ctid/svc read from the
+    ///   homelab.deploy.&lt;ctid&gt;.&lt;svc&gt;.failed   → kind=failed   payload, falling back to the
     ///                                                  subject when the payload omits them).
     /// Returns null for an unrecognized / unparseable event (dropped, never thrown).
     /// </summary>
@@ -45,7 +46,7 @@ public sealed record DeployEvent(
         if (data is null) return null;
         var time = ParseTime(root["time"]?.GetValue<string>(), now);
 
-        if (subject.StartsWith("release.", StringComparison.Ordinal) &&
+        if (subject.StartsWith("homelab.release.", StringComparison.Ordinal) &&
             subject.EndsWith(".published", StringComparison.Ordinal))
         {
             var svc = SvcFromReleaseSubject(subject);
@@ -60,7 +61,7 @@ public sealed record DeployEvent(
                 Time: time);
         }
 
-        if (subject.StartsWith("deploy.", StringComparison.Ordinal) &&
+        if (subject.StartsWith("homelab.deploy.", StringComparison.Ordinal) &&
             (subject.EndsWith(".applied", StringComparison.Ordinal) || subject.EndsWith(".failed", StringComparison.Ordinal)))
         {
             var kind = subject.EndsWith(".applied", StringComparison.Ordinal) ? KindApplied : KindFailed;
@@ -86,19 +87,19 @@ public sealed record DeployEvent(
         return null;
     }
 
-    // "release.sentinel-console.published" -> "sentinel-console".
+    // "homelab.release.sinapsi-sentinel-console.published" -> "sinapsi-sentinel-console".
     private static string SvcFromReleaseSubject(string subject)
     {
-        const string prefix = "release.";
+        const string prefix = "homelab.release.";
         const string suffix = ".published";
         if (subject.Length <= prefix.Length + suffix.Length) return "";
         return subject[prefix.Length..^suffix.Length];
     }
 
-    // "deploy.app-server.sentinel-console.applied" -> ("app-server", "sentinel-console").
+    // "homelab.deploy.132.sinapsi-sentinel-console.applied" -> ("132", "sinapsi-sentinel-console").
     private static (string Ctid, string Svc) SplitDeploySubject(string subject)
     {
-        const string prefix = "deploy.";
+        const string prefix = "homelab.deploy.";
         if (!subject.StartsWith(prefix, StringComparison.Ordinal)) return ("", "");
         var rest = subject[prefix.Length..];
         int lastDot = rest.LastIndexOf('.');   // strip the trailing ".applied" / ".failed"

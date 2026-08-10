@@ -4,8 +4,8 @@ namespace Sinapsi.SentinelConsole;
 
 /// <summary>
 /// One normalized authorization decision, parsed from a bus CloudEvent, across all
-/// three layers of the authorization plane: Q1
-/// gateway / a ReBAC policy engine, Q2 in-MCP command authorizer, Q3 harness gates. This is the row the
+/// three layers of the authorization plane (home-server <c>docs/61</c>): Q1
+/// gateway/OpenFGA, Q2 in-MCP command authorizer, Q3 harness gates. This is the row the
 /// read-model stores and the Console renders.
 /// </summary>
 public sealed record AuthzDecision(
@@ -26,9 +26,9 @@ public sealed record AuthzDecision(
     /// <summary>
     /// Parse a decision from a bus CloudEvent (its raw JSON) delivered on
     /// <paramref name="subject"/>. Routes by subject family:
-    ///   security.authz.q2.*   → the canonical Q2 envelope;
-    ///   security.ask-gate.*   → Q3 harness ASK (→ requiresApproval);
-    ///   security.deny-floor.* / tier4.* / credential-guard.* → Q3 harness DENY.
+    ///   homelab.security.authz.q2.*   → the canonical Q2 envelope (docs/61 §8);
+    ///   homelab.security.ask-gate.*   → Q3 harness ASK (→ requiresApproval);
+    ///   homelab.security.deny-floor.* / tier4.* / credential-guard.* → Q3 harness DENY.
     /// Returns null for an unrecognized / unparseable event (dropped, never thrown).
     /// </summary>
     public static AuthzDecision? TryParse(string subject, string json, DateTimeOffset now)
@@ -42,7 +42,7 @@ public sealed record AuthzDecision(
         var time = ParseTime(root["time"]?.GetValue<string>(), now);
 
         // Any authz.<layer> subject carries the canonical envelope: an explicit verdict +
-        // its own layer (q1 gateway / a ReBAC policy engine, q2 in-MCP command authorizer, …).
+        // its own layer (q1 gateway/OpenFGA, q2 in-MCP command authorizer, …).
         if (subject.Contains(".authz.") && data is not null)
         {
             var verdict = Str(data["verdict"]);
@@ -79,7 +79,7 @@ public sealed record AuthzDecision(
         return null;
     }
 
-    // "security.authz.q1.deny.cse" → "q1" (the token after ".authz.").
+    // "homelab.security.authz.q1.deny.cse" → "q1" (the token after ".authz.").
     private static string LayerFromSubject(string subject)
     {
         const string marker = ".authz.";

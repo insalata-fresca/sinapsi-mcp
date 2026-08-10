@@ -31,6 +31,16 @@ public abstract class JetStreamWorker : BackgroundService
     protected abstract string DurableName { get; }
     protected abstract string FilterSubject { get; }
 
+    /// <summary>The subject filter(s) the durable consumer binds. Defaults to the single
+    /// <see cref="FilterSubject"/> (byte-unchanged behaviour for every existing subclass). A
+    /// subclass that consumes SEVERAL disjoint subtrees under one durable (e.g. the delivery
+    /// evaluator over <c>homelab.git.&gt;</c> + <c>homelab.release.&gt;</c> + <c>homelab.deploy.&gt;</c>)
+    /// overrides this to return &gt;1 subject; the consumer is then created with
+    /// <c>FilterSubjects</c> (plural) instead of the single <c>FilterSubject</c> (JetStream
+    /// forbids setting both). An empty result is treated as "no override" and falls back to
+    /// <see cref="FilterSubject"/>.</summary>
+    protected virtual IReadOnlyList<string> FilterSubjects => new[] { FilterSubject };
+
     /// <summary>JetStream delivery policy for the durable consumer. Defaults to
     /// <c>DeliverAll</c> (replay the full retained history — correct for last-write-wins
     /// joins). Override to <c>LastPerSubject</c> for an ACCUMULATING projection
@@ -55,13 +65,20 @@ public abstract class JetStreamWorker : BackgroundService
         {
             DurableName = DurableName,
             Name = DurableName,
-            FilterSubject = FilterSubject,
             AckPolicy = ConsumerConfigAckPolicy.Explicit,
             DeliverPolicy = DeliverPolicy,
         };
+        // One filter → FilterSubject (singular); several disjoint subtrees → FilterSubjects
+        // (plural). JetStream rejects setting both, so exactly one is populated.
+        var filters = FilterSubjects is { Count: > 0 } fs ? fs : new[] { FilterSubject };
+        if (filters.Count == 1)
+            config.FilterSubject = filters[0];
+        else
+            config.FilterSubjects = filters.ToArray();
         var consumer = await js.CreateOrUpdateConsumerAsync(StreamName, config, ct);
         Ready = true;
-        Log.LogInformation("durable consumer {durable} on {stream} ({filter})", DurableName, StreamName, FilterSubject);
+        Log.LogInformation("durable consumer {durable} on {stream} ({filter})",
+            DurableName, StreamName, string.Join(",", filters));
 
         // Explicit fetch long-poll loop. `ConsumeAsync` was observed to drain the
         // backlog then silently stop yielding new messages (it blocks without ending,

@@ -18,8 +18,9 @@ namespace SageCouncil.Mcp.Tests;
 // (and its message is sanitized).
 //
 // The fake handler fronts the OIDC token endpoint (so the real AgentJwtMinter
-// mints against an on-disk RSA JWK) and the MCP gateway (so the real
-// GatewayMcpClient drives the gemini spawn+poll). No live backend is touched.
+// mints against an on-disk RSA JWK) and the brain-api front door (so the gemini
+// member drives its repointed agy session: create → /prompt → /events). No live
+// backend is touched. Post-repoint the gemini member no longer calls the gateway.
 // -----------------------------------------------------------------------------
 
 public sealed class CouncilServiceErrorScrubTests : IDisposable
@@ -89,20 +90,15 @@ public sealed class CouncilServiceErrorScrubTests : IDisposable
     // -------------------------------------------------------------------- tests
 
     [Fact]
-    public async Task A_gemini_failure_carrying_a_secret_is_redacted_in_the_member_error()
+    public async Task A_gemini_agy_failure_carrying_a_secret_is_redacted_in_the_member_error()
     {
-        // The gemini poll flips to `failed` with an error string that embeds a
-        // credential. CouncilService surfaces it through the member Error field —
-        // it MUST be scrubbed. This is the load-bearing proof the sanitizer is on
-        // the surfaced error path, not just unit-tested.
+        // The brain-api /prompt inject fails and the upstream body embeds a credential.
+        // CouncilService surfaces the bounded body through the member Error field — it MUST
+        // be scrubbed. This is the load-bearing proof the sanitizer is on the surfaced error
+        // path (now the agy front-door path), not just unit-tested.
         var handler = new ScrubHandler
         {
-            GeminiTaskId = "task-secret",
-            GeminiStatusSequence = new[]
-            {
-                """{"status":"running"}""",
-                """{"status":"failed","error":"auth rejected: token=leak-me-9f8a7b6c bearer secret"}""",
-            },
+            PromptFailureBody = "auth rejected: token=leak-me-9f8a7b6c bearer secret",
         };
         var svc = NewService(handler);
 
@@ -111,7 +107,7 @@ public sealed class CouncilServiceErrorScrubTests : IDisposable
 
         var err = MemberByName(council, "gemini-research").GetProperty("error").GetString()!;
         // Diagnostic context survives…
-        Assert.Contains("gemini research failed", err);
+        Assert.Contains("agy", err);
         // …but the secret token value is gone, replaced by the placeholder.
         Assert.DoesNotContain("leak-me-9f8a7b6c", err);
         Assert.Contains("[redacted]", err);
@@ -120,9 +116,9 @@ public sealed class CouncilServiceErrorScrubTests : IDisposable
     [Fact]
     public async Task A_member_deadline_timeout_actually_fires_and_is_sanitized()
     {
-        // The gateway stalls past the (tiny) member deadline; WithDeadlineAsync must
-        // surface a sanitized deadline error rather than hang.
-        var handler = new ScrubHandler { GatewayDelay = TimeSpan.FromSeconds(30) };
+        // The brain-api backend stalls the /prompt inject past the (tiny) member deadline;
+        // WithDeadlineAsync must surface a sanitized deadline error rather than hang.
+        var handler = new ScrubHandler { PromptDelay = TimeSpan.FromSeconds(30) };
         var svc = NewService(handler, Options(memberDeadline: TimeSpan.FromMilliseconds(150)));
 
         var council = Council(await svc.ConsultAsync(
@@ -137,72 +133,39 @@ public sealed class CouncilServiceErrorScrubTests : IDisposable
 
     private sealed class ScrubHandler : HttpMessageHandler
     {
-        public string GeminiTaskId { get; set; } = "task-1";
-        public string[] GeminiStatusSequence { get; set; } = { """{"status":"done","result":"gemini"}""" };
-        public TimeSpan GatewayDelay { get; set; } = TimeSpan.Zero;
-
-        private int _statusIndex;
+        // When set, the /prompt inject returns 502 with this body (a secret to be scrubbed).
+        public string? PromptFailureBody { get; set; }
+        // When set, the /prompt inject stalls this long (to trip the member deadline).
+        public TimeSpan PromptDelay { get; set; } = TimeSpan.Zero;
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var uri = request.RequestUri!;
             var path = uri.AbsolutePath;
-            var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(ct);
 
             if (path.EndsWith("/oauth/v2/token", StringComparison.Ordinal))
                 return Json(HttpStatusCode.OK, """{"access_token":"fake-token","token_type":"Bearer","expires_in":900}""");
 
-            if (uri.Host == Gateway.Host)
+            // brain-api front door for the repointed agy gemini member.
+            if (uri.Host == Backend.Host)
             {
-                if (GatewayDelay > TimeSpan.Zero) await Task.Delay(GatewayDelay, ct);
-
-                if (body.Contains("\"method\":\"initialize\""))
+                if (request.Method == HttpMethod.Post && path == "/v1/sessions")
+                    return Json(HttpStatusCode.OK, $$"""{"session_id":"sess-{{Guid.NewGuid():N}}"}""");
+                if (request.Method == HttpMethod.Post && path.EndsWith("/prompt", StringComparison.Ordinal))
                 {
-                    var res = Json(HttpStatusCode.OK, """{"jsonrpc":"2.0","id":1,"result":{}}""");
-                    res.Headers.TryAddWithoutValidation("Mcp-Session-Id", "mcp-sess-1");
-                    return res;
+                    if (PromptDelay > TimeSpan.Zero) await Task.Delay(PromptDelay, ct);
+                    if (PromptFailureBody is not null)
+                        return new HttpResponseMessage(HttpStatusCode.BadGateway) { Content = new StringContent(PromptFailureBody) };
+                    return Json(HttpStatusCode.Accepted, """{"state":"idle"}""");
                 }
-                if (body.Contains("notifications/initialized"))
-                    return new HttpResponseMessage(HttpStatusCode.Accepted);
-
-                if (body.Contains("\"method\":\"tools/call\""))
-                {
-                    var tool = ExtractToolName(body);
-                    var text = tool switch
-                    {
-                        "gemini_research" => $$"""{"task_id":"{{GeminiTaskId}}"}""",
-                        "gemini_get_status" => NextGeminiStatus(),
-                        _ => "",
-                    };
-                    return Json(HttpStatusCode.OK, McpContent(text));
-                }
+                if (request.Method == HttpMethod.Delete)
+                    return new HttpResponseMessage(HttpStatusCode.NoContent);
             }
 
             return new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent($"unrouted {path}") };
         }
 
-        private string NextGeminiStatus()
-        {
-            var i = Math.Min(_statusIndex, GeminiStatusSequence.Length - 1);
-            _statusIndex++;
-            return GeminiStatusSequence[i];
-        }
-
         private static HttpResponseMessage Json(HttpStatusCode code, string json) =>
             new(code) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
-
-        private static string McpContent(string text) =>
-            JsonSerializer.Serialize(new
-            {
-                jsonrpc = "2.0",
-                id = 2,
-                result = new { content = new[] { new { type = "text", text } } },
-            });
-
-        private static string ExtractToolName(string body)
-        {
-            using var doc = JsonDocument.Parse(body);
-            return doc.RootElement.GetProperty("params").GetProperty("name").GetString() ?? "";
-        }
     }
 }

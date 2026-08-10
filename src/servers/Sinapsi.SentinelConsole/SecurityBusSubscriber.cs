@@ -7,7 +7,7 @@ namespace Sinapsi.SentinelConsole;
 
 /// <summary>
 /// The bus ingest for the Console: a core-NATS subscriber on
-/// <c>security.&gt;</c> that parses each event into an <see cref="AuthzDecision"/>
+/// <c>homelab.security.&gt;</c> that parses each event into an <see cref="AuthzDecision"/>
 /// and feeds the <see cref="ReadModel"/> + <see cref="LiveFeed"/>. Read-only: it never
 /// publishes or acts — this is the inspection layer. Resilient: a connection blip is
 /// retried with backoff, never crashing the process.
@@ -16,7 +16,7 @@ public sealed class SecurityBusSubscriber : BackgroundService
 {
     // The security-audit family that carries authorization decisions across layers:
     // Q2 authz.q2.*, Q3 ask-gate.* / deny-floor.* / tier4.* / credential-guard.* / scope_gate.*.
-    private const string Subject = "security.>";
+    private const string Subject = "homelab.security.>";
 
     private readonly NatsConnectionOptions _opts;
     private readonly ReadModel _readModel;
